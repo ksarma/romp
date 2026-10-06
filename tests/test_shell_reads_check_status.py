@@ -52,6 +52,17 @@ class ShellReadsCheckStatus(unittest.TestCase):
     def test_the_stale_banners_version_poll_checks_the_status(self):
         self.assertIn("function check(){fetch('/version',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/version answered HTTP '+r.status);return r.json();})", km._STALE_JS)
 
+    def test_the_pane_records_reads_check_the_status(self):
+        # the shell's GET /panes read (the panes defined at the kernel, which it builds; the head script) and a page standing alone's
+        # (its pane-set revision; the shim): a non-ok answer is a failed read, shown, never a body taken for the list
+        html = km._landing()
+        head = html[html.index("<script>"):html.index("</script>")]
+        self.assertIn("fetch('/panes',{cache:'no-store'}).then(function(r){_rr.status=r.status;if(!r.ok){", head)
+        self.assertIn("throw new Error('/panes answered HTTP '+r.status);}return r.json();})", head)
+        shim = km._chat_page()
+        self.assertIn('fetch("/panes",{cache:"no-store"}).then(function(r){if(!r.ok){', shim)
+        self.assertIn('throw new Error("/panes answered HTTP "+r.status);}return r.json();})', shim)
+
     def test_the_update_banners_two_reads_check_the_status(self):
         js = km._UPD_JS
         self.assertIn("function poll(){fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();})", js)

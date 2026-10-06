@@ -168,19 +168,32 @@ installMenuEcho();
   // hidden later loses it, no reload either way (review, 2026-09-10).
   const panes: Array<[string, string, string]> = [["chat", "chat", "chat"], ["timeline", "timeline", "timeline"],
     ["fleet", "outline", "outline"], ["feed", "feed", "feed"], ["waiting", "waiting", "Waiting"], ["files", "files", "Files"]];
-  // the REGISTRY panes (plans/panes-as-data.md): the shell emits its pane list beyond the hand-written five as a body attribute
-  // (the shipped Artifacts record on every kernel, the data panes beside it), and each gets the same toggle command under its
-  // title; its availability rides romp:settings.panes[id]
+  // the REGISTRY panes (plans/panes-as-data.md): each gets the same toggle command under its title; its availability rides
+  // romp:settings.panes[id]. The generic panes the shell ships with ride its body attribute (the shipped Artifacts record on every
+  // kernel); the panes defined at the kernel are built by the shell from its GET /panes read, which can settle before or after
+  // this module boots, so their commands come from the read's state object when it is in (window.__rompPaneRecords) and from the
+  // builder's romp-pane-records event when it lands later (registerCommand replaces by id, so both roads are one). They list after
+  // the shipped panes' commands in the palette's empty-query order (registration order).
   const registry: Array<{ id: string; title: string; experimental: boolean }> = (() => {
     try { const raw = document.body.getAttribute("data-panes"); const arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr.filter((p) => p && typeof p.id === "string").map((p) => ({ id: String(p.id), title: String(p.title || p.id), experimental: p.experimental === true })) : []; } catch { return []; }
   })();
-  for (const r of registry) {
+  const registerPane = (r: { id: string; title: string; experimental: boolean }): void => {
     registerCommand({
       id: "pane." + r.id, title: "Show or hide the " + r.title + " pane",
       run: () => { if (w.__rompPaneToggle) w.__rompPaneToggle(r.id); },
       when: () => { const v = loadSettings().panes[r.id]; return typeof v === "boolean" ? v : !r.experimental; },
     });
-  }
+  };
+  for (const r of registry) registerPane(r);
+  const recordPanes = (rr: unknown): void => {
+    const st = rr as { state?: unknown; rows?: unknown } | null;
+    if (!st || st.state !== "ok" || !Array.isArray(st.rows)) return;
+    for (const p of st.rows as Array<{ id?: unknown; title?: unknown; experimental?: unknown }>) {
+      if (p && typeof p.id === "string") registerPane({ id: p.id, title: String(p.title || p.id), experimental: p.experimental === true });
+    }
+  };
+  recordPanes(w.__rompPaneRecords);
+  window.addEventListener("romp-pane-records", (e) => recordPanes((e as CustomEvent).detail));
   const optional = new Set<string>(OPTIONAL_PANES);
   for (const [key, label, words] of panes) {
     registerCommand({

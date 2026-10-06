@@ -2,14 +2,14 @@
 """The pane registry (plans/panes-as-data.md, phase one). A pane is a record in ONE schema: the shipped panes are the
 kernel's code constants (_CODE_PANES, checked at import by _pane_check like the code boards), every other pane a JSON document
 under STATE/panes/<id>.json behind define_pane (the board door's twin: POST /pane, GET /panes, `romp pane`). The shell renders
-from _pane_order() per request, and the FIRST pin is that with an empty registry the code panes' RENDERING is unchanged: the
-body tag, the rail, the phone tabs, the pane row, the column and gutter rules and the gutter calls, slice for slice against
-the base kernel's rendering (tests/fixtures/landing-code-panes.json, tests/landing_slices.py). A data pane gets a rail
-button, a phone tab (none when experimental), a lazy iframe (data-src), its column and gutter rules and a row in
-body[data-panes] that the baked inline scripts read; a URL source is a plain sandboxed iframe with no token, no ?v= and no
-protocol, and every shell listener, inline and bundled, drops a message that is not a protocol pane's own (the source
-check, fail-closed). The pane set's revision rides every keepalive beside the build token and a page baked with another is
-offered a reload.
+the shipped panes, and the FIRST pin is that their RENDERING is unchanged from the base kernel's, whatever the registry holds:
+the body tag, the rail, the phone tabs, the pane row, the column and gutter rules and the gutter calls, slice for slice
+(tests/fixtures/landing-code-panes.json, tests/landing_slices.py). The panes defined at the kernel are built by the shell in
+the browser from GET /panes, the records `romp pane list` reads (one source for the pane records): each gets a rail button, a
+phone tab (none when experimental), a lazy iframe (data-src), its column and gutter rules, and joins every inline consumer and
+bundle; a URL source is a plain sandboxed iframe with no token, no ?v= and no protocol, and every shell listener, inline and
+bundled, drops a message that is not a protocol pane's own (the source check, fail-closed). The pane set's revision rides every
+keepalive beside the build token, and a page whose revision (the one it read from GET /panes) differs is offered a reload.
 
 Every test here reds at the base on BEHAVIOUR (the 1919 read): a pane's file is written by hand the way the door writes it,
 and what is asserted is the landing, the routes, the keepalive frame and the executed scripts, never a name.
@@ -40,6 +40,7 @@ BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
 import landing_slices   # noqa: E402  the slicer the fixture was made with; slices() below is its copy, held to it by TheCodePanesRender
+import pane_records_stub   # noqa: E402  the shell's GET /panes road over a stub page (the head read's state, the builder's DOM calls)
 
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
@@ -71,13 +72,6 @@ def _full(d):
            "protocol": "none" if d["source"].startswith("http") else "romp"}
     out.update(d)
     return out
-
-
-def _rows(*defs):
-    """The body attribute's rows for these data records (what the inline scripts read): the shipped Artifacts record first (the
-    generic build renders every pane after the hand-written five), then the data panes by id."""
-    return [ARTIFACTS_ROW] + [{"id": d["id"], "title": d["title"], "protocol": d["protocol"], "experimental": d["experimental"], "on": d["on"], "builtin": False}
-                              for d in sorted((_full(x) for x in defs), key=lambda r: r["id"])]
 
 
 class World:
@@ -166,6 +160,17 @@ def slices(html):
     }
 
 
+def _RECORDS_JS():
+    # the shell's builder of the panes defined at the kernel (kernel.py _LANDING_PANE_RECORDS_JS), read with a default so a kernel without
+    # it (the base) reds on BEHAVIOUR in the executed harnesses (nothing built, nothing joined), never on a missing name
+    return getattr(km, "_LANDING_PANE_RECORDS_JS", "")
+
+
+def _ADOPT_JS():
+    # the landing's adoption of the read's revision into its reload core (kernel.py _PANES_ADOPT_JS), defaulted the same way
+    return getattr(km, "_PANES_ADOPT_JS", "")
+
+
 def _attr_rows(page):
     m = re.search(r"<body class='po-chat po-feed po-timeline' data-panes=\"([^\"]*)\">", page)
     return json.loads(html_mod.unescape(m.group(1))) if m else None
@@ -193,14 +198,15 @@ class TheCodePanesRender(unittest.TestCase):
         # with no data pane the attribute carries exactly the shipped record the generic build renders (the Artifacts pane), and
         # none of a data pane's markers
         self.assertEqual(_attr_rows(h0), [ARTIFACTS_ROW], "the attribute: the Artifacts record alone")
-        _lacks(self, " data-protocol=none sandbox=", h0); _lacks(self, "id=gv-notes", h0); _lacks(self, "/pane/", h0)
+        _lacks(self, " data-protocol=none sandbox=", h0); _lacks(self, "id=gv-notes", h0); _lacks(self, 'data-src="/pane/', h0)
+        # a pane file changes NO byte of the landing: the shell builds the panes defined at the kernel from GET /panes (the
+        # client build is executed in TheLanding; every page and static route is held to this by tests/test_pane_records_one_source.py)
         self.w.seed(NOTES)
         h1 = km._landing()
-        self.assertTrue(h1 != h0, "a pane file changes the page"); self.assertEqual([r["id"] for r in _attr_rows(h1)], ["artifacts", "notes"])
-        s1 = slices(h1)
-        self.assertTrue(s1["body_tag"] != got["body_tag"] and s1["rail_buttons"] != got["rail_buttons"], "the body tag and the rail carry the pane")
+        self.assertTrue(h1 == h0, "a pane file changes no byte of the landing (%d vs %d chars)" % (len(h1), len(h0)))
+        self.assertEqual(_attr_rows(h1), [ARTIFACTS_ROW], "the attribute still carries the Artifacts record alone")
         self.w.unseed("notes")
-        self.assertTrue(km._landing() == h0, "define then remove: the bytes are back")
+        self.assertTrue(km._landing() == h0, "define then remove: the bytes stay")
 
     def test_01_the_slicer_this_module_runs_is_the_one_the_fixture_was_made_with(self):
         # slices() above is tests/landing_slices.py's copy (its docstring says why): statement for statement the same function, the
@@ -310,7 +316,8 @@ class TheDoors(unittest.TestCase):
         self.assertEqual([p["builtin"] for p in r["panes"]], [True] * len(SHIPPED) + [False])
         self.assertEqual({k: v for k, v in r["panes"][len(SHIPPED)].items() if k != "builtin"}, _full(NOTES))
         st, r = self._call("/pane", dict(NOTES, title="Notebook")); self.assertEqual((st, r["ok"]), (200, True))
-        self.assertEqual(_rail(km._landing())[-1], ("notes", "Notebook"), "a define replaces the pane whole and the rail says so")
+        st, r = self._call("/panes"); self.assertEqual((r["panes"][-1]["id"], r["panes"][-1]["title"]), ("notes", "Notebook"), "a define replaces the pane whole and GET /panes, the shell's source for it, says so")
+        _lacks(self, "Notebook", km._landing(), "the landing renders the shipped panes alone: the shell builds this one from GET /panes")
         self._call("/pane", DOCS); self._call("/pane", LAB)
         st, r = self._call("/panes"); self.assertEqual([p["id"] for p in r["panes"]], SHIPPED_IDS + ["docs", "lab", "notes"], "data panes by id after the shipped panes")
         st, r = self._call("/pane", {"remove": "chat"}); self.assertEqual((st, r["ok"]), (200, False)); self.assertIn("shipped", r["error"])
@@ -401,15 +408,19 @@ class TheStore(unittest.TestCase):
     def setUp(self): self.w = World()
     def tearDown(self): self.w.close()
 
-    def test_a_pane_file_written_by_hand_renders_a_bad_one_is_skipped_and_named_once_and_a_rewrite_in_place_is_read(self):
+    def test_a_pane_file_written_by_hand_is_listed_a_bad_one_is_skipped_and_named_once_and_a_rewrite_in_place_is_read(self):
+        # the store is the subject: read through _pane_order(), the listing GET /panes answers from (the landing renders the shipped
+        # panes alone, so it is no window on the store)
+        listed = lambda: [(p["id"], p["title"]) for p in km._pane_order()]
         self.w.seed(NOTES)
-        self.assertEqual(_rail(km._landing())[-1], ("notes", "Notes"), "the directory is the registry: a file the door would write renders")
+        self.assertEqual(listed()[-1], ("notes", "Notes"), "the directory is the registry: a file the door would write is listed")
+        _lacks(self, "data-pane=notes", km._landing(), "and the landing does not render it: the shell builds it from GET /panes")
         (self.w.pdir / "bad.json").write_text("{")
         (self.w.pdir / "other.json").write_text(json.dumps(_full(dict(NOTES, id="notes2"))))   # names another pane than its file
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            rail = _rail(km._landing()); km._landing()
-        self.assertEqual([k for k, _ in rail], SHIPPED_IDS + ["notes"], "a bad file is skipped, never rendered")
+            rail = listed(); km._pane_order()
+        self.assertEqual([k for k, _ in rail], SHIPPED_IDS + ["notes"], "a bad file is skipped, never listed")
         lines = [ln for ln in err.getvalue().splitlines() if "[panes]" in ln]
         self.assertEqual(len(lines), 2, "each bad file is named once, on stderr, however many builds: %r" % lines)
         self.assertTrue(any("bad.json" in ln for ln in lines) and any("other.json" in ln and "notes2" in ln for ln in lines), lines)
@@ -417,17 +428,23 @@ class TheStore(unittest.TestCase):
         fp = self.w.pdir / "notes.json"
         fp.write_text(json.dumps(_full(dict(NOTES, title="Notebook"))))
         st = os.stat(fp); os.utime(fp, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000))
-        self.assertEqual(_rail(km._landing())[-1], ("notes", "Notebook"))
+        self.assertEqual(listed()[-1], ("notes", "Notebook"))
 
-    def test_the_landing_and_the_shim_bake_the_revision_of_the_one_listing_their_build_read(self):
-        # the 1919 read: _landing listed the registry once for its builders and _stale_block listed it again through _reload_core,
-        # so a define landing between the two baked the new revision into a page showing the old set, which was never offered a reload
+    def test_the_landing_and_the_pages_bake_no_revision_and_the_state_root_shim_bakes_its_routes_listing(self):
+        # Where the pane set's revision lives (the 1919 read made it one listing per build; it is now NO listing per page build).
+        # SOURCE pins, keyed on where the code lives: _landing renders the shipped panes (list(_CODE_PANES)), lists no registry, and
+        # hands the reload core the empty baseline through _stale_block(v), which adopts the GET /panes read's revision
+        # (_PANES_ADOPT_JS). The executed proofs: test_00 above (a pane file changes no byte of the landing),
+        # test_no_listing_per_page_build_executed... below (no listing, the empty baseline on the page) and TheRevisionBaseline (the core
+        # takes the read's revision); every page and static route is held byte for byte by tests/test_pane_records_one_source.py.
         self.assertIn('PANES0="abc"', km._reload_core(3, pv="abc"), "the reload core bakes the revision it is handed")
         self.assertIn('PANES0="%s"' % km._panes_rev(), km._reload_core(3), "and this kernel's when handed none")
         src = inspect.getsource(km._landing)
-        self.assertIn("snap = _panes_snapshot()", src); self.assertIn('panes = _pane_order(snap["data"]); pv = snap["rev"]', src, "one listing: the list and the revision from it")
-        self.assertIn("_stale_block(v, pv)", src, "the reload core takes that revision")
-        self.assertIn("def _stale_block(v, pv=None):", KSRC); self.assertIn("def _shim(app, v=0, caps=\"\", no_stale=False, pv=None, data=None):", KSRC)   # caps: the fork's wire capabilities a page announces; pv and data: upstream 1919/1952
+        self.assertIn("panes = list(_CODE_PANES)", src, "the landing renders the shipped panes alone")
+        self.assertNotIn("_panes_snapshot()", src, "and lists no registry")
+        self.assertIn("_stale_block(v)", src, "the reload core takes no revision from the build")
+        self.assertIn("def _stale_block(v):", KSRC); self.assertIn('"<script>" + _reload_core(v, "") + _PANES_ADOPT_JS + "</script>"', KSRC, "the empty baseline, then the read's revision adopted")
+        self.assertIn("def _shim(app, v=0, caps=\"\", no_stale=False, pv=None, data=None):", KSRC)   # caps: the fork's wire capabilities a page announces; pv and data: upstream 1919/1952 (the state-root route hands both)
 
     def test_a_build_offer_and_a_pane_set_offer_stand_together_and_a_decline_covers_both(self):
         core = km._reload_core_js(3, boot="b1", code="C0")
@@ -446,11 +463,12 @@ class TheStore(unittest.TestCase):
         self.assertIsNone(r2["declined"], "declined, the same revision offers nothing")
         self.assertEqual((r2["moved"]["pv"], r2["moved"]["text"]), ("C", km.RELOAD_OFFER_PANES_MSG), "another revision offers again")
 
-    def test_one_listing_per_build_executed_a_define_forced_between_the_former_reads_changes_neither_the_set_nor_the_baked_revision(self):
-        # the 1952 read (round two): the one-listing item was pinned by source strings alone; here the listing is HOOKED: the first
-        # snapshot call defines a second record after it returns, so a build that listed again would render or bake the new set.
-        # The landing: one call, the rows the first snapshot's, PANES0 its revision, one PANES0 occurrence. The shim: the route's
-        # snapshot handed through, no further call, PANES0 and LOADEDPV equal; _shim handed nothing reads once and bakes both from it.
+    def test_no_listing_per_page_build_executed_the_landing_and_the_pages_carry_no_record_and_no_revision(self):
+        # the 1952 read hooked the listing to prove one listing per build; the page builds now list NONE: the landing renders the
+        # shipped panes and bakes the empty baseline (the shell takes the set and its revision from GET /panes), and a page the route
+        # table renders (_shim handed no listing) bakes the empty baseline in both slots. The hook still defines a second record after
+        # a first call, so a build that listed would render or bake a set. The state-root route's own one listing (it hands its
+        # snapshot down) is test_the_state_root_shim_bakes_the_routes_one_snapshot_into_both_its_revision_slots above.
         self.w.seed(NOTES)
         real = km._panes_snapshot
         calls, who = [], []
@@ -463,30 +481,67 @@ class TheStore(unittest.TestCase):
                 return snap
             calls.append(snap["rev"])
             if len(calls) == 1:
-                self.w.seed(DOCS)   # a define landing between two listings, if a build made two
+                self.w.seed(DOCS)
             return snap
         km._panes_snapshot = hooked
         try:
             html = km._landing()
+            direct = km._shim("notes", 3)
+            chat = km._chat_page()
         finally:
             km._panes_snapshot = real
-        self.assertEqual(len(calls), 1, "one listing per landing build: %r" % calls)
-        rows = json.loads(html_mod.unescape(re.search(r' data-panes="([^"]*)"', html).group(1)))
-        self.assertEqual([r["id"] for r in rows if not r.get("builtin")], ["notes"], "the rendered set is the first snapshot's (the define landed after it): %r" % rows)
-        self.assertEqual(html.count('PANES0="'), 1, "one baked revision on the page")
-        self.assertIn('PANES0="%s"' % calls[0], html, "the reload core's revision is the same snapshot's")
-        self.w.unseed("docs")
-        # _shim handed no revision: ONE read, both slots from it
-        calls.clear()
+        self.assertEqual(calls, [], "no listing per landing or page build: %r" % calls)
+        self.assertEqual(_attr_rows(html), [ARTIFACTS_ROW], "the landing renders the shipped generic pane alone, whatever the registry holds")
+        self.assertEqual(html.count('PANES0="'), 1, "one reload core on the page")
+        _has(self, 'PANES0=""', html, "baked with the empty baseline: the shell adopts the revision its GET /panes read returns")
+        for name, page in (("_shim", direct), ("_chat_page", chat)):
+            _has(self, 'PANES0=""', page, "%s: the reload core's baseline is empty" % name)
+            _has(self, 'var LOADEDPV="";', page, "%s: and so is the keepalive gate's" % name)
+            _lacks(self, real()["rev"], page, "%s: no pane-set revision in the page" % name)
+        self.assertIn('var LOADEDPV="abc";', km._shim("notes", 3, pv="abc"), "handed a revision (the state-root route), the shim's gate bakes it")
+
+    def test_get_panes_answers_its_rows_and_its_revision_from_one_listing(self):
+        # GET /panes is where the shell reads both the rows it builds and the revision its reload offer compares against, so the two
+        # must describe ONE set. A define landing between two listings, made deterministic: the listing function the handler calls
+        # defines a second pane right after its first call returns (and clears the memo, so a later listing reads the directory
+        # again). The real do_GET runs on this thread, and the hook acts on this thread's calls alone.
+        self.w.seed(NOTES)
+        real = km._panes_snapshot
+        me = threading.get_ident()
+        listings = []
+
+        def hooked():
+            snap = real()
+            if threading.get_ident() != me:
+                return snap
+            listings.append((sorted(snap["data"]), snap["rev"]))
+            if len(listings) == 1:
+                self.w.seed(DOCS)
+                self.w.reset_memos()
+            return snap
+        h = km.Handler.__new__(km.Handler)
+        h.client_address = ("127.0.0.1", 0)
+        h.headers = {"X-Romp-Token": km.TOKEN}
+        h.path, h.command, h.request_version, h.close_connection = "/panes", "GET", "HTTP/1.1", True
+        h.rfile, h.wfile = io.BytesIO(), io.BytesIO()
+        got = {}
+        h.send_response = lambda code, *a: got.setdefault("status", code)
+        h.send_header = lambda k, v: None
+        h.end_headers = lambda: None
+        h.log_message = lambda *a: None
         km._panes_snapshot = hooked
         try:
-            direct = km._shim("notes", 3)
+            h.do_GET()
         finally:
             km._panes_snapshot = real
-        self.assertEqual(len(calls), 1, "one read when handed none: %r" % calls)
-        self.assertIn('PANES0="%s"' % calls[0], direct); self.assertIn('var LOADEDPV="%s";' % calls[0], direct)
-        self.w.unseed("docs")
-        self.assertIn('var LOADEDPV="abc";', km._shim("notes", 3, pv="abc"), "handed a revision, the shim's gate bakes it too")
+        self.assertEqual(got.get("status"), 200)
+        body = json.loads(h.wfile.getvalue().decode())
+        rows = sorted(r["id"] for r in body["panes"] if r["builtin"] is False)
+        after = real()
+        self.assertTrue(listings, "the handler listed the registry")
+        self.assertEqual(sorted(after["data"]), ["docs", "notes"], "the define landed while the handler answered")
+        known = listings + [(sorted(after["data"]), after["rev"])]
+        self.assertIn((rows, body["rev"]), known, "the rows %r and the revision %r come from one listing; the listings were %r" % (rows, body["rev"], known))
 
     def test_the_revision_rides_the_keepalive_beside_the_build_token_and_moves_on_a_change(self):
         def frame():
@@ -514,55 +569,288 @@ class TheStore(unittest.TestCase):
         self.assertEqual(frame().get("pv"), "0")
 
 
-# ── the landing with data panes ───────────────────────────────────────────────────────────────────────────────────
+# ── the landing renders the shipped panes; the shell builds the defined ones from GET /panes ──────────────────────────
+def _get_panes(port):
+    """GET /panes from the real handler, with the token this module's kernel bound (TheDoors._req says why km.TOKEN)."""
+    req = urllib.request.Request("http://127.0.0.1:%d/panes" % port, headers={"X-Romp-Token": km.TOKEN})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read().decode())
+
+
+# The builder (_LANDING_PANE_RECORDS_JS) over a stub page: the body attribute as the landing renders it, every consumer's join a
+# recorder (each named hook, in the order called, with the ids it was handed), the reload core's adoptPanes a recorder, the Log a
+# recorder, timers captured. PRESENT: ids already on the page. The DOM the builder makes is tests/pane_records_stub.py's.
+_BUILD_STUB = r"""
+'use strict';
+global.window = global;
+const NOTES_LOG = [], CALLS = [], TIMERS = [];
+window.__rompNotify = (k, t) => { NOTES_LOG.push([k, t]); };
+global.setTimeout = (f, ms) => { TIMERS.push({ f, ms, cleared: false }); return TIMERS.length; };
+global.clearTimeout = (i) => { if (TIMERS[i - 1]) TIMERS[i - 1].cleared = true; };
+const PRESENT = __PRESENT__;
+global.document = { body: { getAttribute: (a) => (a === 'data-panes' ? __ATTR__ : null) }, getElementById: (id) => (PRESENT.indexOf(id) >= 0 ? { id } : null), querySelector: () => null };
+const BAR = { querySelectorAll: () => [] };
+__JOIN_NAMES__.forEach((n) => { window[n] = function (a) { CALLS.push([n, Array.isArray(a) ? a.map((p) => p.id) : (a && a.attrs ? a.attrs.id : null)]); }; });
+window.__rompReload = { adoptPanes: (rev) => { CALLS.push(['adoptPanes', rev]); } };
+""" + pane_records_stub.RECORDS_DOM + r"""
+const R = installRecordsDom(document, { bar: BAR });
+"""
+_BUILD_OUT = r"""
+const snapOut = () => JSON.parse(JSON.stringify({ frames: R.inserted.filter((e) => e.tagName === 'IFRAME').map((f) => ({ id: f.attrs.id, attrs: f.attrs, parent: f.parentNode ? f.parentNode.attrs.id : null })),
+  rail: R.rail.children.map((b) => ({ pane: b.attrs['data-pane'] || null, id: b.attrs.id || null, cls: b.attrs.class || null, text: b.textContent })),
+  tabs: (BAR._kids || []).map((b) => ({ tag: b.tagName, pane: b.attrs['data-pane'], text: b.textContent })),
+  row: R.row.children.map((c) => ({ tag: c.tagName, id: c.attrs.id, cls: c.attrs.class })),
+  attrs: R.attrs, styles: R.styles, events: R.events, notes: NOTES_LOG, calls: CALLS, created: R.created.length,
+  rr: { state: window.__rompPaneRecords.state, rev: window.__rompPaneRecords.rev, rows: window.__rompPaneRecords.rows, error: window.__rompPaneRecords.error },
+  timers: TIMERS.map((t) => ({ ms: t.ms, cleared: t.cleared })) }));   // a copy: a later step must not rewrite an earlier snapshot
+"""
+_JOIN_ORDER = ["__rompPaneJoinErrs", "__rompPaneJoinColumns", "__rompPaneJoinFocus", "__rompWireEsc", "__rompPaneJoinMobile",
+               "__rompPaneJoinController", "__rompPaneRestoreTab"]   # the go point's order (the Log's titles, the columns, the focus ring, Escape, the phone before the controller, the controller, the phone's restore)
+
+
+def _build_js(state_js, driver="console.log(JSON.stringify(snapOut()));", present=(), attr=(ARTIFACTS_ROW,)):
+    """The builder's harness: the stub, the head read's state `state_js`, the builder, then `driver` (run it with _run)."""
+    return (_BUILD_STUB.replace("__PRESENT__", json.dumps(list(present))).replace("__ATTR__", json.dumps(json.dumps(list(attr))))
+            .replace("__JOIN_NAMES__", json.dumps(_JOIN_ORDER)) + state_js + _RECORDS_JS() + _BUILD_OUT + driver)
+
+
+def _css_rules(text):
+    """{selector: declarations} for a run of plain rules (no nesting)."""
+    return {sel: decl for sel, decl in re.findall(r"([^{}]+)\{([^{}]*)\}", text)}
+
+
 class TheLanding(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
     def setUp(self): self.w = World()
     def tearDown(self): self.w.close()
 
-    def test_a_data_pane_renders_a_rail_button_a_tab_a_lazy_iframe_its_rules_and_the_attribute(self):
+    def test_the_landing_renders_the_shipped_panes_alone_whatever_the_registry_holds(self):
+        # the six record-bearing slices equal the base rendering with three data panes defined (a state-root page, a URL, an
+        # experimental route), and no inline script is added for them: the shell builds them from GET /panes
         self.w.seed(NOTES, DOCS, LAB)
         page = km._landing()
-        self.assertEqual(_rail(page), [(i, t) for i, t, _ in SHIPPED] + [("docs", "Docs"), ("lab", "Lab"), ("notes", "Notes")], "the shipped panes, then the data panes by id")
-        _has(self, "<button data-pane=notes>Notes</button>", page, "a phone tab")
-        _has(self, "<button data-pane=docs>Docs</button>", page)
-        _lacks(self, "data-pane=lab>Lab</button>", page, "an experimental pane has no phone tab")
-        _has(self, '<div class=gv id=gv-notes></div><div class=pane id=notes-pane><iframe id=f-notes data-src="/pane/notes/" data-protocol=romp></iframe></div>', page,
-             "a state-root pane loads /pane/<id>/ when shown (data-src, the optional panes' rule)")
-        _has(self, '<div class=gv id=gv-docs></div><div class=pane id=docs-pane><iframe id=f-docs data-src="http://TESTHOST:9/docs/" data-protocol=none sandbox="allow-scripts allow-forms allow-popups"></iframe></div>', page,
-             "a URL pane: the URL as given (no ?v=, no token), sandboxed, marked protocol none")
-        _has(self, '<iframe id=f-lab data-src="/feed" data-protocol=romp></iframe>', page, "a kernel route as given")
-        # the data panes' gutters through _at: only this seeded render carries them (the helper's comment says why)
-        self.assertLess(page.index("id=artifacts-pane"), _at(page, "id=gv-docs")); self.assertLess(_at(page, "id=gv-docs"), _at(page, "id=gv-notes"))
-        self.assertLess(_at(page, "id=gv-notes"), page.index("<div id=gv-ghost>"), "the data panes sit in the pane row, after the shipped columns")
-        _has(self, "#notes-pane{flex:var(--g-notes,40) 1 0}body:not(.po-notes) #notes-pane{display:none}", page)
-        # .po-waiting: the fork's Waiting pane is a shipped column, so the records put it in each data gutter's chain (fold 4, slice 2)
-        _has(self, "body:not(.po-docs) #gv-docs,body:not(.po-chat):not(.po-fleet):not(.po-feed):not(.po-waiting):not(.po-files):not(.po-artifacts) #gv-docs{display:none}", page,
-             "the first data gutter hides with its pane off or with no shown column before it (the shipped columns from the records)")
-        _has(self, "body:not(.po-notes) #gv-notes,body:not(.po-chat):not(.po-fleet):not(.po-feed):not(.po-waiting):not(.po-files):not(.po-artifacts):not(.po-docs):not(.po-lab) #gv-notes{display:none}", page)
-        # the hand panes' phone block carries the fork's Waiting pane between the feed and the files (fold 4, slice 2)
-        mob = page[page.index("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}"):]
-        _has(self, "#artifacts-pane,#docs-pane,#lab-pane,#notes-pane{display:contents!important}#f-artifacts.m-on,#f-docs.m-on,#f-lab.m-on,#f-notes.m-on{display:block}", mob[:600],
-             "the phone's rules for the generic panes ride the media block beside the hand five's: the tab, not the po flag, says which pane shows, and the shown tab's iframe displays")
-        self.assertEqual(_attr_rows(page), _rows(NOTES, DOCS, LAB), "the attribute carries what the inline scripts and the pane bundles read, never the source")
+        got = slices(page)
+        for name, text in FIXTURE["slices"].items():
+            self.assertTrue(got.get(name) == text, "the %s slice differs from the shipped panes' rendering: %d vs %d chars" % (name, len(got.get(name, "")), len(text)))
+        self.assertEqual(_attr_rows(page), [ARTIFACTS_ROW], "the attribute carries the shipped generic pane alone")
+        for marker in ("data-pane=notes", "data-pane=docs", "f-lab", "http://TESTHOST:9/docs/", "/pane/notes/", ">Notes<"):
+            _lacks(self, marker, page, "the landing renders no defined pane")
         n_scripts = page.count("<script>")
         self.w.unseed("notes", "docs", "lab")
-        self.assertEqual(n_scripts, km._landing().count("<script>"), "no inline script is added for a data pane: the baked ones read the attribute")
+        self.assertEqual(n_scripts, km._landing().count("<script>"), "no inline script is added for a data pane")
 
-    def test_a_title_is_escaped_in_the_rail_the_tab_and_the_attribute(self):
+    def test_the_shell_builds_a_defined_pane_from_get_panes_its_frame_rail_button_tab_and_rules(self):
+        self.w.seed(NOTES, DOCS, LAB)
+        body = _get_panes(self.port)
+        r = _run(_build_js(pane_records_stub.records_state(body=body)))
+        # the frames: in GET /panes's order (by id), each in its own .pane after a gutter, at the row's end
+        self.assertEqual([f["id"] for f in r["frames"]], ["f-docs", "f-lab", "f-notes"])
+        self.assertEqual([(c["tag"], c["id"], c["cls"]) for c in r["row"]],
+                         [("DIV", "gv-docs", "gv"), ("DIV", "docs-pane", "pane"), ("DIV", "gv-lab", "gv"), ("DIV", "lab-pane", "pane"), ("DIV", "gv-notes", "gv"), ("DIV", "notes-pane", "pane")])
+        fr = {f["id"]: f for f in r["frames"]}
+        self.assertEqual(fr["f-notes"]["attrs"], {"id": "f-notes", "data-src": "/pane/notes/", "data-protocol": "romp"}, "a state-root pane loads /pane/<id>/ when shown, never its pane: source")
+        self.assertEqual(fr["f-docs"]["attrs"], {"id": "f-docs", "data-src": "http://TESTHOST:9/docs/", "data-protocol": "none", "sandbox": "allow-scripts allow-forms allow-popups"},
+                         "a URL pane: the URL as given (no ?v=, no token), sandboxed, protocol none")
+        self.assertEqual(fr["f-lab"]["attrs"], {"id": "f-lab", "data-src": "/feed", "data-protocol": "romp"}, "a kernel route as given")
+        self.assertEqual(fr["f-docs"]["parent"], "docs-pane")
+        # ruling B and the sandbox: data-src and never src or the lazy panes' attribute; every attribute set before the frame is in the document
+        frame_attrs = [(i, a, on) for i, a, on in r["attrs"] if i.startswith("f-")]
+        self.assertFalse(any(a in ("src", "data-lazy-src") for _, a, _ in frame_attrs), frame_attrs)
+        self.assertEqual([x for x in frame_attrs if x[2]], [], "every frame attribute (the sandbox among them) is set before the frame is in the document: %r" % frame_attrs)
+        self.assertIn(("f-docs", "sandbox", False), [tuple(x) for x in frame_attrs])
+        # the rail: before #rail-usage, in order, titles as text; the tabs: before the divider, none for the experimental pane
+        self.assertEqual([(b["pane"], b["cls"], b["text"]) for b in r["rail"]],
+                         [("docs", "rail-btn", "Docs"), ("lab", "rail-btn", "Lab"), ("notes", "rail-btn", "Notes"), (None, None, "")])
+        self.assertEqual(r["rail"][-1]["id"], "rail-usage")
+        self.assertEqual([(t["tag"], t["pane"], t["text"]) for t in r["tabs"]], [("BUTTON", "docs", "Docs"), ("BUTTON", "notes", "Notes")], "an experimental pane has no phone tab")
+        # the rules equal what the kernel's builders render for the same records (the desktop part a suffix of the shipped render's,
+        # the phone part rule for rule inside the media block)
+        recs = km._pane_order()[len(km._CODE_PANES):]
+        self.assertEqual([p["id"] for p in recs], ["docs", "lab", "notes"])
+        self.assertEqual(len(r["styles"]), 1, "one style element")
+        css = r["styles"][0]
+        desk, _, mob = css.partition("@media " + km._MOBILE_MQ + "{")
+        code = km._data_pane_css(list(km._CODE_PANES))
+        both = km._data_pane_css(list(km._CODE_PANES) + recs)
+        self.assertTrue(both.startswith(code)); self.assertEqual(desk, both[len(code):], "the desktop rules are the kernel's for these records")
+        self.assertTrue(mob.endswith("}"), mob)
+        want = {s: d for s, d in _css_rules(km._data_pane_mobile_css(list(km._CODE_PANES) + recs)).items()}
+        mine = _css_rules(mob[:-1])
+        strip = lambda m: {",".join(x for x in s.split(",") if "artifacts" not in x): d for s, d in m.items()}
+        self.assertEqual(mine, strip(want), "the phone rules are the kernel's for these records")
+        # the state, then the read's revision adopted and the bundles told
+        self.assertEqual((r["rr"]["state"], r["rr"]["rev"]), ("ok", body["rev"]))
+        self.assertEqual([x["id"] for x in r["rr"]["rows"]], ["docs", "lab", "notes"])
+        self.assertEqual(r["calls"][-1], ["adoptPanes", body["rev"]], "the reload core takes the read's revision")
+        self.assertEqual(r["events"], [{"state": "ok", "rows": r["rr"]["rows"], "error": "", "frames": ["f-docs", "f-lab", "f-notes"]}])
+        self.assertEqual(r["notes"], [], "nothing logged")
+        self.assertEqual(r["timers"], [], "a settled read arms no backstop")
+        self.assertNotIn("innerHTML", _RECORDS_JS(), "titles go in as text, never as markup")
+
+    def test_a_title_lands_as_text(self):
         self.w.seed({"id": "x", "title": "A <b>&", "source": "/feed", "on": True})
         page = km._landing()
-        _has(self, "<div class=rail-btn data-pane=x>A &lt;b&gt;&amp;</div>", page)
-        _has(self, "<button data-pane=x>A &lt;b&gt;&amp;</button>", page)
-        attr = re.search(r"data-panes=\"([^\"]*)\"", page).group(1)
-        self.assertNotIn("<", attr); self.assertNotIn('"', attr)
-        self.assertEqual(next(r["title"] for r in _attr_rows(page) if r["id"] == "x"), "A <b>&")
+        _lacks(self, "A &lt;b&gt;&amp;", page, "the landing does not render it")
+        r = _run(_build_js(pane_records_stub.records_state(body=_get_panes(self.port))))
+        self.assertEqual(([b["text"] for b in r["rail"] if b["pane"] == "x"], [t["text"] for t in r["tabs"]]), (["A <b>&"], ["A <b>&"]), "the title as text, verbatim")
+
+    def test_the_joins_run_in_their_order_and_each_hook_is_defined_once_on_the_page(self):
+        self.w.seed(NOTES, DOCS)
+        body = _get_panes(self.port)
+        r = _run(_build_js(pane_records_stub.records_state(body=body)))
+        rows = ["docs", "notes"]
+        self.assertEqual(r["calls"], [["__rompPaneJoinErrs", rows], ["__rompPaneJoinColumns", rows], ["__rompPaneJoinFocus", rows],
+                                      ["__rompWireEsc", "f-docs"], ["__rompWireEsc", "f-notes"], ["__rompPaneJoinMobile", rows],
+                                      ["__rompPaneJoinController", rows], ["__rompPaneRestoreTab", None], ["adoptPanes", body["rev"]]],
+                         "the go point's order: the phone joins before the controller (its apply copies a shown frame's src), the restore last")
+        listed = re.search(r"var JOINS=(\[[^\]]*\]);", _RECORDS_JS())
+        self.assertIsNotNone(listed); self.assertEqual(json.loads(listed.group(1).replace("'", '"')), _JOIN_ORDER, "the builder's list is the order pinned here")
+        page = km._landing()
+        for n in _JOIN_ORDER:
+            self.assertEqual(page.count("window.%s=function" % n), 1, "%s is defined by exactly one of the landing's scripts" % n)
+
+    def test_a_row_the_kernel_would_refuse_is_left_out_and_named_and_a_url_source_is_protocol_none(self):
+        ok = pane_records_stub.door_rows(dict(NOTES, source="/feed"))
+        bad = pane_records_stub.door_rows(
+            {"id": "Bad", "source": "/feed"}, {"id": "xjs", "source": "javascript:alert(1)"}, {"id": "xdata", "source": "data:text/html,hi"},
+            {"id": "xhost", "source": "//TESTHOST/x"}, {"id": "feed", "source": "/feed"}, {"id": "chat-x", "source": "/feed"}, {"id": "tl", "source": "/feed"},
+            {"id": "xlong", "title": "x" * 25, "source": "/feed"}, {"id": "xflag", "on": "yes", "source": "/feed"}, {"id": "xstate", "source": "pane:other"},
+            {"id": "dup", "source": "/feed"}, {"id": "notes", "source": "/feed"})
+        forced = pane_records_stub.door_rows({"id": "xproto", "source": "http://TESTHOST:9/x/", "protocol": "romp"})   # a URL whose row claims the protocol
+        shipped = [dict(p, builtin=True) for p in km._CODE_PANES]
+        r = _run(_build_js(pane_records_stub.records_state(rows=shipped + ok + bad + forced), present=("f-dup",)))
+        self.assertEqual([f["id"] for f in r["frames"]], ["f-notes", "f-xproto"], "the shipped rows are the page's own, every refused row is left out: %r" % r["notes"])
+        self.assertEqual(next(f for f in r["frames"] if f["id"] == "f-xproto")["attrs"]["data-protocol"], "none", "a URL source is protocol none whatever the row says")
+        left = [t for k, t in r["notes"] if k == "panes"]
+        self.assertEqual(len(left), len(bad), "each refused row named once in the Log: %r" % left)
+        for row, line in zip(bad, left):
+            self.assertIn("Left out a pane defined at the kernel", line); self.assertIn("'%s'" % row["id"], line)
+        # the source shapes agree with the kernel's (_pane_source_kind; a state-root source must name its own pane)
+        sources = ["/feed", "/a/b.c-d_e", "/", "//x", "/x?y", "http://TESTHOST:9/a?b#c", "https://x", "HTTP://X", "ftp://x", "javascript:x",
+                   "pane:src", "pane:other", "", "feed", "http://x y"]
+        rows = pane_records_stub.door_rows(*({"id": "src%d" % i, "source": s} for i, s in enumerate(sources)))
+        for row in rows:
+            if row["source"] == "pane:src":
+                row["source"] = "pane:" + row["id"]
+        r2 = _run(_build_js(pane_records_stub.records_state(rows=rows)))
+        built = {f["id"][2:] for f in r2["frames"]}
+        kernel = {row["id"] for row in rows if km._pane_check({k: v for k, v in row.items() if k != "builtin"})[1] is None}
+        self.assertEqual(built, kernel, "the builder takes exactly the sources the kernel's check takes: %r" % sorted(built ^ kernel))
+
+    def test_a_failed_read_is_shown_never_silently_empty_and_a_late_answer_still_builds(self):
+        self.w.seed(NOTES)
+        body = _get_panes(self.port)
+        r = _run(_build_js(pane_records_stub.records_state(state="failed", status=500, error="/panes answered HTTP 500")))
+        self.assertEqual(r["notes"], [["panes", "Couldn't read the panes defined at the kernel (/panes answered HTTP 500), so they are missing from this page. Reload to try again."]])
+        self.assertEqual((r["frames"], r["rail"][:-1], r["tabs"], r["styles"]), ([], [], [], []), "no defined pane's DOM")
+        self.assertEqual([c[0] for c in r["calls"]], [], "no join and no revision adopted")
+        self.assertEqual(r["events"], [{"state": "failed", "rows": [], "error": "/panes answered HTTP 500", "frames": []}], "the bundles hear the failure too")
+        # a 403 asking for a new sign-in: the page-key script is taking the top frame to /login, so the Log stays quiet
+        r = _run(_build_js(pane_records_stub.records_state(state="failed", status=403, reauth=True, error="/panes answered HTTP 403")))
+        self.assertEqual(r["notes"], []); self.assertEqual(r["events"][0]["state"], "failed")
+        # an answer that is not a pane list
+        r = _run(_build_js(pane_records_stub.records_state(body={"panes": "x", "rev": "r"})))
+        self.assertEqual([t for _, t in r["notes"]], ["Couldn't read the panes defined at the kernel (the answer was not a pane list), so they are missing from this page. Reload to try again."])
+        # no answer within the backstop: said as such; a late answer still builds
+        drive = ("const o = {}; o.armed = snapOut(); TIMERS.forEach((t) => { if (!t.cleared) t.f(); }); o.timedOut = snapOut();"
+                 "settleRecords('ok', " + json.dumps(body) + "); o.late = snapOut(); console.log(JSON.stringify(o));")
+        r = _run(_build_js(pane_records_stub.records_state(state="loading"), driver=drive))
+        self.assertEqual((r["armed"]["timers"], r["armed"]["frames"], r["armed"]["notes"]), ([{"ms": 30000, "cleared": False}], [], []), "loading: the backstop armed, nothing built yet")
+        self.assertEqual([t for _, t in r["timedOut"]["notes"]], ["Couldn't read the panes defined at the kernel (no answer within 30 s), so they are missing from this page. Reload to try again."])
+        self.assertEqual(r["timedOut"]["rr"]["state"], "failed")
+        self.assertEqual(([f["id"] for f in r["late"]["frames"]], r["late"]["rr"]["state"], [e["state"] for e in r["late"]["events"]]), (["f-notes"], "ok", ["failed", "ok"]),
+                         "the late answer builds and says so; the Log keeps the timeout it reported")
+
+    def test_a_second_run_of_the_builder_builds_nothing(self):
+        self.w.seed(NOTES)
+        state = pane_records_stub.records_state(body=_get_panes(self.port))
+        r = _run(_build_js(state, driver="const once = R.created.length;" + _RECORDS_JS() + "console.log(JSON.stringify({ once, twice: R.created.length, frames: snapOut().frames.length }));"))
+        self.assertEqual((r["once"], r["twice"], r["frames"]), (r["once"], r["once"], 1), "the duplicate-build guard: once per page")
+
+
+class TheRevisionBaseline(unittest.TestCase):
+    """The reload core takes the pane set's revision from the page's GET /panes read (adoptPanes): the landing and the pages bake an
+    empty baseline, which leaves notePanes inert until the read lands; the read's revision is then the page's, a keepalive or a pane's
+    relay carrying it offers nothing, an offer whose only news was it is withdrawn, another revision offers, and a declined build stays
+    declined. The landing's core adopts a read that landed before the core was made (_PANES_ADOPT_JS)."""
+
+    def _core(self):
+        return km._reload_core_js(3, boot="b1", code="C0").replace('PANES0="%s"' % km._panes_rev(), 'PANES0=""')
+
+    def test_adopt_sets_the_baseline_the_same_revision_offers_nothing_another_offers(self):
+        drive = r"""
+const R = window.__rompReload; const out = {};
+R.notePanes('P1'); out.beforeAdopt = R.offered();          // the empty baseline: inert
+if (R.adoptPanes) R.adoptPanes('P1'); R.notePanes('P1'); out.same = R.offered();
+R.propose(0, '', 'P1'); out.relayed = R.offered();          // a pane's relay of the revision the page shows
+R.notePanes('P2'); out.moved = R.offered();
+console.log(JSON.stringify(out));
+"""
+        r = _run(_RELOAD_STUB + self._core() + drive)
+        self.assertIsNone(r["beforeAdopt"], "no baseline yet: nothing to compare, nothing offered")
+        self.assertIsNone(r["same"], "the read's revision on the keepalive offers nothing")
+        self.assertIsNone(r["relayed"], "nor relayed by a pane")
+        self.assertEqual(((r["moved"] or {}).get("pv"), (r["moved"] or {}).get("text")), ("P2", km.RELOAD_OFFER_PANES_MSG), "another revision offers: %r" % r["moved"])
+
+    def test_an_offer_whose_only_news_was_the_read_revision_is_withdrawn_and_a_declined_build_stays_declined(self):
+        drive = r"""
+const R = window.__rompReload; const out = {};
+R.propose(0, '', 'P1'); out.stood = R.offered();           // an offer standing for P1 before the read landed
+if (R.adoptPanes) R.adoptPanes('P1'); out.afterAdopt = R.offered();
+R.noteVersion({ code_ident: 'C1' }); out.build = R.offered();
+R.dismiss(); if (R.adoptPanes) R.adoptPanes('P3'); R.noteVersion({ code_ident: 'C1' }); out.declined = R.offered();
+console.log(JSON.stringify(out));
+"""
+        r = _run(_RELOAD_STUB + self._core() + drive)
+        self.assertEqual((r["stood"] or {}).get("pv"), "P1", r)
+        self.assertIsNone(r["afterAdopt"], "the page now shows that set: the offer is withdrawn")
+        self.assertEqual((r["build"] or {}).get("code"), "C1")
+        self.assertIsNone(r["declined"], "adopting a revision does not re-offer a declined build")
+
+    def test_a_build_declined_on_an_earlier_page_stays_declined_after_the_page_adopts_its_read_revision(self):
+        # Not now is stored with the pane set as its page saw it (here: no pane-set news). A new page adopts the revision it read as
+        # its baseline, not as news it has seen, so the declined build is not offered again; another build still is
+        drive = r"""
+LOCAL['romp:reloadNotNow'] = JSON.stringify({ dv: 0, code: 'C1', pv: '' });
+const R = window.__rompReload; const out = {};
+out.adopt = typeof R.adoptPanes;
+if (R.adoptPanes) R.adoptPanes('P1');
+R.propose(0, '', 'P1'); out.relayed = R.offered();
+R.noteVersion({ code_ident: 'C1' }); out.declinedBuild = R.offered();
+R.noteVersion({ code_ident: 'C2' }); out.newBuild = R.offered();
+console.log(JSON.stringify(out));
+"""
+        r = _run(_RELOAD_STUB + self._core() + drive)
+        self.assertIsNone(r["relayed"], "the adopted revision, relayed, offers nothing (adoptPanes: %s)" % r["adopt"])
+        self.assertIsNone(r["declinedBuild"], "the build declined on an earlier page stays declined: %r" % r["declinedBuild"])
+        self.assertEqual((r["newBuild"] or {}).get("code"), "C2", "another build is offered: %r" % r["newBuild"])
+
+    def test_the_shells_core_adopts_a_read_that_landed_before_the_core_was_made(self):
+        # the landing's reload core element (the empty baseline, then this adoption) is pinned by source in TheStore; executed here
+        drive = r"""
+const out = {}; const R = window.__rompReload;
+R.notePanes('P1'); out.same = R.offered(); R.notePanes('P2'); out.moved = R.offered();
+console.log(JSON.stringify(out));
+"""
+        r = _run(_RELOAD_STUB + "window.__rompPaneRecords = { state: 'ok', rev: 'P1' };\n" + self._core() + _ADOPT_JS() + drive)
+        self.assertIsNone(r["same"], "adopted at the core's parse: the read's revision is the baseline")
+        self.assertEqual((r["moved"] or {}).get("pv"), "P2", r)
 
 
 # ── the inline scripts read the attribute; the source check ─────────────────────────────────────────────────────────
 _PANES_STUB = r"""
 'use strict';
 const ATTR = __ATTR__;
-const KEYS = ['chat','timeline','fleet','feed','files'].concat(__DATA_IDS__);   // the hand five; the Artifacts record rides the rows like a data pane (the 1922 read: hand-listed too, it was built twice)
+const KEYS = ['chat','timeline','fleet','feed','files'].concat(__DATA_IDS__);   // the hand five, then the generic panes the page ships with (the Artifacts record, from the attribute; the 1922 read: hand-listed too, it was built twice); the panes defined at the kernel are built by the shell's GET /panes road (adoptRecord below)
 const PROTO = __PROTO__;
 const POSTED = {}, CLS = new Set(['po-chat', 'po-feed', 'po-timeline']), STORE = {}, STORAGE = [], TABS = [], SETS = {};
 const frames = {};
@@ -583,11 +871,19 @@ global.dispatchEvent = () => true;
 global.document = {
   body: { classList: { toggle: (c, on) => { if (on) CLS.add(c); else CLS.delete(c); }, contains: (c) => CLS.has(c) },
           getAttribute: (a) => (a === 'data-tab' ? TAB : a === 'data-panes' ? ATTR : null) },
-  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return KEYS.map((k) => BTNS[k]); const m = /data-pane=([\w-]+)/.exec(sel); return m && BTNS[m[1]] ? [BTNS[m[1]]] : []; },
+  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return Object.keys(BTNS).map((k) => BTNS[k]); const m = /data-pane=([\w-]+)/.exec(sel); return m && BTNS[m[1]] ? [BTNS[m[1]]] : []; },
   getElementById: (id) => frames[id] || null,
 };
 window.__rompMobileOn = () => MOBILE;
 window.__rompMobileTab = (t) => { TABS.push(t); TAB = t; };
+// a pane the shell builds from GET /panes joins this stub's maps as it enters the document: its frame (src writes counted, posts kept)
+// and its rail button
+function adoptRecord(el) {
+  const id = el.attrs.id || '';
+  if (el.tagName === 'IFRAME' && id.indexOf('f-') === 0) { const k = id.slice(2), sa = el.setAttribute; el.setAttribute = (a, v) => { sa(a, v); if (a === 'src') SETS[k] = (SETS[k] || 0) + 1; };
+    el.contentWindow = { postMessage: (m) => { (POSTED[k] = POSTED[k] || []).push(JSON.parse(JSON.stringify(m))); } }; frames[id] = el; }
+  else if (el.attrs.class === 'rail-btn') BTNS[el.attrs['data-pane']] = el;
+}
 __SEED__
 """
 
@@ -595,6 +891,7 @@ __SEED__
 # so a mutant copying src for every enabled generic pane passed the harness): the gear has the Artifacts pane enabled and a
 # non-experimental data pane is on:false; at boot neither loads; the rail toggle loads each
 _GATE_DRIVER = r"""
+if (['notes', 'docs'].some((k) => !frames['f-' + k])) { console.log(JSON.stringify({ unbuilt: ['notes', 'docs'].filter((k) => !frames['f-' + k]) })); return; }   // the defined panes never reached the page: nothing to drive
 const out = {};
 const st = () => ({ artSrc: frames['f-artifacts'].attrs.src || null, artHidden: BTNS.artifacts.hidden, artOn: CLS.has('po-artifacts'), offSrc: frames['f-offpane'].attrs.src || null, offHidden: BTNS.offpane.hidden, offOn: CLS.has('po-offpane') });
 out.boot = st();
@@ -606,6 +903,7 @@ console.log(JSON.stringify(out));
 # a PHONE (the 1922 read): a generic pane loads by its TAB alone, never by the desktop flag; the current tab's frame loads on the
 # controller's apply (the boot, the layout flip), once
 _PHONE_DRIVER = r"""
+if (['notes', 'docs'].some((k) => !frames['f-' + k])) { console.log(JSON.stringify({ unbuilt: ['notes', 'docs'].filter((k) => !frames['f-' + k]) })); return; }   // the defined panes never reached the page: nothing to drive
 const out = {};
 out.boot = { notesSrc: frames['f-notes'].attrs.src || null, notesOn: CLS.has('po-notes'), artSrc: frames['f-artifacts'].attrs.src || null, sets: Object.assign({}, SETS) };
 const reapply = () => { if (window.__rompPaneApply) window.__rompPaneApply(); };   // absent at a base without it: the reads below red on behaviour, not on a missing name
@@ -621,6 +919,7 @@ console.log(JSON.stringify(out));
 """
 
 _PANES_DRIVER = r"""
+if (['notes', 'docs'].some((k) => !frames['f-' + k])) { console.log(JSON.stringify({ unbuilt: ['notes', 'docs'].filter((k) => !frames['f-' + k]) })); return; }   // the defined panes never reached the page: nothing to drive
 const last = (k) => (POSTED[k] || []).slice(-1)[0];
 const out = {};
 out.boot = { notes: CLS.has('po-notes'), lab: CLS.has('po-lab'), docs: CLS.has('po-docs'), labHidden: BTNS.lab.hidden, notesHidden: BTNS.notes.hidden,
@@ -682,10 +981,15 @@ console.log(JSON.stringify({ defined: typeof window.__rompPaneSourceOk, toggles:
 """
 
 
-def _stub(rows, seed=""):
-    """The pane controller's DOM stub for `rows` (the body attribute as the landing carries it), with `seed` run before the script."""
+def _stub(defs, seed=""):
+    """The pane controller's DOM stub: the body attribute as the landing carries it (the Artifacts record), the panes `defs` defined
+    at the kernel answered by GET /panes (the head read settled) and built by the shell's road, `seed` run before the scripts. Run
+    it before _LANDING_COLLAPSE_JS + _LANDING_PANE_RECORDS_JS: the controller parses, then the builder joins the defined panes."""
+    rows = [ARTIFACTS_ROW]
     return (_PANES_STUB.replace("__ATTR__", json.dumps(json.dumps(rows))).replace("__DATA_IDS__", json.dumps([r["id"] for r in rows]))
-            .replace("__PROTO__", json.dumps({r["id"]: r["protocol"] for r in rows})).replace("__SEED__", seed))
+            .replace("__PROTO__", json.dumps({r["id"]: r["protocol"] for r in rows})).replace("__SEED__", seed)
+            + pane_records_stub.RECORDS_DOM + "const RD = installRecordsDom(document, { adopt: adoptRecord });\n"
+            + pane_records_stub.records_state(rows=pane_records_stub.door_rows(*defs)))
 
 
 class TheInlineScripts(unittest.TestCase):
@@ -693,12 +997,12 @@ class TheInlineScripts(unittest.TestCase):
     def tearDown(self): self.w.close()
 
     def test_the_pane_controller_shows_a_data_pane_by_its_flag_hides_an_experimental_one_until_the_gear_asks_and_tells_no_url_pane(self):
-        rows = _rows(NOTES, DOCS, LAB)   # the attribute as the landing carries it, for the executed script
-        stub = _stub(rows)
-        r = _run(stub + km._LANDING_COLLAPSE_JS + _PANES_DRIVER)
+        stub = _stub((NOTES, DOCS, LAB))   # defined at the kernel: built by the shell from GET /panes, joined to the controller after its boot
+        r = _run(stub + km._LANDING_COLLAPSE_JS + _RECORDS_JS() + _PANES_DRIVER)
+        self.assertIsNone(r.get("unbuilt"), "the panes defined at the kernel reach the page through GET /panes: %r" % r.get("unbuilt"))
         b = r["boot"]
         self.assertTrue(b["notes"], "on: true puts the pane on screen at boot: %r" % b)
-        self.assertEqual(b["notesSrc"], "/notes", "a shown data pane's iframe gets its src (the optional panes' rule)")
+        self.assertEqual(b["notesSrc"], "/pane/notes/", "a shown data pane's iframe gets its src (the optional panes' rule): the state-root page's address")
         self.assertFalse(b["notesHidden"]); self.assertTrue(b["docs"], b)
         self.assertFalse(b["lab"]); self.assertTrue(b["labHidden"], "experimental: not in this dashboard until the gear's row asks")
         self.assertIsNone(b["labSrc"], "an experimental pane never loads until asked for")
@@ -707,31 +1011,31 @@ class TheInlineScripts(unittest.TestCase):
         self.assertEqual(b["docsTold"], 0, "a URL pane (protocol none) is told nothing")
         self.assertEqual((r["off"]["notes"], r["off"]["store"]["notes"], r["off"]["told"]), (False, False, False), "the rail toggle, persisted, broadcast")
         self.assertFalse(r["labRefused"]["lab"])
-        self.assertEqual((r["labOn"]["hidden"], r["labOn"]["lab"], r["labOn"]["labSrc"]), (False, True, "/lab"),
+        self.assertEqual((r["labOn"]["hidden"], r["labOn"]["lab"], r["labOn"]["labSrc"]), (False, True, "/feed"),
                          "the gear's row turning a pane on brings it on screen and loads it (the optional panes' live reconcile)")
         self.assertEqual((r["labShown"]["lab"], r["labShown"]["told"], r["labShown"]["docsTold"]), (True, True, 0), "and the panes are told; the URL pane still nothing")
         self.assertEqual((r["notesGone"]["hidden"], r["notesGone"]["notes"], r["notesGone"]["inTold"]), (True, False, False), "a gear-hidden data pane is gone from the dashboard and from the broadcast")
 
     def test_a_generic_pane_enabled_in_the_gear_loads_only_when_it_comes_on_screen(self):
-        rows = _rows(NOTES, DOCS, LAB, OFFPANE)
-        r = _run(_stub(rows, "STORE['romp:settings'] = JSON.stringify({ panes: { artifacts: true } });") + km._LANDING_COLLAPSE_JS + _GATE_DRIVER)
+        r = _run(_stub((NOTES, DOCS, LAB, OFFPANE), "STORE['romp:settings'] = JSON.stringify({ panes: { artifacts: true } });") + km._LANDING_COLLAPSE_JS + _RECORDS_JS() + _GATE_DRIVER)
+        self.assertIsNone(r.get("unbuilt"), "the panes defined at the kernel reach the page through GET /panes: %r" % r.get("unbuilt"))
         b = r["boot"]
         self.assertEqual((b["artHidden"], b["artOn"], b["artSrc"]), (False, False, None), "the Artifacts pane enabled in the gear: its button back, off screen by its rail default, NOT loaded: %r" % b)
         self.assertEqual((b["offHidden"], b["offOn"], b["offSrc"]), (False, False, None), "a non-experimental on:false data pane: in the dashboard, off screen, not loaded")
         o = r["on"]
-        self.assertEqual((o["artOn"], o["artSrc"], o["offOn"], o["offSrc"]), (True, "/artifacts", True, "/offpane"), "the rail toggle brings each on screen and loads it once: %r" % o)
+        self.assertEqual((o["artOn"], o["artSrc"], o["offOn"], o["offSrc"]), (True, "/artifacts", True, "/feed"), "the rail toggle brings each on screen and loads it once: %r" % o)
 
     def test_on_a_phone_a_generic_pane_loads_by_its_tab_alone_and_the_current_tab_loads_on_the_apply(self):
-        rows = _rows(NOTES, DOCS, LAB)
-        r = _run(_stub(rows, "MOBILE = true; TAB = 'chat'; STORE['romp-panes'] = JSON.stringify({ notes: true, docs: true });") + km._LANDING_COLLAPSE_JS + _PHONE_DRIVER)
+        r = _run(_stub((NOTES, DOCS, LAB), "MOBILE = true; TAB = 'chat'; STORE['romp-panes'] = JSON.stringify({ notes: true, docs: true });") + km._LANDING_COLLAPSE_JS + _RECORDS_JS() + _PHONE_DRIVER)
+        self.assertIsNone(r.get("unbuilt"), "the panes defined at the kernel reach the page through GET /panes: %r" % r.get("unbuilt"))
         b = r["boot"]
         self.assertEqual((b["notesOn"], b["notesSrc"], b["artSrc"]), (True, None, None), "the desktop flag on, the phone on the chat tab: the notes pane is NOT loaded into a frame the phone never shows: %r" % b)
         generic = lambda sets: {k: v for k, v in sets.items() if k not in ("chat", "timeline", "fleet", "feed", "files")}   # the hand-written optional panes load by their flag on every layout (unchanged)
         self.assertEqual(generic(b["sets"]), {}, "no generic pane's src written at boot on a phone: %r" % b["sets"])
-        self.assertEqual((r["tabNotes"]["notesSrc"], generic(r["tabNotes"]["sets"])), ("/notes", {"notes": 1}), "the current tab's frame loads on the apply (the boot, the layout flip): %r" % r["tabNotes"])
+        self.assertEqual((r["tabNotes"]["notesSrc"], generic(r["tabNotes"]["sets"])), ("/pane/notes/", {"notes": 1}), "the current tab's frame loads on the apply (the boot, the layout flip): %r" % r["tabNotes"])
         self.assertEqual(generic(r["again"]["sets"]), {"notes": 1}, "and once")
         self.assertEqual(r["tabChat"]["docsSrc"], None, "another tab current: the docs pane (flag on) still not loaded")
-        self.assertEqual(r["desktop"]["docsSrc"], "/docs", "the layout flipped to the desktop: the flag loads it: %r" % r["desktop"])
+        self.assertEqual(r["desktop"]["docsSrc"], "http://TESTHOST:9/docs/", "the layout flipped to the desktop: the flag loads it: %r" % r["desktop"])
 
     def test_the_source_check_takes_a_protocol_frame_and_drops_the_shell_a_stranger_a_foreign_origin_a_url_pane_and_a_nested_frame(self):
         r = _run(_SOURCE_STUB + km._LANDING_BOOT_JS + km._LANDING_FLEET_JS + _SOURCE_DRIVER)
@@ -781,7 +1085,10 @@ class TheInlineScripts(unittest.TestCase):
         # built; here that leg skipped in every pytest cell and its pass was invisible (the 1919 read)
 
     def test_the_baked_maps_read_the_attribute(self):
-        # executed in every CI cell (the 1922 read: these pins sat behind a dist gate that skipped them everywhere but a built checkout)
+        # executed in every CI cell (the 1922 read: these pins sat behind a dist gate that skipped them everywhere but a built checkout).
+        # SOURCE pins on the parse-time reads, which now carry the generic panes the page ships with (the Artifacts record): the panes
+        # defined at the kernel reach the same maps through the joins, executed in TheLanding (the go point's order and hooks) and in
+        # TheInlineScripts above (the controller fed by the road)
         self.assertIn("PANE['f-'+p.id]=p.id+'-pane';COLS.push('f-'+p.id);", km._LANDING_FOCUS_JS, "the focus ring's map and column list")
         self.assertIn("if(!(p.id in PN))PN[p.id]=String(p.title||p.id);", km._LANDING_ERRS_JS, "the bell's titles")
         self.assertIn("F[p.id]=document.getElementById('f-'+p.id);", km._LANDING_MOBILE_JS, "the phone's frames")

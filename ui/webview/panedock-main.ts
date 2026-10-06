@@ -230,6 +230,8 @@ class Engine {
     const on = (t: EventTarget, k: string, h: EventListenerOrEventListenerObject, o?: boolean | AddEventListenerOptions) => { t.addEventListener(k, h, o); this.offs.push(() => t.removeEventListener(k, h, o)); };
     on(window, "romp-panes", () => this.reconcile());
     on(window, "romp-chat-cols", (e) => { const d = ((e as CustomEvent).detail || {}) as { frame?: HTMLIFrameElement }; if (d.frame) this.wire(d.frame); this.reconcile(); });
+    // the panes defined at the kernel, built by the shell from its GET /panes read (the builder's romp-pane-records names their frames)
+    on(window, "romp-pane-records", (e) => { const d = ((e as CustomEvent).detail || {}) as { frames?: HTMLIFrameElement[] }; (d.frames || []).forEach((f) => this.wire(f)); this.reconcile(); });
     on(window, "resize", () => { if (this.mobile()) this.apply(); else this.render(); });
     on(this.col, "pointerdown", (e) => this.onShellPress(e as PointerEvent), true);
     on(document, "keydown", (e) => this.onKey(e as KeyboardEvent), true);
@@ -826,7 +828,12 @@ class Engine {
 // boot only in a browser TOP document (guards keep an import in node inert, so the pure exports are testable)
 if (typeof window !== "undefined" && typeof document !== "undefined" && (!window.parent || window.parent === window)) {
   const engine = new Engine();
-  const apply = () => engine.apply();
+  // the shell's GET /panes read still loading (window.__rompPaneRecords): the panes defined at the kernel are not in the row yet,
+  // and a start now would reconcile the stored layout without them and persist it, dropping their docked places. So the kit
+  // waits for the builder's romp-pane-records (dispatched for a failed read too, which starts it without them)
+  const loading = (): boolean => { try { const r = (window as any).__rompPaneRecords; return !!(r && r.state === "loading"); } catch { return false; } };
+  const apply = () => { if (!loading()) engine.apply(); };
+  window.addEventListener("romp-pane-records", apply);
   if (document.body) apply(); else document.addEventListener("DOMContentLoaded", apply);
   // re-apply on a gear save in this document, and on a write from another tab (the shell's settings idiom)
   window.addEventListener("romp:settings", apply);

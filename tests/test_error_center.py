@@ -293,12 +293,14 @@ class ErrorCenterExecutes(unittest.TestCase):
         # card update that could not be applied, and another after the fresh copy it sent back, posted the kindless catch-all
         # and landed here unlabelled with no toggle; its own kind, registered on fork lines after the tables, so it can be read
         # and muted like the rest (ui/webview/notify-kinds-registered.test.ts holds every posted kind to the three tables).
+        # 'panes missing' joined when the shell came to build the panes defined at the kernel from GET /panes: a read that fails
+        # leaves them off the page until a reload, and says so here in a kind of its own, registered after the tables like the last.
         a = self.out["filterBar"]
-        self.assertEqual(a["n"], 15)
+        self.assertEqual(a["n"], 16)
         self.assertEqual(a["first"], "offline")
         self.assertEqual(a["labels"],
                          "offline|limit|judge|warning|stalled|follow-up failed|retrying|api error|"
-                         "sdk|fleet sync|jump failed|cleared|refused|not sent|cards frozen")
+                         "sdk|fleet sync|jump failed|cleared|refused|not sent|cards frozen|panes missing")
 
     def test_muting_a_kind_hides_counts_and_live_cue_but_keeps_the_entries(self):
         a = self.out["afterMute"]

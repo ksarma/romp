@@ -28,6 +28,7 @@ var WP = require('./widget-prefs.ts');   // the order arithmetic both widget sec
 var SW = require('./status-widgets.ts');   // the status line's widgets (T409): the Status line section's rows render from its registry, as the line does
 var TW = require('./tab-widgets.ts');   // the tab-title widgets (T379): the registry the Tab widgets section's rows render from, the strip's own module
 var SC = require('./status-controls.ts');   // the status line's controls (T415 part two): the preview draws them through the line's own renderer, over a demo status
+var AC = require('./actions.ts');   // pressHold: the Panes section's re-render when the shell's GET /panes read lands waits out a press on it
 var LS = require('./landing-settle.ts');   // gestureEvidence: the chat's rule for telling the user's scroll from the browser's own (the section ask ends only on input, T379 follow-up)
 function kb() { return (typeof window !== 'undefined' && window.__rompKernelBase) || ''; }
 function ku(path) {
@@ -594,15 +595,32 @@ function initGear(post, opts) {
   function panesOf(s) { var p = (s && s.panes && typeof s.panes === 'object') ? s.panes : {}; var out = { timeline: p.timeline !== false, fleet: p.fleet !== false, feed: p.feed !== false };
     Object.keys(p).forEach(function (k) { if (!(k in out) && typeof p[k] === 'boolean') out[k] = p[k]; }); return out; }
   Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].addEventListener('change', function () { var s = load(); var p = panesOf(s); p[k] = pn[k].checked; s.panes = p; save(s); }); });
-  // the registry panes' rows (plans/panes-as-data.md): the dashboard emits its pane list as a body attribute (the shipped
-  // Artifacts record rides it on every kernel, the data panes beside it); the gear reads it from the shell (the settings page is a same-origin frame of it, and on VS Code's
-  // panel there is no dashboard and no list). A row's box writes settings.panes[id]; the shell's reconcile reads it (absent
-  // means on for a normal pane, off for an experimental one).
+  // the registry panes' rows (plans/panes-as-data.md), read from the shell (the settings page is a same-origin frame of it, and on
+  // VS Code's panel there is no dashboard and no list): the generic panes the shell ships with ride its body attribute (the shipped
+  // Artifacts record on every kernel), and the panes defined at the kernel come from the shell's GET /panes read
+  // (window.__rompPaneRecords: its checked rows once it is ok; one read per page, so the gear and the rail cannot disagree). A
+  // failed or unfinished read says so in the section, never an attribute-only list passed off as the whole set. A row's box
+  // writes settings.panes[id]; the shell's reconcile reads it (absent means on for a normal pane, off for an experimental one).
   // what a SHIPPED record beyond the hand-written five shows, for its generic Panes row (the registry's rows carry no description;
   // plans/panes-as-data.md phase three): the Artifacts pane's words are its first landing's row's
   var BUILTIN_HINTS = { artifacts: 'A session\'s written, shown and dropped files as a list and a grid of large thumbnails.' };
+  function shellWin() { return (window.parent && window.parent !== window) ? window.parent : window; }
+  function paneRecords() { try { var r = shellWin().__rompPaneRecords; return (r && typeof r === 'object') ? r : null; } catch (e) { return null; } }
   function registryPanes() {
-    try { var doc = (window.parent && window.parent !== window) ? window.parent.document : document; var raw = doc.body.getAttribute('data-panes'); var arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr.filter(function (p) { return p && typeof p.id === 'string'; }) : []; } catch (e) { return []; }
+    var rows = [];
+    try { var doc = shellWin().document; var raw = doc.body.getAttribute('data-panes'); var arr = raw ? JSON.parse(raw) : []; rows = Array.isArray(arr) ? arr.filter(function (p) { return p && typeof p.id === 'string'; }) : []; } catch (e) { rows = []; }
+    var rr = paneRecords();
+    if (rr && rr.state === 'ok' && rr.rows && typeof rr.rows.length === 'number') {
+      for (var i = 0; i < rr.rows.length; i++) { var p = rr.rows[i]; if (p && typeof p.id === 'string' && !rows.some(function (q) { return q.id === p.id; })) rows.push({ id: p.id, title: String(p.title || p.id), experimental: p.experimental === true, on: p.on === true, builtin: false }); }
+    }
+    return rows;
+  }
+  // the read's own line in place of the defined panes' rows while it has not given them: failed (the reason, and the way out) or
+  // still loading (reachable only once the boot splash's backstop has passed over a read that hangs); empty when the rows are in
+  function recordsLine() {
+    var rr = paneRecords(); if (!rr || rr.state === 'ok') return '';
+    if (rr.state === 'loading') return 'Still reading the panes defined at the kernel.';
+    return 'Couldn\'t read the panes defined at the kernel' + (rr.error ? ' (' + String(rr.error) + ')' : '') + '. Reload to try again.';
   }
   function renderRegistryRows(s) {
     var box = document.getElementById('rs-panes-data'); if (!box) return;
@@ -621,7 +639,18 @@ function initGear(post, opts) {
       span.appendChild(b); span.appendChild(sub); lab.appendChild(cb); lab.appendChild(span); box.appendChild(lab);
       cb.addEventListener('change', function () { var st = load(); var pp = (st.panes && typeof st.panes === 'object') ? st.panes : panesOf(st); pp[p.id] = cb.checked; st.panes = pp; save(st); });
     });
+    var line = recordsLine();
+    if (line) { var ln = document.createElement('div'); ln.className = 'rs-row rs-panes-row rs-panes-read'; ln.setAttribute('role', 'status'); var lsub = document.createElement('span'); lsub.className = 'rs-sub'; lsub.textContent = line; ln.appendChild(lsub); box.appendChild(ln); }
   }
+  // the shell's read settles after this page may have opened (the builder's romp-pane-records, on the shell's window): the rows are
+  // rendered again from the store, so a gear opened before the read lands shows the panes once they are in. That render rebuilds
+  // the rows, so it waits out a press on the section (pressHold, ui/CLAUDE.md: a rebuild from a fetch landing during a press takes
+  // the pressed box away and drops its click) and runs after the release, once the box's own change has been saved
+  var regHold = null;
+  try { var regBox = document.getElementById('rs-panes-data'); if (regBox) regHold = AC.pressHold(regBox); } catch (e) { regHold = null; }
+  try { if (window.parent && window.parent !== window) window.parent.addEventListener('romp-pane-records', function () { if (!document.getElementById('rs-panes-data')) return;
+    var run = function () { renderRegistryRows(load()); };
+    if (regHold) regHold.defer(run).catch(function () { /* the render's own throw, as before the hold */ }); else run(); }); } catch (e) { /* no shell */ }
   // the section is the dashboard's: VS Code's panels have no dashboard shell to hide a pane from
   if (!ownPage) Array.prototype.forEach.call(document.querySelectorAll('#rs-panes-sec,.rs-panes-row'), function (el) { el.hidden = true; });
   // ── the settings' value-picker DROPDOWNS (T117, the user 2026-08-27, screenshot: the Chat

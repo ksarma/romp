@@ -367,3 +367,8 @@ sys.modules.setdefault("sdk_blocker", _sdk_blocker)
 # ring-keyed census of the problem ring's doors that tests/test_session_env.py pins, registered the same way.
 from . import env_ring_census as _env_ring_census  # noqa: E402
 sys.modules.setdefault("env_ring_census", _env_ring_census)
+# `import pane_records_stub` (tests/pane_records_stub.py): the dashboard shell's GET /panes road over a stub page, which the node harnesses
+# that run the shell's inline scripts (test_pane_registry, test_kernel_mobile, test_pane_state_broadcast) feed the panes defined at the
+# kernel through, registered the same way.
+from . import pane_records_stub as _pane_records_stub  # noqa: E402
+sys.modules.setdefault("pane_records_stub", _pane_records_stub)

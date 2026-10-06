@@ -2,16 +2,32 @@
 """The pane registry on the REAL dashboard (plans/panes-as-data.md, phase one, section 7's served leg). A hermetic kernel
 starts with three data panes on disk: a state-root pane (pane:notes, a page under STATE/panes/notes/ that loads shim.js and
 theme.css from /pane/notes/), a URL pane (a page a second, foreign origin serves: protocol none) and an experimental
-route pane. A Chromium driver opens the dashboard and reads:
+route pane. The shell renders the shipped panes and builds the data panes in the browser from GET /panes (one source for
+the pane records). A driver opens the dashboard and reads:
   1. the rail carries the shipped five then the data panes, the experimental one hidden until the gear asks; the body
-     wears po-notes and po-docs and the attribute the inline scripts read;
+     wears po-notes and po-docs, its attribute carries the shipped generic pane alone, and the shell's GET /panes read
+     holds the data panes;
   2. the notes pane is a shown column loading /pane/notes/: its page has the shim (window.__rompReload), the theme, and
      hears the pane-set broadcast naming it;
   3. the URL pane is a sandboxed iframe with its URL as given (no ?v=, no token), marked protocol none; the forged
-     toggleFleet, notify and reveal it posts on load change nothing, and it is told nothing (its beacons say so);
+     toggleFleet, notify and reveal it posts on load change nothing, and it is told nothing (its beacons say so); its
+     frame wears the sandbox from the moment it is in the document, before any address is set (a mutation observer on
+     the top document, desktop and phone);
   4. the gear's Panes section has a row per data pane, the experimental one off; turning it on brings the pane on screen;
   5. a define at the kernel while the page is open: the pane-set revision on the next keepalive stands the reload OFFER
-     with the panes' wording, the page does not reload on its own, and the Reload click shows the new pane.
+     with the panes' wording, the page does not reload on its own, and the Reload click shows the new pane;
+  6-8. the docking kit and two phone sizes (a data pane's tab loads its page once, by the tap alone);
+  9. GET /panes answering 500: no data pane is built, and the failure is shown (the Log's entry of its own kind and the
+     gear's line on the desktop, the bar's Log mark on the phone), never an empty list passed off as the whole set;
+  10. a phone whose remembered tab is a data pane: the tab is shown once the list lands, and its page loads once;
+  11. a define landing while the shell's GET /panes read is in flight (the read held by the driver until the define is
+     in): the page shows the new pane and offers no reload for the revision it already shows, and a later define's offer
+     arrives (the witness that the keepalive path was live);
+  12. a press on a gear row held while the shell's GET /panes read lands (held past the splash's backstop, the gear open on its
+     still-reading line): the Panes section renders the read's rows after the release, and the press still toggles the box.
+The legs run in Chromium and, in a subclass, in WebKit (an `optional:` skip where the runner declares no WebKit or the
+engine is not installed; CI declares Chromium only, ROMP_SERVED_TESTS_ENGINES), each class with a kernel of its own, so a
+define in one engine's legs changes nothing the other reads.
 On this fork step 2's page does not load yet: the /pane/<id>/ routes are in the kernel's full auth class until the owner
 rules (PANE_ROUTE_CLASS_APPROVED below), so the shell's frame, which carries only the session cookie, is refused, and the
 reads that need the page are held in their own test, which pins the refusal until then.
@@ -34,6 +50,18 @@ ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 SID = "11111111-2222-4333-8444-000000000301"
+
+# Hermetic state BEFORE anything: this module loads no romp code in-process (the kernel is a subprocess under kernel_env's
+# roots), but the floor costs two lines and a later edit that adds a load must not write real state.
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+# ...and that root's per-session hosts off (the Testing rule for a test that mints its own state root): nothing resolves this
+# root as STATE today (the lab kernel's root is floored by kernel_env and written below), so this is the belt for a later load
+os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), exist_ok=True)
+Path(os.environ["XDG_STATE_HOME"], "romp", "session-hosts").write_text("off\n")
+
+# the sandbox a URL pane's frame wears (kernel/kernel.py _data_pane_markup, and the shell's builder for a pane defined at the kernel)
+URL_SANDBOX = "allow-scripts allow-forms allow-popups"
 
 import sys
 sys.path.insert(0, HERE)
@@ -92,14 +120,14 @@ window.addEventListener('message',function(e){var i=new Image();i.src='/beacon?m
 
 
 class _DocsServer(http.server.BaseHTTPRequestHandler):
-    beacons = []
+    beacons = []   # each lab class serves through a subclass holding a list of its own (setUpClass), so one engine's beacons never reach another's read
 
     def log_message(self, *a):
         pass
 
     def do_GET(self):
         if self.path.startswith("/beacon"):
-            _DocsServer.beacons.append(self.path)
+            type(self).beacons.append(self.path)
             self.send_response(204); self.end_headers(); return
         body = DOCS_PAGE.encode()
         self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers()
@@ -110,13 +138,47 @@ DRIVER = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
-const { chromium } = require("playwright");
+const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const engine = cfg.engine || "chromium";
 let browser;
-try { browser = await chromium.launch(); }
+try { browser = await playwright[engine].launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+// The URL pane's frame and its sandbox, read by a mutation observer on the TOP document from before any page script: at the frame's
+// insertion into the document and at its first src, the value each attribute had at that moment. A batch of records is read in order,
+// and an attribute's value at record i is the old value of the first LATER record for it in the same batch, else its live value, so
+// a sandbox set after the insertion (or after the src) in the same task still reads as absent where it was absent.
+const SANDBOX_WATCH = () => {
+  if (window.top !== window) return;
+  const W = window.__labSandbox = { insert: null, firstSrc: null };
+  const valAt = (recs, i, el, name) => { for (let j = i + 1; j < recs.length; j++) { const r = recs[j]; if (r.type === "attributes" && r.target === el && r.attributeName === name) return r.oldValue; } return el.getAttribute(name); };
+  const docsIn = (n) => (!n || n.nodeType !== 1) ? null : (n.id === "f-docs" ? n : (n.querySelector ? n.querySelector("#f-docs") : null));
+  new MutationObserver((recs) => { recs.forEach((r, i) => {
+    if (r.type === "childList") { for (const n of r.addedNodes) { const el = docsIn(n); if (el && !W.insert) W.insert = { sandbox: valAt(recs, i, el, "sandbox"), src: valAt(recs, i, el, "src") }; } }
+    else if (r.type === "attributes" && r.target.id === "f-docs" && r.attributeName === "src" && !W.firstSrc && r.oldValue === null)
+      W.firstSrc = { sandbox: valAt(recs, i, r.target, "sandbox"), src: valAt(recs, i, r.target, "src") };
+  }); }).observe(document, { subtree: true, childList: true, attributes: true, attributeOldValue: true, attributeFilter: ["src", "sandbox"] });
+};
+// Every state the reload core hands the shell's offer hook (window.__rompReload.offer, which the stale banner's script installs and
+// the core calls on every change of its standing offer), recorded from the page's first script: the core's object is caught as it
+// is published and its hook wrapped in place, so no offer can stand and fall between two reads of the banner.
+const OFFER_WATCH = () => {
+  if (window.top !== window) return;
+  const log = window.__labOffers = [];
+  let core;
+  Object.defineProperty(window, "__rompReload", { configurable: true, enumerable: true, get() { return core; }, set(v) {
+    core = v;
+    if (!v || typeof v !== "object") return;
+    let hook = v.offer;
+    Object.defineProperty(v, "offer", { configurable: true, enumerable: true, set(f) { hook = f; }, get() {
+      if (typeof hook !== "function") return hook;
+      return function (o) { log.push({ t: Date.now(), offer: o ? { pv: String(o.pv || ""), dv: Number(o.dv) || 0, code: String(o.code || ""), text: String(o.text || "") } : null }); return hook.apply(this, arguments); };
+    } });
+  } });
+};
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } });
-const out = {};
+await page.addInitScript(SANDBOX_WATCH);
+const out = { engine };
 // the state-root pane's document responses, status and the re-sign-in mark (the fork holds the route's auth class: PANE_ROUTE_CLASS_APPROVED)
 const docsOf = (pg, into) => pg.on("response", (rs) => { if (rs.request().resourceType() === "document" && /\/pane\/notes\/(\?|$)/.test(rs.url()))
   into.push({ status: rs.status(), reauth: rs.headers()["x-romp-reauth"] || null }); });
@@ -124,15 +186,22 @@ out.notesDocs = [];
 docsOf(page, out.notesDocs);
 const die = async (why) => { fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n"); await browser.close(); process.exit(0); };
 const rail = () => page.evaluate(() => Array.from(document.querySelectorAll(".rail-btn[data-pane]")).map((b) => ({ pane: b.getAttribute("data-pane"), text: b.textContent, hidden: b.hidden, on: b.classList.contains("on") })));
-const body = () => page.evaluate(() => ({ cls: document.body.className.split(/\s+/).filter((c) => /^po-/.test(c)).sort(), attr: JSON.parse(document.body.getAttribute("data-panes") || "null") }));
+const body = () => page.evaluate(() => ({ cls: document.body.className.split(/\s+/).filter((c) => /^po-/.test(c)).sort(), attr: JSON.parse(document.body.getAttribute("data-panes") || "null"),
+  records: (() => { const rr = window.__rompPaneRecords; return rr ? { state: rr.state, rows: (rr.rows || []).map((p) => ({ id: p.id, protocol: p.protocol, experimental: p.experimental, on: p.on })) } : null; })() }));   // the panes defined at the kernel, as the shell built them from GET /panes
 const banner = () => page.evaluate(() => { const b = document.getElementById("rstale"); if (!b) return null;
   return { shown: b.classList.contains("show"), offer: b.classList.contains("offer"), text: b.querySelector(".rs-msg").textContent, reload: document.getElementById("rstale-reload").textContent }; }).catch(() => null);
 const waitOffer = (ms) => page.waitForFunction(() => { const b = document.getElementById("rstale"); return !!b && b.classList.contains("show") && b.classList.contains("offer"); }, null, { timeout: ms }).then(() => true).catch(() => false);
 const frameEnding = async (suffix) => { let fr = null; for (let i = 0; i < 150 && !fr; i++) { fr = page.frames().find((f) => f.url().split("?")[0].endsWith(suffix)); if (!fr) await page.waitForTimeout(100); } return fr; };
 
+// BUILT(sel): the shell's GET /panes read has settled and the element named exists. A synchronous predicate handed its selector as the
+// argument (waitForFunction serialises the function, not its closure); a page with no read is judged by the element alone, and step 1
+// reads the state object itself
+const BUILT = (sel) => { const rr = window.__rompPaneRecords; return (!rr || rr.state !== "loading") && !!document.querySelector(sel); };
+const readState = (pg) => pg.evaluate(() => { const rr = window.__rompPaneRecords; return rr ? { state: rr.state, status: rr.status || 0, error: rr.error || "", rows: (rr.rows || []).map((p) => p.id) } : null; });
+
 // ---- 1. the landing ----
 await page.goto(cfg.url);
-await page.waitForSelector(".rail-btn[data-pane=notes]", { timeout: 20000 }).catch(async () => { await die("no notes rail button"); });
+await page.waitForFunction(BUILT, ".rail-btn[data-pane=notes]", { timeout: 20000 }).catch(async () => { await die("no notes rail button"); });
 await page.waitForTimeout(500);
 out.rail = await rail();
 out.body = await body();
@@ -151,6 +220,7 @@ out.notesSrc = await page.evaluate(() => document.getElementById("f-notes").getA
 
 // ---- 3. the URL pane ----
 out.docs = await page.evaluate(() => { const f = document.getElementById("f-docs"); return { src: f.getAttribute("src"), sandbox: f.getAttribute("sandbox"), proto: f.getAttribute("data-protocol"), shown: document.body.classList.contains("po-docs"), w: Math.round(f.getBoundingClientRect().width) }; });
+out.docsSandbox = await page.evaluate(() => window.__labSandbox || null);   // the frame's sandbox at its insertion and at its first src (SANDBOX_WATCH)
 await page.waitForTimeout(2500);   // the docs page's and the nested frame's forged posts on load, and any broadcast the docs page would beacon
 out.nestedLoaded = await nf.evaluate(() => { const f = document.getElementById("inner"); return !!(f && f.contentDocument && f.contentDocument.readyState === "complete"); }).catch(() => false);
 out.afterForged = await page.evaluate(() => ({ fleet: document.body.classList.contains("po-fleet"),
@@ -166,6 +236,7 @@ let gf = null;
 for (let i = 0; i < 150 && !gf; i++) { for (const f of page.frames()) { if (await f.$("#rs-pane-notes").catch(() => null)) { gf = f; break; } } if (!gf) await page.waitForTimeout(100); }
 if (!gf) await die("no settings frame with the registry rows");
 out.gear = await gf.evaluate(() => Array.from(document.querySelectorAll("#rs-panes-data input")).map((i) => ({ id: i.id, checked: i.checked, label: i.parentNode.querySelector("b").textContent })));
+out.gearLine = await gf.evaluate(() => { const l = document.querySelector("#rs-panes-data .rs-panes-read"); return l ? l.textContent : null; });   // the read's own line, shown only while the read has not given its rows
 await gf.evaluate(() => { for (const id of ["rs-pane-lab", "rs-pane-artifacts"]) { const i = document.getElementById(id); i.checked = true; i.dispatchEvent(new Event("change", { bubbles: true })); } });
 out.labAfterGear = await page.waitForFunction(() => { const b = document.querySelector(".rail-btn[data-pane=lab]"); return !!b && !b.hidden && document.body.classList.contains("po-lab"); }, null, { timeout: 10000 }).then(() => true).catch(() => false);
 out.labSrc = await page.evaluate(() => document.getElementById("f-lab").getAttribute("src"));
@@ -237,6 +308,9 @@ const nr = before["notes-pane"], fr2 = before["feed-pane"];
 if (!nr || !fr2) await die("notes or feed is not a leaf: " + JSON.stringify(Object.keys(before)));
 const x0 = nr.x + 3, y0 = nr.y + nr.h / 2;   // the ring: the pane element's left padding
 await page.mouse.move(x0, y0); await page.mouse.down(); await frame();
+// what the press landed on, for a red's message: the element under the ring's point and the kit's press, read after the down
+out.kitDown = await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); const n = document.getElementById("notes-pane"); const b = n ? n.getBoundingClientRect() : null;
+  return { under: e ? (e.id || String(e.className || e.tagName)) : null, pressed: window.__rompPaneDock.pressed(), notesNow: b ? { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width) } : null }; }, [x0, y0]).catch((e) => String(e));
 await page.mouse.move(x0 + 14, y0 + 14, { steps: 3 }); await frame();
 out.kitArmed = await page.evaluate(() => window.__rompPaneDock.dragging());
 await page.mouse.move(fr2.x + fr2.w * 0.2, fr2.y + fr2.h / 2, { steps: 8 }); await frame();
@@ -260,10 +334,11 @@ docsOf(mp, out.phoneNotesDocs);
 const notesRequests = [];
 mp.on("request", (rq) => { if (/\/pane\/notes\/(\?|$)/.test(rq.url())) notesRequests.push(rq.url()); });
 await mp.goto(cfg.url);
-await mp.waitForSelector("#mtabs button[data-pane=notes]", { timeout: 20000 }).catch(async () => { await die("no notes tab on the phone"); });
+await mp.waitForFunction(BUILT, "#mtabs button[data-pane=notes]", { timeout: 20000 }).catch(async () => { await die("no notes tab on the phone"); });
 await mp.waitForTimeout(800);
 out.phoneBefore = await mp.evaluate(() => ({ mobile: !!(window.__rompMobileOn && window.__rompMobileOn()), tab: document.body.getAttribute("data-tab"),
-  notesSrc: document.getElementById("f-notes").getAttribute("src"), tabs: Array.from(document.querySelectorAll("#mtabs button[data-pane]")).filter((b) => !b.hidden).map((b) => b.getAttribute("data-pane")) }));
+  notesSrc: document.getElementById("f-notes").getAttribute("src"), tabs: Array.from(document.querySelectorAll("#mtabs button[data-pane]")).filter((b) => !b.hidden).map((b) => b.getAttribute("data-pane")),
+  notices: (() => { try { return JSON.parse(localStorage.getItem("romp:notices") || "[]").map((n) => n.kind); } catch (e) { return ["unreadable"]; } })() }));
 await mp.click("#mtabs button[data-pane=notes]");
 out.phoneLoaded = await mp.waitForFunction(() => { const f = document.getElementById("f-notes"); return f && f.getAttribute("src") === "/pane/notes/" && f.classList.contains("m-on"); }, null, { timeout: 10000 }).then(() => true).catch(() => false);
 const mnf = await (async () => { for (let i = 0; i < 100; i++) { const f = mp.frames().find((fr) => fr.url().split("?")[0].endsWith("/pane/notes/")); if (f) return f; await mp.waitForTimeout(100); } return null; })();
@@ -307,10 +382,154 @@ await qp.waitForTimeout(1000);
 out.phoneBoot = await qp.evaluate(() => ({ artSrc: document.getElementById("f-artifacts").getAttribute("src"), notesSrc: document.getElementById("f-notes").getAttribute("src"), tab: document.body.getAttribute("data-tab"),
   artOn: document.body.classList.contains("po-artifacts"), chatShown: document.getElementById("f-chat").classList.contains("m-on"), remembered: localStorage.getItem("romp-mobile-tab") }));
 out.phoneBoot.requests = bootRequests.slice();
-// the notes tab tapped: its page loads then, once
+// the notes tab tapped (built by the shell from GET /panes: waited for, not assumed): its page loads then, once
+await qp.waitForFunction(BUILT, "#mtabs button[data-pane=notes]", { timeout: 20000 }).catch(async () => { await die("no notes tab on the phone (second boot)"); });
 await qp.click("#mtabs button[data-pane=notes]"); await qp.waitForTimeout(800);
 out.phoneNotesTap = { notesSrc: await qp.evaluate(() => document.getElementById("f-notes").getAttribute("src")), requests: bootRequests.slice() };
 await qctx.close();
+
+// ---- 9. GET /panes answers 500: no custom pane is built, and the failure is SHOWN (desktop: the Log's entry and the gear's line;
+// phone: the bar's Log mark), never an empty list passed off as the whole set. Fresh contexts, the kernel's /panes answered by the driver ----
+const panesRoute = (u) => u.pathname === "/panes";
+const failWith500 = (route) => route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+const FAILED = () => { const rr = window.__rompPaneRecords; return !!rr && rr.state === "failed"; };
+// every kind the Log's filter chips name, muted but the panes kind, and the Log emptied (the Log's own stores: its filters, its entries)
+const MUTE_ALL_BUT_PANES = () => { const kinds = Array.from(document.querySelectorAll("#rerr-fgrid .rerr-fbtn")).map((b) => (Array.from(b.classList).find((c) => /^k-/.test(c)) || "").slice(2)).filter(Boolean);
+  const f = {}; kinds.forEach((k) => { if (k !== "panes") f[k] = 1; }); localStorage.setItem("romp:errFilters", JSON.stringify(f)); localStorage.removeItem("romp:notices"); return kinds; };
+const LOG_MARK = () => ({ lit: (() => { const m = document.getElementById("merr"); return !!m && m.classList.contains("has"); })(),
+  notices: (() => { try { return JSON.parse(localStorage.getItem("romp:notices") || "[]").map((n) => n.kind); } catch (e) { return ["unreadable"]; } })() });
+const fctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
+await fctx.route(panesRoute, failWith500);
+const fp = await fctx.newPage();
+await fp.goto(cfg.url);
+out.failedRead = { settled: await fp.waitForFunction(FAILED, null, { timeout: 15000 }).then(() => true).catch(() => false) };
+await fp.waitForFunction(() => !!document.querySelector(".rail-btn[data-pane=chat]"), null, { timeout: 10000 }).catch(() => {});
+out.failedRead.read = await readState(fp);
+out.failedRead.page = await fp.evaluate(() => ({ rail: Array.from(document.querySelectorAll(".rail-btn[data-pane]")).map((b) => b.getAttribute("data-pane")),
+  frames: ["docs", "lab", "notes"].filter((id) => !!document.getElementById("f-" + id)), cls: document.body.className.split(/\s+/).filter((c) => /^po-/.test(c)).sort() }));
+await fp.evaluate(() => window.__rompOpenErrs && window.__rompOpenErrs());   // the Log, through the one opener every door routes to (the gear's Open log, the palette, the phone's bar)
+out.failedRead.log = await fp.evaluate(() => { const back = document.getElementById("rerr-back"); return { open: !!back && !back.hidden,
+  rows: Array.from(document.querySelectorAll("#rerr-list .rerr-row")).map((r) => { const c = r.querySelector(".rerr-chip");
+    return { kind: c ? (Array.from(c.classList).find((k) => /^k-/.test(k)) || "") : "", chip: c ? c.textContent : "", text: (r.querySelector(".rerr-msg") || {}).textContent || "" }; }) }; });
+await fp.evaluate(() => { const x = document.getElementById("rerr-x"); if (x) x.click(); });
+await fp.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+let fgf = null;
+for (let i = 0; i < 150 && !fgf; i++) { for (const f of fp.frames()) { if (await f.$("#rs-pane-artifacts").catch(() => null)) { fgf = f; break; } } if (!fgf) await fp.waitForTimeout(100); }
+out.failedRead.gear = fgf ? await fgf.evaluate(() => ({ rows: Array.from(document.querySelectorAll("#rs-panes-data input")).map((i) => i.id),
+  line: (() => { const l = document.querySelector("#rs-panes-data .rs-panes-read"); return l ? l.textContent : null; })() })) : null;
+await fctx.close();
+const fmctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+await fmctx.route(panesRoute, failWith500);
+const fmp = await fmctx.newPage();
+await fmp.goto(cfg.url);
+// the lab's other entries (the sdk, the usage limit) light the same mark, so every Log kind but the panes one is muted in the Log's own
+// filters, the kinds read from its filter chips, and the Log emptied; then a reload. The mark lit after it is the failed read's
+// alone, and leg 10's phone, whose read answers, reads the same filters unlit
+out.failedPhone = { muted: await fmp.waitForFunction(() => document.querySelectorAll("#rerr-fgrid .rerr-fbtn").length > 0, null, { timeout: 10000 }).then(() => fmp.evaluate(MUTE_ALL_BUT_PANES)).catch((e) => "no filter chips: " + e) };
+await fmp.reload();
+out.failedPhone.settled = await fmp.waitForFunction(FAILED, null, { timeout: 15000 }).then(() => true).catch(() => false);
+await fmp.waitForFunction(() => { const m = document.getElementById("merr"); return !!m && m.classList.contains("has"); }, null, { timeout: 5000 }).catch(() => {});
+out.failedPhone.page = await fmp.evaluate(() => ({ mobile: !!(window.__rompMobileOn && window.__rompMobileOn()), merr: (() => { const m = document.getElementById("merr"); return !!m && m.classList.contains("has"); })(),
+  tabs: Array.from(document.querySelectorAll("#mtabs button[data-pane]")).map((b) => b.getAttribute("data-pane")),
+  notices: (() => { try { return JSON.parse(localStorage.getItem("romp:notices") || "[]").map((n) => n.kind); } catch (e) { return ["unreadable"]; } })() }));
+await fmctx.close();
+
+// ---- 10. a PHONE whose remembered tab is a pane defined at the kernel (the URL pane, which loads): after a reload the tab is shown once
+// the read lands, and its page loads once ----
+const rctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+await rctx.addInitScript(SANDBOX_WATCH);
+const rp = await rctx.newPage();
+const docsLoads = [];
+rp.on("request", (rq) => { if (rq.resourceType() === "document" && rq.url().split("?")[0] === cfg.docsUrl) docsLoads.push(rq.url()); });
+await rp.goto(cfg.url);
+await rp.waitForFunction(BUILT, "#mtabs button[data-pane=docs]", { timeout: 20000 }).catch(async () => { await die("no docs tab on the phone"); });
+out.restore = { firstBoot: await rp.evaluate(() => ({ tab: document.body.getAttribute("data-tab"), docsSrc: document.getElementById("f-docs").getAttribute("src") })), loadsBefore: docsLoads.length };
+await rp.evaluate(() => localStorage.setItem("romp-mobile-tab", "docs"));
+out.restore.muted = await rp.evaluate(MUTE_ALL_BUT_PANES);   // leg 9's filters, for the contrast: a read that answers leaves the bar's Log mark unlit
+docsLoads.length = 0;
+await rp.reload();
+out.restore.shown = await rp.waitForFunction(() => document.body.getAttribute("data-tab") === "docs", null, { timeout: 20000 }).then(() => true).catch(() => false);
+const dfr = await (async () => { for (let i = 0; i < 100; i++) { const f = rp.frames().find((fr) => fr.url().split("?")[0] === cfg.docsUrl); if (f) return f; await rp.waitForTimeout(100); } return null; })();
+out.restore.frameLoaded = dfr ? await dfr.waitForLoadState("load", { timeout: 10000 }).then(() => true).catch(() => false) : false;
+await rp.waitForTimeout(1500);   // a second load of the page would come in this window
+out.restore.after = await rp.evaluate(() => { const f = document.getElementById("f-docs"); const b = f.getBoundingClientRect();
+  return { tab: document.body.getAttribute("data-tab"), on: f.classList.contains("m-on"), src: f.getAttribute("src"), remembered: localStorage.getItem("romp-mobile-tab"), visible: b.width > 100 && b.height > 100,
+    read: (window.__rompPaneRecords || {}).state || null }; });
+out.restore.loads = docsLoads.slice();
+out.restore.logMark = await rp.evaluate(LOG_MARK);
+out.restore.sandbox = await rp.evaluate(() => window.__labSandbox || null);
+await rctx.close();
+
+// ---- 11. a define landing while the shell's GET /panes read is in flight: the driver holds the read until the define is in, then lets
+// it reach the kernel. The page shows the new pane and offers no reload for the revision it shows; then a later define's offer
+// arrives, the witness that the keepalive path was live all along. Every offer state is recorded from the page's first script
+// (OFFER_WATCH) and every keepalive the shell's socket receives is read off the wire ----
+const api = (path, init) => fetch(cfg.api + path, Object.assign({}, init || {}, { headers: Object.assign({ "X-Romp-Token": cfg.token }, (init && init.headers) || {}) })).then((r) => r.json());
+const define = (rec) => api("/pane", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rec) });
+const hctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
+await hctx.addInitScript(OFFER_WATCH);
+let release, sawRead;
+const held = new Promise((r) => { release = r; });
+const readSeen = new Promise((r) => { sawRead = r; });
+await hctx.route(panesRoute, async (route) => { sawRead(true); await held; await route.continue(); });
+const hp = await hctx.newPage();
+const kas = [];
+hp.on("websocket", (ws) => { if (!/\/ws\?app=shell/.test(ws.url())) return;
+  ws.on("framereceived", (fr) => { try { const m = JSON.parse(typeof fr.payload === "string" ? fr.payload : fr.payload.toString()); if (m && m.type === "ka") kas.push({ t: Date.now(), pv: String(m.pv || "") }); } catch (e) { /* not json */ } }); });
+out.held = { rev0: (await api("/panes")).rev };
+const nav = hp.goto(cfg.url).catch((e) => "goto: " + e);
+out.held.readHeld = await Promise.race([readSeen, new Promise((r) => setTimeout(() => r(false), 15000))]);
+out.held.define = await define({ id: "held", title: "Held", source: "/feed", on: true });
+const afterHeld = await api("/panes");
+out.held.rev1 = afterHeld.rev;
+out.held.listed = afterHeld.panes.map((p) => p.id);
+release();
+const navDone = await nav;
+out.held.nav = typeof navDone === "string" ? navDone : "ok";
+out.held.built = await hp.waitForFunction(BUILT, ".rail-btn[data-pane=held]", { timeout: 20000 }).then(() => true).catch(() => false);
+const builtAt = Date.now();
+out.held.read = await readState(hp);
+out.held.page = await hp.evaluate(() => { const b = document.querySelector(".rail-btn[data-pane=held]"); const f = document.getElementById("f-held");
+  return { rail: !!b, hidden: b ? b.hidden : null, on: document.body.classList.contains("po-held"), src: f ? f.getAttribute("src") : "absent" }; });
+// two keepalives carrying the held define's revision reach the page after the build: the first has been handled by the time the second arrives
+for (let i = 0; i < 100 && kas.filter((k) => k.t > builtAt && k.pv === out.held.rev1).length < 2; i++) await hp.waitForTimeout(100);
+out.held.kasAfterBuild = kas.filter((k) => k.t > builtAt).map((k) => (k.pv === out.held.rev1 ? "rev1" : k.pv === out.held.rev0 ? "rev0" : k.pv ? "other" : "none"));
+out.held.offersBeforeWitness = await hp.evaluate(() => (window.__labOffers || []).map((e) => e.offer));
+out.held.witness = await define({ id: "witness", title: "Witness", source: "/feed", on: false });
+out.held.rev2 = (await api("/panes")).rev;
+out.held.witnessOffer = await hp.waitForFunction((rev) => (window.__labOffers || []).some((e) => e.offer && e.offer.pv === rev), out.held.rev2, { timeout: 15000 }).then(() => true).catch(() => false);
+out.held.offers = await hp.evaluate(() => (window.__labOffers || []).map((e) => e.offer));
+out.held.banner = await hp.evaluate(() => { const b = document.getElementById("rstale"); if (!b) return null;
+  return { shown: b.classList.contains("show"), offer: b.classList.contains("offer"), text: b.querySelector(".rs-msg").textContent }; }).catch(() => null);
+await hctx.close();
+
+// ---- 12. a press on a gear row held while the shell's GET /panes read lands: the driver holds the read past the splash's backstop, opens
+// the gear (its Panes section says it is still reading), presses the Artifacts row's box, lets the read through and releases once the
+// read has landed. The section renders the read's rows again, and the press still toggles the box ----
+const gctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
+let releaseRead;
+const readHeld = new Promise((r) => { releaseRead = r; });
+await gctx.route(panesRoute, async (route) => { await readHeld; await route.continue(); });
+const gp = await gctx.newPage();
+await gp.goto(cfg.url);
+out.press = { splashGone: await gp.waitForFunction(() => { const b = document.getElementById("romp-boot"); return !b || b.classList.contains("gone"); }, null, { timeout: 12000 }).then(() => true).catch(() => false) };
+await gp.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings("general"));
+let pgf2 = null;
+for (let i = 0; i < 150 && !pgf2; i++) { for (const f of gp.frames()) { if (await f.$("#rs-pane-artifacts").catch(() => null)) { pgf2 = f; break; } } if (!pgf2) await gp.waitForTimeout(100); }
+if (!pgf2) await die("no settings frame for the press across the read");
+await pgf2.waitForSelector("#rs-pane-artifacts", { state: "visible", timeout: 8000 }).catch(() => {});
+out.press.lineBefore = await pgf2.evaluate(() => { const l = document.querySelector("#rs-panes-data .rs-panes-read"); return l ? l.textContent : null; });
+out.press.before = await pgf2.evaluate(() => document.getElementById("rs-pane-artifacts").checked);
+const pbox = await (await pgf2.$("#rs-pane-artifacts")).boundingBox();
+await gp.mouse.move(pbox.x + pbox.width / 2, pbox.y + pbox.height / 2); await gp.mouse.down();
+releaseRead();
+out.press.landed = await gp.waitForFunction(() => { const rr = window.__rompPaneRecords; return !!rr && rr.state === "ok" && !!document.querySelector(".rail-btn[data-pane=notes]"); }, null, { timeout: 15000 }).then(() => true).catch(() => false);
+await gp.mouse.up();
+out.press.rowsAfter = await pgf2.waitForFunction(() => !!document.getElementById("rs-pane-notes"), null, { timeout: 5000 }).then(() => pgf2.evaluate(() => Array.from(document.querySelectorAll("#rs-panes-data input")).map((i) => i.id))).catch(() => null);
+out.press.after = await pgf2.evaluate(() => document.getElementById("rs-pane-artifacts").checked);
+out.press.saved = await gp.evaluate(() => { try { return (JSON.parse(localStorage.getItem("romp:settings") || "{}").panes || {}).artifacts === true; } catch (e) { return null; } });
+await gctx.close();
+
 fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
@@ -319,9 +538,16 @@ process.exit(0);
 
 class ServedPaneRegistry(unittest.TestCase):
     maxDiff = None
+    ENGINE = "chromium"   # the playwright engine the driver launches; a subclass per further engine, each with a kernel of its own
 
     @classmethod
     def setUpClass(cls):
+        if cls.ENGINE != "chromium":
+            # an engine the runner does not declare is an optional leg, skipped BEFORE a kernel boots (tests/conftest.py keeps an
+            # `optional:` skip a skip under ROMP_SERVED_TESTS_REQUIRE; CI declares chromium alone)
+            declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+            if declared and cls.ENGINE not in [e.strip() for e in declared.split(",")]:
+                raise unittest.SkipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (cls.ENGINE, declared))
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             if REQUIRE:
                 raise AssertionError("ROMP_SERVED_TESTS_REQUIRE=1 but the extension deps are absent")
@@ -345,7 +571,8 @@ class ServedPaneRegistry(unittest.TestCase):
         os.makedirs(proj, exist_ok=True)
         Path(proj, SID + ".jsonl").write_text(_transcript(cwd, 4))
         # the second origin: the URL pane's page
-        cls.docs = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _DocsServer)
+        cls.beacons = []
+        cls.docs = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("_DocsServer_" + cls.ENGINE, (_DocsServer,), {"beacons": cls.beacons}))
         cls.addClassCleanup(cls.docs.server_close)
         cls.addClassCleanup(cls.docs.shutdown)   # before the start, so a failed setUpClass (which skips tearDownClass) stops the serve loop too; LIFO, then the close
         cls.docs_port = cls.docs.server_address[1]
@@ -390,17 +617,19 @@ class ServedPaneRegistry(unittest.TestCase):
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
             json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "api": "http://127.0.0.1:%d" % self.port, "token": self.token,
-                       "shot": os.environ.get("ROMP_LAB_SHOT") or ""}, f)
+                       "engine": self.ENGINE, "docsUrl": self.docs_url, "shot": os.environ.get("ROMP_LAB_SHOT") or ""}, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
         try:
-            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=480,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         except subprocess.TimeoutExpired as e:
             so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
             self.fail("driver timed out; partial output:\n%s" % so[-3000:])
         if p.returncode == 3:
+            if self.ENGINE != "chromium":
+                raise unittest.SkipTest("optional: no playwright %s on this machine: %s" % (self.ENGINE, p.stderr.strip()[-300:]))
             if REQUIRE:
                 self.fail("ROMP_SERVED_TESTS_REQUIRE=1 but no Chromium launched: " + p.stderr[-500:])
             raise unittest.SkipTest("no playwright browser on this box: the served leg needs one")
@@ -443,9 +672,12 @@ class ServedPaneRegistry(unittest.TestCase):
         self.assertFalse(r["afterForged"]["fleet"], "a forged toggleFleet (the URL pane's, the nested frame's) must not open the Outline")
         self.assertFalse(any("forged" in t for t in r["afterForged"]["notices"]), "a forged notify must not reach the notification center: %r" % r["afterForged"])
         self.assertEqual(r["body"]["cls"], ["po-chat", "po-docs", "po-feed", "po-notes", "po-timeline"], r["body"])
-        self.assertEqual([(a["id"], a["protocol"], a["experimental"], a["on"], a["builtin"]) for a in r["body"]["attr"]],
-                         [("artifacts", "romp", True, False, True), ("docs", "none", False, True, False), ("lab", "romp", True, False, False), ("notes", "romp", False, True, False)],
-                         "the shipped record the generic build renders, then the data panes by id")
+        self.assertEqual([(a["id"], a["protocol"], a["experimental"], a["on"], a["builtin"]) for a in r["body"]["attr"]], [("artifacts", "romp", True, False, True)],
+                         "the body attribute carries the shipped record the generic build renders, alone")
+        self.assertEqual((r["body"]["records"] or {}).get("state"), "ok", r["body"]["records"])
+        self.assertEqual([(a["id"], a["protocol"], a["experimental"], a["on"]) for a in r["body"]["records"]["rows"]],
+                         [("docs", "none", False, True), ("lab", "romp", True, False), ("notes", "romp", False, True)],
+                         "the data panes by id, built by the shell from GET /panes")
         # 2. the state-root pane: a shown column loading its page (the page's own reads, the shim, the theme and the broadcast, are in
         # test_a_state_root_pane_page_loads_only_once_its_auth_class_is_ruled: on this fork the route's auth class is held)
         self.assertEqual(r["notesSrc"], "/pane/notes/")
@@ -455,12 +687,13 @@ class ServedPaneRegistry(unittest.TestCase):
         # 3. the URL pane: sandboxed, the URL as given, protocol none; its forged messages change nothing; it is told nothing
         self.assertEqual(r["docs"], {"src": self.docs_url, "sandbox": "allow-scripts allow-forms allow-popups", "proto": "none", "shown": True, "w": r["docs"]["w"]})
         self.assertGreater(r["docs"]["w"], 60)
-        told = [b for b in _DocsServer.beacons if "panes" in b]
+        told = [b for b in self.beacons if "panes" in b]
         self.assertEqual(told, [], "the URL pane is outside the protocol: no broadcast reaches it")
         # 4. the gear's rows
         self.assertEqual(r["gear"], [{"id": "rs-pane-artifacts", "checked": False, "label": "Artifacts"}, {"id": "rs-pane-docs", "checked": True, "label": "Docs"},
                                      {"id": "rs-pane-lab", "checked": False, "label": "Lab"}, {"id": "rs-pane-notes", "checked": True, "label": "Notes"}],
                          "the generic rows: the shipped Artifacts record (off by default, experimental) and the data panes")
+        self.assertIsNone(r["gearLine"], "the read gave its rows, so the section carries no line about the read: %r" % r["gearLine"])
         self.assertTrue(r["labAfterGear"], "the gear's row brings the experimental pane into the dashboard and on screen: %r" % {k: r[k] for k in ("labAfterGear", "labSrc", "settingsPanes")})
         self.assertEqual(r["labSrc"], "/feed", "loaded when shown")
         self.assertEqual((r["settingsPanes"] or {}).get("lab"), True, "saved under its own id in the pane set")
@@ -488,7 +721,8 @@ class ServedPaneRegistry(unittest.TestCase):
         self.assertIn(["notes", "Notes"], r["kitTitleRail"])
         self.assertTrue(r["kitInjected"], "the detector is injected into the protocol pane's page and the kit's class is on its body")
         # (the press on the notes page's declared empty surface needs the page: held with step 2's reads)
-        self.assertTrue(r["kitArmed"], "the ring's press lifts the pane after the slop")
+        self.assertTrue(r["kitArmed"], "the ring's press lifts the pane after the slop: the press %r; the notes rect read before it %r; the zone %r"
+                        % (r.get("kitDown"), (r.get("kitRects") or {}).get("notes-pane"), r.get("kitZone")))
         self.assertEqual(r["kitZone"], {"target": "feed-pane", "edge": "left"}, "the feed's left half-zone: %r" % r["kitZone"])
         self.assertEqual(r["kitOutline"], {"on": True, "text": "Notes"}, "the live outline names the pane by its record's title: %r" % r["kitOutline"])
         after = r["kitAfterDrop"]["leaves"]
@@ -559,6 +793,95 @@ class ServedPaneRegistry(unittest.TestCase):
         self.assertEqual(pb2["remembered"], "chat", "the remembered tab is repaired to the chat")
         self.assertEqual(r["phoneNotesTap"]["notesSrc"], "/pane/notes/", "the notes tab tapped loads its page")
         self.assertEqual(len(r["phoneNotesTap"]["requests"]), 1, "once: %r" % r["phoneNotesTap"]["requests"])
+
+    def test_a_url_panes_frame_wears_its_sandbox_before_it_has_an_address(self):
+        r = self._result()
+        # 3. the URL pane's frame, read by a mutation observer on the top document from before any page script (SANDBOX_WATCH): at its
+        # insertion into the document it already wears the sandbox and has no src, and at its first src the sandbox is still in place
+        # (the frame is made with data-src and loads when it comes on screen); the desktop column and the phone's restored tab
+        for where, s in (("desktop", r["docsSandbox"]), ("phone", r["restore"]["sandbox"])):
+            self.assertEqual(s, {"insert": {"sandbox": URL_SANDBOX, "src": None}, "firstSrc": {"sandbox": URL_SANDBOX, "src": self.docs_url}},
+                             "%s, %s: the URL pane's frame is sandboxed from its insertion, before any address: %r" % (self.ENGINE, where, s))
+
+    def test_a_failed_read_of_the_pane_list_builds_no_custom_pane_and_is_shown(self):
+        r = self._result()
+        # 9. GET /panes answered 500 (the driver's route, fresh contexts): the read is marked failed with the status, no custom pane is built
+        # (no rail button, no frame, no column), the Log holds one entry of the panes kind naming the status, the gear's Panes section shows
+        # the Artifacts row and the failed line in place of the defined panes' rows; on the phone the bar's Log mark is lit by that entry
+        fr = r["failedRead"]
+        self.assertTrue(fr["settled"], "%s: the shell's read is marked failed: %r" % (self.ENGINE, fr))
+        self.assertEqual((fr["read"] or {}).get("state"), "failed", fr["read"])
+        self.assertEqual((fr["read"]["status"], fr["read"]["error"], fr["read"]["rows"]), (500, "/panes answered HTTP 500", []), fr["read"])
+        self.assertEqual(fr["page"]["rail"], ["chat", "timeline", "fleet", "feed", "waiting", "files", "artifacts"], "the shipped panes alone: %r" % fr["page"])
+        self.assertEqual(fr["page"]["frames"], [], "no frame for a pane the read did not give: %r" % fr["page"])
+        self.assertEqual([c for c in fr["page"]["cls"] if c in ("po-docs", "po-lab", "po-notes")], [], fr["page"])
+        self.assertTrue(fr["log"]["open"], "the Log opened: %r" % fr["log"])
+        panes = [row for row in fr["log"]["rows"] if row["kind"] == "k-panes"]
+        self.assertEqual(panes, [{"kind": "k-panes", "chip": "panes missing",
+                                  "text": "Couldn't read the panes defined at the kernel (/panes answered HTTP 500), so they are missing from this page. Reload to try again."}],
+                         "%s: one Log entry of its own kind names the failure: %r" % (self.ENGINE, fr["log"]["rows"]))
+        self.assertEqual(fr["gear"], {"rows": ["rs-pane-artifacts"], "line": "Couldn't read the panes defined at the kernel (/panes answered HTTP 500). Reload to try again."},
+                         "%s: the gear's Panes section shows the shipped row and says the defined panes could not be read: %r" % (self.ENGINE, fr["gear"]))
+        fm = r["failedPhone"]
+        self.assertTrue(fm["settled"], "%s: the phone's read is marked failed: %r" % (self.ENGINE, fm))
+        self.assertTrue(fm["page"]["mobile"], fm["page"])
+        self.assertIn("panes", fm["muted"], "the Log's filter chips name the panes kind, the one kind left unmuted: %r" % fm["muted"])
+        self.assertIn("panes", fm["page"]["notices"], "the Log holds the failure: %r" % fm["page"])
+        self.assertTrue(fm["page"]["merr"], "%s: the phone bar's Log mark is lit, every other kind muted: %r" % (self.ENGINE, fm["page"]))
+        self.assertEqual((r["restore"]["logMark"]["lit"], "panes" in r["restore"]["logMark"]["notices"]), (False, False),
+                         "%s: the contrast, leg 10's phone under the same filters, whose read answers: the mark unlit, no entry of the kind: %r" % (self.ENGINE, r["restore"]["logMark"]))
+        self.assertEqual([t for t in fm["page"]["tabs"] if t in ("docs", "lab", "notes")], [], "no tab for a pane the read did not give: %r" % fm["page"])
+        self.assertNotIn("panes", r["phoneBefore"]["notices"], "a read that answers logs nothing of the kind (step 7's phone): %r" % r["phoneBefore"])
+
+    def test_on_a_phone_a_remembered_tab_on_a_defined_pane_is_shown_once_the_list_lands(self):
+        r = self._result()
+        # 10. the phone: the URL pane's tab remembered, then a reload. The tab is shown once the shell has built the pane from its read, the
+        # remembered key still names it, and the pane's page loads once
+        rs = r["restore"]
+        self.assertEqual((rs["firstBoot"], rs["loadsBefore"]), ({"tab": "chat", "docsSrc": None}, 0), "before: the chat, the URL pane unloaded: %r" % rs)
+        self.assertTrue(rs["shown"], "%s: the remembered tab is shown after the reload: %r" % (self.ENGINE, rs))
+        self.assertEqual(rs["after"], {"tab": "docs", "on": True, "src": self.docs_url, "remembered": "docs", "visible": True, "read": "ok"},
+                         "%s: the URL pane's tab is the one shown, its page on screen: %r" % (self.ENGINE, rs["after"]))
+        self.assertTrue(rs["frameLoaded"], "the page loaded: %r" % rs)
+        self.assertEqual(len(rs["loads"]), 1, "%s: the page is requested once: %r" % (self.ENGINE, rs["loads"]))
+
+    def test_a_pane_defined_while_the_list_is_read_is_built_and_offers_no_reload(self):
+        r = self._result()
+        # 11. a define landing while the shell's GET /panes read was held by the driver: the page shows the new pane, built from the read,
+        # and no offer stands for the revision the page shows (two keepalives carrying it reached the page after the build); a later
+        # define's offer then arrives, the witness that the keepalive path was live, with the panes' wording
+        h = r["held"]
+        self.assertIs(h["readHeld"], True, "%s: the shell's GET /panes read was in flight, held until the define was in: %r" % (self.ENGINE, h))
+        self.assertEqual(h["define"].get("ok"), True, h["define"])
+        self.assertIn("held", h["listed"]); self.assertNotEqual(h["rev1"], h["rev0"], "the define moved the pane set's revision")
+        self.assertTrue(h["built"], "%s: the page shows the pane defined during its read: %r" % (self.ENGINE, h))
+        self.assertEqual(((h["read"] or {}).get("state"), "held" in ((h["read"] or {}).get("rows") or [])), ("ok", True), h["read"])
+        self.assertEqual(h["page"], {"rail": True, "hidden": False, "on": True, "src": "/feed"}, "on: true, on screen: %r" % h["page"])
+        self.assertGreaterEqual(h["kasAfterBuild"].count("rev1"), 2, "%s: keepalives carrying the revision the page shows reached it after the build: %r" % (self.ENGINE, h["kasAfterBuild"]))
+        self.assertEqual([o for o in h["offersBeforeWitness"] if o], [], "%s: no offer stood before the later define: %r" % (self.ENGINE, h["offersBeforeWitness"]))
+        self.assertEqual([o for o in h["offers"] if o and o["pv"] == h["rev1"]], [], "%s: never an offer for the revision the page shows: %r" % (self.ENGINE, h["offers"]))
+        self.assertEqual(h["witness"].get("ok"), True, h["witness"]); self.assertNotEqual(h["rev2"], h["rev1"])
+        self.assertTrue(h["witnessOffer"], "%s: the later define's revision stands an offer (the keepalive path was live): %r" % (self.ENGINE, h["offers"]))
+        self.assertEqual([o["text"] for o in h["offers"] if o and o["pv"] == h["rev2"]][-1:], ["The set of panes changed. Reload to see it."], h["offers"])
+        self.assertEqual(h["banner"], {"shown": True, "offer": True, "text": "The set of panes changed. Reload to see it."}, h["banner"])
+
+    def test_a_press_on_a_gear_row_held_while_the_list_lands_still_toggles_it(self):
+        r = self._result()
+        # 12. the read held past the splash's backstop, the gear open on its still-reading line, a press on the Artifacts row's box held
+        # while the read lands: the section renders the read's rows (it re-renders on the builder's event) and the press is not lost
+        # to that render (ui/CLAUDE.md, click-safe across re-renders: the render waits out the press)
+        p = r["press"]
+        self.assertEqual((p["lineBefore"], p["before"], p["landed"]), ("Still reading the panes defined at the kernel.", False, True), p)
+        self.assertIn("rs-pane-notes", p["rowsAfter"] or [], "%s: the rows the read gave are rendered once the press is released: %r" % (self.ENGINE, p))
+        self.assertEqual((p["after"], p["saved"]), (True, True), "%s: the press held while the read landed still toggles the row's box and saves it: %r" % (self.ENGINE, p))
+
+
+class ServedPaneRegistryWebKit(ServedPaneRegistry):
+    """The same legs in WebKit, with a kernel of its own (setUpClass is per class), so the defines its legs make change nothing the
+    Chromium class reads. An optional leg: skipped, with a reason starting `optional:`, where the runner declares no webkit in
+    ROMP_SERVED_TESTS_ENGINES or the engine does not launch."""
+    ENGINE = "webkit"
+    _res = None
 
 
 class TheBuiltBundles(unittest.TestCase):

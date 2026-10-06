@@ -49,6 +49,44 @@ class BootSplash(unittest.TestCase):
         self.assertIn("classList.add('gone')", self.html)
         self.assertIn("setTimeout(hide,5000)", self.html, "a backstop so it can never trap the user")
 
+    def test_the_splash_also_waits_for_the_pane_records_read_executed(self):
+        # the shell builds the panes defined at the kernel from its GET /panes read (window.__rompPaneRecords, the head script's), so
+        # the splash covers that wait too: a pane's ready with the read still loading leaves it up, the read settling then fades it;
+        # a settled read fades it on the first ready, as before; the 5 s backstop fades it alone, whatever the read does
+        import json, subprocess
+        harness = r"""
+'use strict';
+global.window = global;
+const CLS = new Set(), LISTEN = [], TIMERS = [];
+const boot = { classList: { add: (c) => CLS.add(c) }, parentNode: null };
+global.document = { getElementById: (id) => (id === 'romp-boot' ? boot : null), querySelectorAll: () => [] };
+global.addEventListener = (t, f) => { if (t === 'message') LISTEN.push(f); };
+global.setTimeout = (f, ms) => { TIMERS.push({ f, ms }); return TIMERS.length; };
+global.location = { origin: 'http://TESTHOST:1' };
+window.__rompPaneRecords = { state: __STATE__, done: [] };
+"""
+        drive = r"""
+window.__rompPaneSourceOk = () => true;
+const out = {};
+LISTEN.forEach((f) => f({ data: { romp: 'ready' } })); out.afterReady = CLS.has('gone');
+const rr = window.__rompPaneRecords; rr.state = 'ok'; const d = rr.done; rr.done = []; d.forEach((f) => f()); out.afterSettle = CLS.has('gone');
+out.backstop = TIMERS.filter((t) => t.ms === 5000).length;
+console.log(JSON.stringify(out));
+"""
+        backstop = r"""
+const out = {}; TIMERS.filter((t) => t.ms === 5000).forEach((t) => t.f()); out.gone = CLS.has('gone'); console.log(JSON.stringify(out));
+"""
+        def run(state, driver):
+            js = harness.replace("__STATE__", json.dumps(state)) + km._LANDING_BOOT_JS + driver
+            r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stderr[-800:])
+            return json.loads(r.stdout.strip().splitlines()[-1])
+        o = run("loading", drive)
+        self.assertEqual((o["afterReady"], o["afterSettle"], o["backstop"]), (False, True, 1), "loading: a pane's ready waits for the read, which then fades the splash: %r" % o)
+        o = run("ok", drive)
+        self.assertEqual(o["afterReady"], True, "a settled read: the first ready fades it")
+        self.assertEqual(run("loading", backstop), {"gone": True}, "the backstop fades it alone")
+
     def test_the_timeline_signals_ready_to_the_shell(self):
         tv = (pathlib.Path(BIN).parent / "ui" / "romp-timeline-view.js").read_text()
         self.assertIn("_signalReady()", tv, "the timeline tells the shell it has first content")

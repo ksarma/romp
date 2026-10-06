@@ -68553,9 +68553,10 @@ def _boards():
 # A pane is a record in ONE schema: the shipped panes are the code constants below (_CODE_PANES, checked at
 # import like the code boards), every other pane a JSON document under STATE/panes/<id>.json written by define_pane
 # (the board door, field for field: the check, a reserved id refused, an atomic write, POST /pane, GET /panes,
-# `romp pane`). The shell renders from _pane_order() per request; with an empty registry the code panes' rendering (the body
-# tag, the rail, the tabs, the pane row, the column rules, the gutter calls) is unchanged from the landing before the registry
-# (tests/test_pane_registry.py pins it against a fixture; the inline scripts gained the registry's reads). A URL source is a plain sandboxed iframe with no
+# `romp pane`). The shell renders the shipped panes, unchanged from the landing before the registry whatever it holds (the body
+# tag, the rail, the tabs, the pane row, the column rules, the gutter calls; tests/test_pane_registry.py pins them against a
+# fixture), and builds the panes defined here in the browser from GET /panes, one source for the pane records
+# (_LANDING_PANE_RECORDS_JS; the inline scripts gained the joins). A URL source is a plain sandboxed iframe with no
 # token and no protocol; a state-root source (pane:<id>) is a static page under STATE/panes/<id>/ served at /pane/<id>/
 # with shim.js and theme.css beside it; a route source is a page the kernel already serves.
 _PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
@@ -68635,8 +68636,9 @@ _CODE_PANES = tuple(_pane_check(d, allow_reserved=True)[0] for d in (
 ))
 assert all(_CODE_PANES), "a shipped pane's record failed its own check"
 # THE HAND-WRITTEN LANDING renders these five (the chat, the Sessions band, the Outline, the Feed, the Files pane: the pins name
-# every line of theirs); every other pane in _pane_order(), a shipped record beyond them (the Artifacts pane) or a data pane,
-# is rendered by the GENERIC build below and rides body[data-panes] to the inline scripts (plans/panes-as-data.md, phase three).
+# every line of theirs); a shipped record beyond them (the Artifacts pane) is rendered by the GENERIC build below and rides
+# body[data-panes] to the inline scripts (plans/panes-as-data.md, phase three), and a data pane is built by the shell from GET
+# /panes with the same shapes (_LANDING_PANE_RECORDS_JS).
 _HAND_PANES = ("chat", "timeline", "fleet", "feed", "waiting", "files")   # the fork's Waiting pane is hand-written too: the landing's markup, the rail, the gutters (gv-c, gv-d) and the column rules name it
 _COLUMN_IDS = tuple(k for k in _HAND_PANES if k != "timeline")   # the hand-written COLUMNS, left to right (the timeline is the bottom band): the gutter chains start from these
 _PANES_MEMO = {"slot": None}        # (listing key, {"data": {id: defn}, "rev": digest}) or None
@@ -68656,9 +68658,9 @@ def _panes_snapshot():
     """ONE listing of STATE/panes -> {"data": {id: defn}, "rev": digest}: the data-defined panes and the pane set's revision
     from the same directory listing and file stats, memoized on the directory's stat and each file's (mtime_ns, size), the
     board store's rule (_boards_data). A file that fails the check is skipped and named on stderr once per (file, reason).
-    The landing takes ONE snapshot per build (_landing: `snap = _panes_snapshot()`, its records to `_pane_order`, its revision to the
-    reload core) and hands the list to every builder, so a
-    build costs one listing (the 1919 read, low b), not one per builder."""
+    A reader that needs the records and the revision takes both from ONE snapshot (GET /panes, the state-root pane route), so a
+    define landing between two listings cannot pair one set's rows with another's revision (the 1919 read, low b). The landing
+    lists none: it renders the shipped panes, and the shell builds the defined ones from GET /panes."""
     d = _pane_dir()
     st = _stat_key(d)
     try:
@@ -68710,7 +68712,8 @@ def _panes_data():
 
 def _panes_rev():
     """The pane set's revision: a short digest of the data panes' files (name, mtime, size), "0" with none. It rides every
-    keepalive beside the build token, and a page whose baked revision differs is OFFERED a reload (never a self-reload)."""
+    keepalive beside the build token, and a page whose revision differs (the one it read from GET /panes, or the state-root
+    pane route's baked one) is OFFERED a reload (never a self-reload)."""
     return _panes_snapshot()["rev"]
 
 
@@ -68772,9 +68775,10 @@ def _pane_served_src(p):
 
 
 def _panes_attr(panes=None):
-    """The body attribute carrying the GENERIC panes (the Artifacts record and the data panes) to the inline scripts and the
-    pane bundles, `data-panes="[...]"`: id, title, protocol, experimental, on, and builtin for a shipped record. The empty
-    string only when no pane follows the hand-written five."""
+    """The body attribute carrying the GENERIC panes of `panes` to the inline scripts and the pane bundles, `data-panes="[...]"`:
+    id, title, protocol, experimental, on, and builtin for a shipped record. The landing hands the shipped panes, so the attribute
+    carries the Artifacts record (the panes defined at the kernel reach the shell from GET /panes). The empty string only when no
+    pane follows the hand-written five."""
     code = {p["id"] for p in _CODE_PANES}
     rows = [{"id": p["id"], "title": p["title"], "protocol": p["protocol"], "experimental": p["experimental"], "on": p["on"], "builtin": p["id"] in code}
             for p in _generic_panes(panes)]
@@ -68782,9 +68786,11 @@ def _panes_attr(panes=None):
 
 
 def _data_pane_markup(panes=None):
-    """The pane row's markup for the generic panes, after the hand-written columns: a gutter and a .pane with a data-src iframe
-    each (a generic pane loads when it comes ON SCREEN, never when merely enabled in the gear: the Artifacts page's first load
-    walks the remembered session, the feed owner's constraint); a URL source's iframe is sandboxed and marked protocol none."""
+    """The pane row's markup for the generic panes of `panes`, after the hand-written columns: a gutter and a .pane with a
+    data-src iframe each (a generic pane loads when it comes ON SCREEN, never when merely enabled in the gear: the Artifacts page's
+    first load walks the remembered session, the feed owner's constraint); a URL source's iframe is sandboxed and marked protocol
+    none. The landing renders the shipped ones; the shell builds the same markup for a pane defined at the kernel
+    (_LANDING_PANE_RECORDS_JS)."""
     out = []
     for p in _generic_panes(panes):
         pid = p["id"]
@@ -72392,7 +72398,7 @@ function declined(){var d=readNotNow();if(!d)return false;return (!seen.dv||seen
 function offerState(){return offered?{dv:offered.dv,code:offered.code,pv:offered.pv||'',behind:behindSeen,text:(offered.pv&&!offered.dv&&!offered.code)?WORDS.panes:(behindSeen?WORDS.behind:WORDS.offer)}:null;}   /* the panes wording only when the revision is the SOLE new information; a build change beside it keeps the build's words */
 function render(){if(!R.offer)return;try{R.offer(offerState());}catch(e){}}
 function propose(dv,code){var s=shell();if(s){s.propose(dv,code,arguments.length>2?arguments[2]:'');return;}   /* a pane hands the shell what it saw: ONE offer for the top document */
-var moved=false;dv=Number(dv)||0;code=code?String(code):'';var pv=(arguments.length>2&&arguments[2])?String(arguments[2]):'';
+var moved=false;dv=Number(dv)||0;code=code?String(code):'';var pv=(arguments.length>2&&arguments[2])?String(arguments[2]):'';if(pv&&pv===String(PANES0))pv='';   /* the revision the page shows (adoptPanes) is nothing new, whoever relays it */
 if(dv&&dv>seen.dv){seen.dv=dv;moved=true;}if(code&&code!==seen.code){seen.code=code;moved=true;}if(pv&&pv!==seen.pv){seen.pv=pv;moved=true;}
 if(!moved||fired||declined())return;var next={dv:seen.dv,code:seen.code,pv:seen.pv};if(offered&&offerKey(offered)===offerKey(next))return;offered=next;render();}
 function accept(){var s=shell();if(s){s.accept();return;}if(!offered||fired)return;
@@ -72403,6 +72409,7 @@ function behind(){var s=shell();if(s){s.behind();return;}if(behindSeen)return;be
 function demand(why){request('required',String(why||''));}   /* the safety valve: {type:"reloadRequired", why} from a kernel that must force a reload for correctness, through the same holds; nothing sends it today */
 function noteDv(dv){if(LOADED&&dv&&dv>LOADED)propose(dv,'');}
 function notePanes(pv){if(pv&&PANES0&&String(pv)!==String(PANES0))propose(0,'',pv);}   /* the revision rides its own slot: a build offer standing beside it keeps its words and its decline */   /* the pane set changed at the kernel (plans/panes-as-data.md): one offer per revision, the build's bar and words of its own */
+function adoptPanes(rev){rev=rev?String(rev):'';if(!rev)return;PANES0=rev;if(offered&&offered.pv===rev&&!offered.dv&&!offered.code){offered=null;render();}}   /* the pane set's revision the page READ from GET /panes (the dashboard shell's builder; a pane page standing alone, its shim): the baseline notePanes and propose compare against, none until then. A standing offer whose only news was this revision is withdrawn; seen.pv is left alone, since declined() reads it against the stored Not now */
 function noteVersion(v){if(!v)return;if(v.boot&&BOOT&&v.boot!==BOOT){restarted++;BOOT=v.boot;}   /* a restart is counted and BOOT re-latched (restarted() counts restarts, not the polls that follow one); by itself it owes nothing (2026-09-16) */
 if(CODE&&v.code_ident&&v.code_ident!==CODE)propose(0,String(v.code_ident));if(v.dist_ver)noteDv(v.dist_ver);   /* a code identity other than the page's is a changed build; an answer without one decides nothing (the dist_ver stands alone) */
 if(typeof v.taskTracking==='boolean'){window.__rompTaskTracking=v.taskTracking;if(window.__rompApplyPanes)window.__rompApplyPanes();}}   // the Task tracking switch (T404): the shell's rail follows the kernel
@@ -72426,7 +72433,7 @@ var END=['pointerup','touchend','touchcancel','scrollend','dragend','drop','sele
 function ended(){setTimeout(function(){var s=shell();if(s)s.tryFire();else tryFire();},0);}
 for(var k=0;k<END.length;k++)document.addEventListener(END[k],ended,true);
 window.addEventListener('blur',function(){ptr=0;pan=false;drag=false;ended();});
-var R={request:request,propose:propose,accept:accept,dismiss:dismiss,behind:behind,require:demand,tryFire:tryFire,ended:ended,busyHere:busyHere,paneHere:paneHere,busy:busy,noteDv:noteDv,notePanes:notePanes,noteVersion:noteVersion,checkBoot:checkBoot,announce:announce,restarted:function(){return restarted;},offered:offerState,seen:function(){return seen;},words:WORDS,
+var R={request:request,propose:propose,accept:accept,dismiss:dismiss,behind:behind,require:demand,tryFire:tryFire,ended:ended,busyHere:busyHere,paneHere:paneHere,busy:busy,noteDv:noteDv,notePanes:notePanes,adoptPanes:adoptPanes,noteVersion:noteVersion,checkBoot:checkBoot,announce:announce,restarted:function(){return restarted;},offered:offerState,seen:function(){return seen;},words:WORDS,
 inShell:function(){return !!shell();},owed:function(){return owed;},fired:function(){return fired;},refusedFor:function(){return refusedFor;},
 released:function(){var s=shell();return (s&&s.released)?s.released():overdueNote;},refused:null,held:null,offer:null,waiting:'',loaded:LOADED,boot:BOOT};
 window.__rompReload=R;})();/*end-reload-core*/"""
@@ -72435,8 +72442,10 @@ window.__rompReload=R;})();/*end-reload-core*/"""
 def _reload_core(v=0, pv=None):
     """The reload core with this page's build token, this kernel's boot id and the pane set's revision baked in (see
     _RELOAD_CORE_JS). Embedded by _shim (every pane page) and _stale_block (the dashboard landing). `pv`: the revision the
-    page's build READ (the landing hands its snapshot's; the 1919 read: two listings per build could disagree across a define
-    landing between them, and the page then showed the old set with the new revision baked, never offered a reload)."""
+    page's build READ (the state-root pane route hands its snapshot's; the 1919 read: two listings per build could disagree
+    across a define landing between them, and the page then showed the old set with the new revision baked, never offered a
+    reload). The landing and the pages the route table renders hand the empty string: they bake none and take the revision
+    from GET /panes through the core's adoptPanes."""
     return (_RELOAD_CORE_JS.replace("__LOADEDVER__", str(int(v))).replace("__ROMP_BOOT__", json.dumps(_BOOT_ID))
             .replace("__ROMP_CODE__", json.dumps(_code_ident() or ""))
             .replace("__OFFER_MSG__", json.dumps(RELOAD_OFFER_MSG)).replace("__OFFER_BEHIND__", json.dumps(RELOAD_OFFER_BEHIND_MSG))
@@ -72461,11 +72470,14 @@ def _reload_core_js(v=0, boot=None, code=None):
 
 def _shim(app, v=0, caps="", no_stale=False, pv=None, data=None):
     # ONE listing for the page (the 1952 read: two reads could disagree across a define, and the keepalive gate then never called
-    # notePanes for the very revision that changed): the route hands its snapshot's revision and records; handed none, one snapshot
-    # here serves the reload core's PANES0, the shim's LOADEDPV gate and the label alike
-    snap = _panes_snapshot() if (pv is None or data is None) else None
-    pvv = snap["rev"] if pv is None else pv
-    label = _pane_label(app, _pane_order(snap["data"] if data is None else data))
+    # notePanes for the very revision that changed): the state-root pane route hands its snapshot's revision and records, which
+    # serve the reload core's PANES0, the shim's LOADEDPV gate and the label alike. Handed none (every page the route table
+    # renders), the page bakes NO pane-set revision, an empty PANES0 and LOADEDPV that leave notePanes inert, and lists no
+    # registry: a page takes the revision from GET /panes (inside the dashboard shell the shell's read decides, on its own
+    # socket's keepalive; a page standing alone reads it itself, the shim's read below), and its label is a shipped pane's word
+    # (the code panes; a page outside them wears its key capitalised, Settings)
+    pvv = "" if pv is None else pv
+    label = _pane_label(app, list(_CODE_PANES) if data is None else _pane_order(data))
     # `v` = the dist build token this page was served with (its ?v= urls). The shim compares it against the
     # `dv` riding every keepalive and, on drift, hands it to the reload core it embeds as the template's first slot
     # (window.__rompReload, _RELOAD_CORE_JS), which OFFERS a reload (the user 2026-09-16, superseding the 2026-09-08
@@ -72756,6 +72768,17 @@ try{if(window.__rompReload&&!window.__rompReload.inShell()){window.__rompReload.
 // null takes it down (accepted, or declined); a wording change (o.text moved: an unknownOp refusal arrived) is written into the standing bar
 try{if(window.__rompReload&&!window.__rompReload.inShell()){window.__rompReload.offer=function(o){var have=document.getElementById("romp-stale-self");var mine=have&&have.dataset.kind==="offer";
 if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text;return;}selfBar(o.text,"offer");};}}catch(e){}
+// [fork] the pane set's revision on a page standing ALONE (outside the dashboard shell: a pane page opened by itself, the VS Code panel). The page bakes
+// none, so it reads GET /panes with the page key, the read the shell builds its custom panes from, and hands the answer's revision to the reload
+// core (adoptPanes) and to the keepalive gate below (LOADEDPV), which offer a reload when a keepalive carries another. A failed read is said on the
+// page's one bar (kind warn), never taken for no change; a 403 asking for a new sign-in says nothing, since the page-key script is taking the top
+// frame to /login. Inside the shell (its head read, window.parent.__rompPaneRecords, exists before any pane frame does) the shell's read and its own
+// keepalive decide, and this page reads nothing; a state-root page carries the route's baked revision (LOADEDPV) and reads nothing either.
+try{var RPV=window.__rompReload,inDash=false;try{inDash=window.parent!==window&&!!window.parent.__rompPaneRecords;}catch(e){}
+if(RPV&&RPV.adoptPanes&&!RPV.inShell()&&!inDash&&!LOADEDPV&&typeof fetch==="function"){var pvReauth=false;
+fetch("/panes",{cache:"no-store"}).then(function(r){if(!r.ok){pvReauth=r.status===403&&!!(r.headers&&r.headers.get&&r.headers.get("X-Romp-Reauth"));throw new Error("/panes answered HTTP "+r.status);}return r.json();})
+.then(function(j){if(!j||typeof j.rev!=="string"||!j.rev)throw new Error("the answer carried no pane-set revision");LOADEDPV=j.rev;RPV.adoptPanes(j.rev);})
+["catch"](function(e){if(!pvReauth)selfBar("Couldn't read the panes defined at the kernel ("+String((e&&e.message)||e)+"), so this page can't offer a reload when they change. Reload to try again.","warn");});}}catch(e){}
 function raiseBuild(dv){var R=window.__rompReload;if(R){R.noteDv(dv);return;}   // the core decides (an offer, deduped by build; in a shell, the shell's)
 if(buildRaised)return;buildRaised=true;selfBar("A newer romp build is available.","build");}   // no core on this page: the bar, once
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
@@ -74060,8 +74083,9 @@ var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];
 var GK='romp-pane-grow',grow={chat:60,fleet:34,feed:40,waiting:34,files:40};
 try{var g=JSON.parse(localStorage.getItem(GK)||'null');if(g)grow=Object.assign(grow,g);}catch(e){}
 function setGrow(k,v){grow[k]=v;row.style.setProperty('--g-'+k,v);}
-// the REGISTRY panes (plans/panes-as-data.md): body[data-panes] names them; each is a column after Files with the
-// default grow, its pane id keyed like a split column (KEYS below), and a gutter of its own (the loop after gv-c)
+// the GENERIC panes (plans/panes-as-data.md): body[data-panes] names the ones the page ships with (the Artifacts record); each is a
+// column after Files with the default grow, its pane id keyed like a split column (KEYS below), and a gutter of its own (the loop
+// after gv-d). The panes defined at the kernel join later, from GET /panes, through __rompPaneJoinColumns below
 var DPANES=[];try{DPANES=JSON.parse(document.body.getAttribute('data-panes')||'[]')||[];}catch(e){DPANES=[];}
 DPANES.forEach(function(p){if(!p||!p.id)return;if(PANES.indexOf(p.id+'-pane')<0)PANES.push(p.id+'-pane');if(typeof grow[p.id]!=='number')grow[p.id]=40;});
 for(var k in grow)setGrow(k,grow[k]);
@@ -74133,11 +74157,18 @@ gutter('gv-a',function(){return lastChat();},'fleet-pane');
 gutter('gv-b',function(){return document.body.classList.contains('po-fleet')?'fleet-pane':lastChat();},'feed-pane');
 gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'waiting-pane');
 gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'files-pane');
-// a registry pane's gutter: its left neighbour is the rightmost SHOWN column before it (Files, Feed, the Outline, a
-// registry pane defined before it, else the last chat column), the four rules above generalised
-(function(){var seq=""" + json.dumps([c + "-pane" for c in _COLUMN_IDS if c != "chat"]) + """.concat(DPANES.map(function(p){return p.id+'-pane';}));   // the hand-written columns after the chat (_COLUMN_IDS), then every generic pane (the Artifacts record, the data panes) from body[data-panes]
-DPANES.forEach(function(p){var me=p.id+'-pane',i=seq.indexOf(me);
-gutter('gv-'+p.id,function(){for(var j=i-1;j>=0;j--){if(document.body.classList.contains('po-'+key(seq[j])))return seq[j];}return lastChat();},me);});})();
+// a generic pane's gutter: its left neighbour is the rightmost SHOWN column before it (Files, Feed, the Outline, a
+// generic pane before it, else the last chat column), the four rules above generalised
+(function(){var seq=""" + json.dumps([c + "-pane" for c in _COLUMN_IDS if c != "chat"]) + """.concat(DPANES.map(function(p){return p.id+'-pane';}));   // the hand-written columns after the chat (_COLUMN_IDS), then the generic panes the page ships with from body[data-panes]; a pane defined at the kernel is appended when it joins
+function wireGutter(p){var me=p.id+'-pane',i=seq.indexOf(me);
+gutter('gv-'+p.id,function(){for(var j=i-1;j>=0;j--){if(document.body.classList.contains('po-'+key(seq[j])))return seq[j];}return lastChat();},me);}
+DPANES.forEach(wireGutter);
+// the panes defined at the kernel, built by the shell from GET /panes after this script parsed (_LANDING_PANE_RECORDS_JS's go):
+// each joins the row's list with the default grow (a stored one wins: the grow map read every stored key at the boot), its grow
+// key and the gutter chain, at the END (their place in the row); never __rompRegisterPane, which places a chat column
+window.__rompPaneJoinColumns=function(rows){rows.forEach(function(p){if(!p||!p.id||PANES.indexOf(p.id+'-pane')>=0)return;
+PANES.push(p.id+'-pane');if(typeof grow[p.id]!=='number')grow[p.id]=40;setGrow(p.id,grow[p.id]);KEYS[p.id+'-pane']=p.id;
+seq.push(p.id+'-pane');wireGutter(p);});};})();
 tf&&tf.addEventListener('load',function(){autosize();
 try{new ResizeObserver(autosize).observe(tf.contentDocument.body);}catch(e){}});
 window.addEventListener('resize',autosize);
@@ -74154,7 +74185,7 @@ window.addEventListener('romp-panes',autosize);   // re-fit when the Timeline to
 _LANDING_FOCUS_JS = """
 (function(){var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-waiting':'waiting-pane','f-files':'files-pane','f-timeline':'tl-pane'};   // the Outline (key fleet) is its own pane
 var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files'];   // the side-by-side column panes, left->right (the Outline's key is fleet; waiting = Waiting on you; Files last)
-try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){PANE['f-'+p.id]=p.id+'-pane';COLS.push('f-'+p.id);});}catch(e){}   // the registry panes, after Files (plans/panes-as-data.md)
+try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){PANE['f-'+p.id]=p.id+'-pane';COLS.push('f-'+p.id);});}catch(e){}   // the generic panes the page ships with, after Files (plans/panes-as-data.md); the panes defined at the kernel join below
 var TL='f-timeline';                       // the timeline is a bottom BAND under the columns
 var curFocus='f-chat', lastCol='f-chat';   // for Shift-Up out of the timeline: return to the last column used
 // The active pane gets a focus RING (.pane-focused). Same-origin iframes, so the shell sets it directly on
@@ -74225,6 +74256,8 @@ d.addEventListener('keydown',onKey,true);}catch(e){}}   // capture Alt+Arrow bef
 Object.keys(PANE).forEach(function(id){var f=document.getElementById(id);if(!f)return;
 f.addEventListener('load',function(){wire(f);});wire(f);});   // wire now (already-loaded) + on every (re)load
 window.__rompWireFocus=function(f){f.addEventListener('load',function(){wire(f);});wire(f);};   // a split column made later gets the same
+window.__rompPaneJoinFocus=function(rows){rows.forEach(function(p){var id='f-'+(p&&p.id);if(!p||!p.id||PANE[id])return;var f=document.getElementById(id);if(!f)return;   // a pane defined at the kernel, built from GET /panes (_LANDING_PANE_RECORDS_JS's go): the ring's map, the Alt+Arrow column order (after Files and the panes before it) and the frame's wiring
+PANE[id]=p.id+'-pane';COLS.push(id);f.addEventListener('load',function(){wire(f);});wire(f);});};
 // ALSO claim Alt+Arrow at the TOP-LEVEL shell document (the user 2026-07-01): a keydown fires in whichever
 // document has focus and does NOT cross the iframe boundary, so the per-iframe handlers miss the case where
 // focus sits on the shell itself (right after load, or after clicking shell chrome) — there Alt+Left fell
@@ -74263,10 +74296,15 @@ _LANDING_BOOT_JS = """
 window.__rompPaneSourceOk=function(e){try{if(!e||!e.source||e.source===window||e.origin!==location.origin)return false;
 var fs=document.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source)return fs[i].getAttribute('data-protocol')!=='none';}
 return false;}catch(x){return false;}};
-(function(){var boot=document.getElementById('romp-boot');if(!boot)return;var done=false;
+(function(){var boot=document.getElementById('romp-boot');if(!boot)return;var done=false,ready=false;
 function hide(){if(done)return;done=true;boot.classList.add('gone');
 setTimeout(function(){if(boot.parentNode)boot.parentNode.removeChild(boot);},450);}
-window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;if(e&&e.data&&e.data.romp==='ready')hide();});
+// the splash also waits for the GET /panes read to settle (window.__rompPaneRecords, the head script's), so a custom pane the
+// shell builds from it is covered by this loader rather than appearing after it; the 5 s backstop below bounds both waits
+function settled(){var RR=window.__rompPaneRecords;return !RR||RR.state!=='loading';}
+function maybe(){if(ready&&settled())hide();}
+try{var RR0=window.__rompPaneRecords;if(RR0&&RR0.state==='loading')RR0.done.push(maybe);}catch(e){}
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;if(e&&e.data&&e.data.romp==='ready'){ready=true;maybe();}});
 setTimeout(hide,5000);})();
 """
 
@@ -74367,6 +74405,10 @@ undelivered:"something you sent never reached a session. Either the kernel it wa
 // registered in all three tables here, on lines of its own after them, and worn in the warning yellow (its chip rule beside k-refused):
 // the cards are stale, not lost, and the person can act on it, so it is labelled, explained and mutable like every other kind
 KINDS.push('frozen');KINDLBL.frozen='cards frozen';DESC.frozen="a machine's cards stopped updating and are frozen at their last update: a live update could not be applied, and another failed after the machine sent a fresh copy. Nothing is lost. A remote machine's cards refresh when its connection reconnects; the local machine's when the connection reconnects or the page is reloaded";
+// `panes`: the shell could not read GET /panes, the list of panes defined at the kernel it builds its custom panes from
+// (_LANDING_PANE_RECORDS_JS), so those panes are missing from this page; registered in all three tables, on a line of its own,
+// and worn in the warning yellow (missing until a reload, nothing lost)
+KINDS.push('panes');KINDLBL.panes='panes missing';DESC.panes="the dashboard could not read the list of panes defined at the kernel (romp pane), so those panes are missing from this page until it is reloaded";
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');
@@ -74447,8 +74489,9 @@ function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}for(var c in stc){if(stc[c]==='down'&&shown('chat'))return true;}return false;}
 window.__rompColGone=function(c){delete stc[String(c)];paint();};   // a closed column takes its state with it
 var PN=""" + json.dumps(dict(_PANE_ORDER)) + """;   // key → rail label, from _PANE_ORDER (one list with the rail, the tabs and the drop row); timeline key stays internal — the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
-try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){if(!(p.id in PN))PN[p.id]=String(p.title||p.id);});}catch(e){}   // the registry panes' titles (plans/panes-as-data.md)
+try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){if(!(p.id in PN))PN[p.id]=String(p.title||p.id);});}catch(e){}   // the generic panes' titles the page ships with (plans/panes-as-data.md)
 function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()+k.slice(1):k);}   // the page's copy of _pane_label: the rail's word, else the key capitalised for a sentence (Settings), never a raw key (the 1715 lows, low 4)
+window.__rompPaneJoinErrs=function(rows){rows.forEach(function(p){if(p&&p.id&&!(p.id in PN))PN[p.id]=String(p.title||p.id);});};   // the panes defined at the kernel join from GET /panes (_LANDING_PANE_RECORDS_JS's go)
 window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
 if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
@@ -76725,6 +76768,85 @@ refresh();   // self-schedules (fast while attaching, slow keep-alive otherwise)
 # to 1024px, is one pane at a time with bottom tabs; mouse desktops keep the grid.
 _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 
+# THE PANES DEFINED AT THE KERNEL, built in the browser (the shell renders the shipped panes alone, _landing): one source for the pane
+# records, GET /panes, the records `romp pane list` reads. The head script starts the read and keeps its outcome in
+# window.__rompPaneRecords; this script, spliced ahead of the split script in its element (the shell's script count is pinned) and so
+# after the last inline consumer has parsed, is the GO point: once the read settles it checks the rows, builds each pane's DOM, hands
+# the rows to every consumer's join, adopts the read's revision and tells the bundles. Every consumer keeps its own boot read of
+# body[data-panes], which carries the generic panes the page ships with; the panes defined at the kernel reach them by this one road
+# alone, never by the attribute, so no consumer sees a pane twice.
+# - A copied mechanism carries its own check: a row is built only as the kernel checks a record (_pane_check, _pane_source_kind): a
+#   pane id that is not reserved, derived-taken, a chat column's shape or already on the page, a title of 1 to _PANE_TITLE_MAX
+#   characters, boolean flags, and a source of one of the three shapes (a kernel route, its own pane:<id> page, an http(s) address;
+#   javascript:, data: and //host are refused). A refused row is left out and named in the Log. The frame's address follows
+#   _pane_served_src (a state-root page at /pane/<id>/), and a URL source is protocol none whatever the row says.
+# - Each frame is made with data-src (never src, never the lazy panes' attribute: ruling B, the fork's lazy panes are the hand panes),
+#   data-protocol, and for protocol none its sandbox, both set before the frame is in the document and before any src. The rail
+#   button and the phone tab (none for an experimental pane) carry the title as text. One <style> holds the column, gutter and phone
+#   rules _data_pane_css and _data_pane_mobile_css would render for the rows (the CSP names no style-src, so an injected style
+#   applies; a policy that adds one must allow it). The gutter chain starts from the hand-written columns and the generic panes the
+#   page ships with, read from body[data-panes], so this script names no shipped pane by hand.
+# - The joins run in a fixed order, each in its own try, so one failing consumer cannot strand the rest: the Log's titles, the
+#   columns, the focus ring, Escape, the phone (before the controller, whose apply copies a shown frame's src), the controller, then
+#   the phone's restore of a remembered tab. Then the reload core takes the read's revision (adoptPanes; the core is made after the
+#   bundles, so the stale block adopts it there when the core did not exist yet) and the bundles hear romp-pane-records (the palette,
+#   the docking kit, the gear, which also read the state object when they boot or open).
+# - A failed read is shown, never silently empty: an entry of the Log's `panes` kind naming the reason, the gear's Panes section, the
+#   event. A 403 asking for a new sign-in logs nothing (the page-key script is taking the top frame to /login). The read's backstop is
+#   armed here (LOAD_MS, the lazy panes' bound): no answer within it is said as such, and a late answer still builds.
+_LANDING_PANE_RECORDS_JS = """
+(function(){var RR=window.__rompPaneRecords;if(!RR||RR.go)return;RR.go=true;   // no head read (a harness, a page without it): nothing to build; once per page
+function note(t){try{if(window.__rompNotify)window.__rompNotify('panes',t);}catch(e){}}
+try{
+var IDRE=new RegExp(""" + json.dumps(_PANE_ID_RE.pattern) + """),URLRE=new RegExp(""" + json.dumps(r"^https?://[^\s]+$") + """),ROUTERE=new RegExp(""" + json.dumps(_PANE_ROUTE_RE.pattern) + """);   // the kernel's shapes (_pane_check, _pane_source_kind)
+var RESERVED=""" + json.dumps(list(_PANE_RESERVED)) + """,TAKEN=""" + json.dumps(list(_PANE_DERIVED_TAKEN)) + """,TMAX=""" + str(_PANE_TITLE_MAX) + """;
+var COLS=""" + json.dumps(list(_COLUMN_IDS)) + """,MQ=""" + json.dumps(_MOBILE_MQ) + """,LOAD_MS=30000,built=false,timer=0;
+function tell(){try{window.dispatchEvent(new CustomEvent('romp-pane-records',{detail:{state:RR.state,rows:RR.rows||[],frames:RR.frames||[],error:RR.error||''}}));}catch(e){}}
+function check(p,seen){var id=p?p.id:p,name=String(id).slice(0,40);
+if(typeof id!=='string'||!IDRE.test(id))return {why:"'"+name+"' is not a pane id"};
+if(RESERVED.indexOf(id)>=0||TAKEN.indexOf(id)>=0||id.indexOf('chat-')===0)return {why:"'"+id+"' is an id the dashboard keeps for its own panes"};
+if(seen[id]||document.getElementById('f-'+id))return {why:"'"+id+"' is already on the page"};
+var t=p.title;if(typeof t!=='string'||!t.trim()||t.length>TMAX)return {why:"'"+id+"' has no title of 1 to "+TMAX+" characters"};
+if(typeof p.on!=='boolean'||typeof p.experimental!=='boolean')return {why:"'"+id+"' has a flag that is not true or false"};
+var s=p.source,k='';if(typeof s==='string'){if(s.indexOf('pane:')===0)k=(s==='pane:'+id)?'state':'';else if(URLRE.test(s))k='url';else if(s.charAt(0)==='/'&&s.charAt(1)!=='/'&&ROUTERE.test(s))k='route';}
+if(!k)return {why:"'"+id+"' has a source that is not a kernel route, its own pane: page or an http(s) address"};
+return {row:{id:id,title:t,on:p.on,experimental:p.experimental,protocol:(k==='url'?'none':(p.protocol==='romp'?'romp':'none')),src:(k==='state'?'/pane/'+id+'/':s)}};}
+function css(rows){var before=COLS.slice(),out='',ids=[];
+try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){if(p&&p.id)before.push(p.id);});}catch(e){}
+rows.forEach(function(p){var i=p.id;out+='#'+i+'-pane{flex:var(--g-'+i+',40) 1 0}body:not(.po-'+i+') #'+i+'-pane{display:none}';
+out+='body:not(.po-'+i+') #gv-'+i+',body'+before.map(function(b){return ':not(.po-'+b+')';}).join('')+' #gv-'+i+'{display:none}';before.push(i);ids.push(i);});
+out+='@media '+MQ+'{'+ids.map(function(i){return '#'+i+'-pane';}).join(',')+'{display:contents!important}'+ids.map(function(i){return '#f-'+i+'.m-on';}).join(',')+'{display:block}}';
+var st=document.createElement('style');st.textContent=out;(document.head||document.body).appendChild(st);}
+function build(rows){var row=document.querySelector('.row'),anchor=document.getElementById('rail-usage'),bar=document.getElementById('mtabs'),div=bar?bar.querySelector('.mtabs-div'):null,frames=[];
+rows.forEach(function(p){var f=document.createElement('iframe');f.setAttribute('id','f-'+p.id);f.setAttribute('data-src',p.src);f.setAttribute('data-protocol',p.protocol);
+if(p.protocol==='none')f.setAttribute('sandbox','allow-scripts allow-forms allow-popups');   // before the frame is in the document and before any src: a sandbox applies at a navigation
+var gv=document.createElement('div');gv.setAttribute('class','gv');gv.setAttribute('id','gv-'+p.id);
+var pane=document.createElement('div');pane.setAttribute('class','pane');pane.setAttribute('id',p.id+'-pane');pane.appendChild(f);
+if(row){row.appendChild(gv);row.appendChild(pane);}   // the row's end: after the generic panes the page ships with (split columns go in before the first gutter)
+if(anchor&&anchor.parentNode){var b=document.createElement('div');b.setAttribute('class','rail-btn');b.setAttribute('data-pane',p.id);b.textContent=p.title;anchor.parentNode.insertBefore(b,anchor);}
+if(bar&&!p.experimental){var tb=document.createElement('button');tb.setAttribute('data-pane',p.id);tb.textContent=p.title;bar.insertBefore(tb,div);}
+frames.push(f);});
+if(rows.length)css(rows);
+return frames;}
+var JOINS=['__rompPaneJoinErrs','__rompPaneJoinColumns','__rompPaneJoinFocus','__rompWireEsc','__rompPaneJoinMobile','__rompPaneJoinController','__rompPaneRestoreTab'];
+function join(rows,frames){JOINS.forEach(function(n){try{var fn=window[n];if(typeof fn!=='function')return;
+if(n==='__rompWireEsc')frames.forEach(function(f){fn(f);});else if(n==='__rompPaneRestoreTab')fn();else fn(rows,frames);}catch(e){note('A pane defined at the kernel may not work fully on this page ('+n+': '+String((e&&e.message)||e)+').');}});}
+function fail(why){RR.state='failed';RR.error=why;if(!RR.reauth)note("Couldn't read the panes defined at the kernel ("+why+"), so they are missing from this page. Reload to try again.");tell();}
+function go(){if(RR.state==='loading'||built)return;if(timer){clearTimeout(timer);timer=0;}
+if(RR.state!=='ok'){fail(RR.error||'the read failed');return;}
+var b=RR.body;if(!b||typeof b!=='object'||!Array.isArray(b.panes)||typeof b.rev!=='string'||!b.rev){fail('the answer was not a pane list');return;}
+built=true;var rows=[],seen={};
+b.panes.forEach(function(p){if(!p||p.builtin!==false)return;var c=check(p,seen);if(c.row){seen[c.row.id]=1;rows.push(c.row);}else note('Left out a pane defined at the kernel: '+c.why+'.');});
+var frames=build(rows);RR.rows=rows;RR.frames=frames;RR.rev=b.rev;
+join(rows,frames);
+try{if(window.__rompReload&&window.__rompReload.adoptPanes)window.__rompReload.adoptPanes(b.rev);}catch(e){}
+tell();}
+// still loading: go waits on the read's done list (which the read empties when it settles, so a late answer still builds), and the backstop says so meanwhile
+if(RR.state==='loading'){RR.done.push(go);timer=setTimeout(function(){timer=0;if(RR.state!=='loading')return;fail('no answer within '+(LOAD_MS/1000)+' s');},LOAD_MS);}
+else go();
+}catch(e){note("Couldn't build the panes defined at the kernel ("+String((e&&e.message)||e)+").");}})();
+"""
+
 # [fork] stage 0 (review round 1, 2026-09-19, regression-5): the DESKTOP promotion of the Waiting and Files panes. Both are
 # served with data-src (lazy on the phone since 2026-09-18) and have no gear row, so the pane controller's list
 # (_LANDING_COLLAPSE_JS reconcile) does not carry them; on the desktop grid they load at boot, here. Its own <script>, like
@@ -77118,7 +77240,7 @@ function mobileOn(){return !!(MQ&&MQ.matches);}
 window.__rompMobileOn=mobileOn;
 var bar=document.getElementById('mtabs');if(!bar)return;
 var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-fleet'),feed:document.getElementById('f-feed'),waiting:document.getElementById('f-waiting'),files:document.getElementById('f-files'),timeline:document.getElementById('f-timeline')};
-try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){F[p.id]=document.getElementById('f-'+p.id);});}catch(e){}   // the registry panes' frames (plans/panes-as-data.md); an experimental one has no tab button, so show() refuses it
+try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){F[p.id]=document.getElementById('f-'+p.id);});}catch(e){}   // the generic panes' frames the page ships with (plans/panes-as-data.md; the panes defined at the kernel join through __rompPaneJoinMobile below); an experimental one has no tab button, so show() refuses it
 // ONLY the pane tabs (the user 2026-09-08, on the phone: the bell wore its OFF slash while its popover said
 // on). This list once took EVERY button in the bar, and show() toggled `.on` to data-pane===p on each — for
 // the action buttons and the bell (no data-pane) that is always off, so every pane switch stripped the
@@ -77342,6 +77464,20 @@ function userSwitch(p){window.__rompFilesTabFrom=null;show(p);}
 // tests/test_pane_state_broadcast.py (MobileShowRoads) derives every road from the served scripts and classifies each.
 function userSwitch(p){if(!mobileOn())return;window.__rompFilesTabFrom=null;show(p);}
 for(var i=0;i<B.length;i++)(function(b){var pk=b.getAttribute('data-pane');b.addEventListener('click',function(){userSwitch(pk);});})(B[i]);
+// the panes defined at the kernel, built by the shell from GET /panes after this script parsed (_LANDING_PANE_RECORDS_JS's go): each frame joins F
+// and is heard for the keyboard's blur, the tab list is read again (show() reads B at each call; the boot's list held the shipped tabs alone), and
+// each NEW tab button gets the tap, the old ones keeping theirs. A generic pane never joins the lazy panes (hand(), ruling B): F gains a key and
+// nothing parks, promotes or judges it.
+window.__rompPaneJoinMobile=function(rows){var old=[];for(var i=0;i<B.length;i++)old.push(B[i]);
+rows.forEach(function(p){if(!p||!p.id||F[p.id])return;var f=document.getElementById('f-'+p.id);if(!f)return;F[p.id]=f;f.addEventListener('load',function(){hearBlur(f);});hearBlur(f);});
+B=bar.querySelectorAll('button[data-pane]');
+for(var j=0;j<B.length;j++)if(old.indexOf(B[j])<0)(function(b){var pk=b.getAttribute('data-pane');b.addEventListener('click',function(){userSwitch(pk);});})(B[j]);};
+// a remembered tab whose pane the page does not have YET (a pane defined at the kernel, built once GET /panes lands): the boot below keeps it
+// PENDING, and the builder's restore hook shows it once the pane has joined, unless a show() has run since the boot. show() writes the key on
+// every call, so the key still holding the pending tab IS that condition, with no clock. A pane the read no longer lists puts the chat in the
+// key; a failed read runs no hook and the key waits for the next load's read. A third road into show() on both layouts, completing the boot's.
+var PENDTAB='';
+window.__rompPaneRestoreTab=function(){if(!PENDTAB)return;var p=PENDTAB,cur=null;PENDTAB='';try{cur=localStorage.getItem(KT);}catch(e){}if(cur!==p)return;if(F[p])show(p);else{try{localStorage.setItem(KT,'chat');}catch(e){}}};
 // the rail's actions on mobile: settings opens the settings iframe's modal (the same __rompOpenSettings
 // the desktop gear calls, _LANDING_SETTINGS_JS), net opens the shell's remotes panel, usage opens the
 // tooltip's window bars as a modal, and restart reuses the rail refresh's kernel restart (the user
@@ -77475,6 +77611,7 @@ try{if(mobileOn()){for(var lk2 in F){if(!hand(lk2))continue;var lf=F[lk2];if(!lf
 var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
 promote('feed');}}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
+try{if(s&&!F[s]&&!hand(s)){PENDTAB=s;localStorage.setItem(KT,s);}}catch(e){}   // the remembered tab of a pane the shell has not built yet: kept pending (the boot show above wrote the chat over the key, so the key is put back), for __rompPaneRestoreTab
 })();
 """
 
@@ -77974,16 +78111,17 @@ _LANDING_COLLAPSE_JS = """
   // The chat routes a file-link click by it (ui/webview/file-route.ts fileLinkRoute: an OPEN Files pane takes
   // the click, since the pane being open IS the intent; the setting that once named a closed pane is gone, T404), and a
   // folder click the same way (browseRoute, render.ts openBrowse).
-  var KEYS=""" + json.dumps([k for k, _ in _PANE_ORDER if k in _HAND_PANES]) + """;   // the hand-written five; the generic panes (the Artifacts record, the data panes) join from body[data-panes] below
-  // THE REGISTRY PANES (plans/panes-as-data.md, phase one): body[data-panes] carries every data-defined pane (id, title,
-  // protocol, experimental, on). Each joins KEYS and the OPTIONAL set below: its gear row (gear.js) decides whether it is
-  // in this dashboard at all, its rail toggle whether it is on screen, `on` is its rail default, and an experimental one
-  // is off in the gear until asked for. The attribute carries the shipped Artifacts record on every kernel (phase three), so
-  // this block always has at least that row; the data panes join it.
+  var KEYS=""" + json.dumps([k for k, _ in _PANE_ORDER if k in _HAND_PANES]) + """;   // the hand-written five; the generic panes join below: the ones the page ships with from body[data-panes], the panes defined at the kernel from GET /panes
+  // THE GENERIC PANES (plans/panes-as-data.md): each record (id, title, protocol, experimental, on) joins KEYS and the OPTIONAL set
+  // below: its gear row (gear.js) decides whether it is in this dashboard at all, its rail toggle whether it is on screen, `on` is
+  // its rail default, and an experimental one is off in the gear until asked for. body[data-panes] carries the generic panes the
+  // page ships with (the shipped Artifacts record, phase three), so this block always has at least that row; the panes defined at
+  // the kernel join after the boot, from GET /panes, through __rompPaneJoinController below (addDP, the same reads).
   var DP=[];try{DP=JSON.parse(document.body.getAttribute('data-panes')||'[]')||[];}catch(e){DP=[];}
-  var DPX={};DP.forEach(function(p){if(!p||!p.id)return;var k=p.id;if(KEYS.indexOf(k)<0)KEYS.push(k);DPX[k]=!!p.experimental;LBL[k]=String(p.title||k).toLowerCase()+' pane';
+  var DPX={};function addDP(p){if(!p||!p.id)return;var k=p.id;if(KEYS.indexOf(k)<0)KEYS.push(k);DPX[k]=!!p.experimental;LBL[k]=String(p.title||k).toLowerCase()+' pane';
     if(!(k in DEF))DEF[k]=!!p.on;
-    if(qp!==null)po[k]=qp.split(',').map(function(x){return x.trim();}).indexOf(k)>=0;else if(!(k in po))po[k]=(k in stored)?!!stored[k]:!!p.on;});
+    if(qp!==null)po[k]=qp.split(',').map(function(x){return x.trim();}).indexOf(k)>=0;else if(!(k in po))po[k]=(k in stored)?!!stored[k]:!!p.on;}
+  DP.forEach(addDP);
   // on[k] is "this pane is on screen", not the po flag: in the mobile layout (one tab at a time, the po-*
   // classes ignored, _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
   // or an earlier bring-forward cannot silently steer a phone's file links into a tab nobody is looking at
@@ -78042,7 +78180,7 @@ _LANDING_COLLAPSE_JS = """
   // rail toggle is its off switch). The kernel is not told and does not care: judging and task tracking run
   // the same with the Feed pane off in a browser.
   var ALL=KEYS.slice(),OPT=['timeline','fleet','feed'],SK='romp:settings';
-  DP.forEach(function(p){if(p&&p.id&&OPT.indexOf(p.id)<0)OPT.push(p.id);});   // a registry pane is an optional pane: the gear's row decides whether it is in this dashboard
+  DP.forEach(function(p){if(p&&p.id&&OPT.indexOf(p.id)<0)OPT.push(p.id);});   // a generic pane is an optional pane: the gear's row decides whether it is in this dashboard
   function optOn(){var on={};OPT.forEach(function(k){on[k]=!DPX[k];});   // an experimental registry pane defaults OFF in the gear (plans/panes-as-data.md)
     try{var s=JSON.parse(localStorage.getItem(SK)||'{}'),p=s&&s.panes;if(p&&typeof p==='object')OPT.forEach(function(k){if(DPX[k]){on[k]=p[k]===true;}else{on[k]=p[k]!==false;}});}catch(e){}
     return on;}
@@ -78105,6 +78243,18 @@ _LANDING_COLLAPSE_JS = """
   window.addEventListener('romp-chat-cols',function(e){var f=e&&e.detail&&e.detail.frame;if(f&&f.addEventListener)f.addEventListener('load',function(){tell(f,linkMsg());});});   // [fork] D3 (review round 1): a split chat column is made later (_LANDING_SPLIT_JS make / makeBelow dispatch this at creation; this script runs first, so a column restored at boot is caught too); it hears the link when it loads
   window.addEventListener('romp:keys',apply);   // a rebind (or palette-main's boot nudge) refreshes the titles
   window.addEventListener('storage',function(e){if(!e||!e.key||e.key===SK)reconcile(true);apply();});     // …including one made in another tab; a gear save (romp:settings, or a cleared store) re-reads the optional panes first, and a pane it turned on comes on screen
+  // THE PANES DEFINED AT THE KERNEL, built by the shell from GET /panes after this script parsed (_LANDING_PANE_RECORDS_JS's go, which
+  // calls this after the mobile join, so the phone's frame map and tab list already hold the pane): each takes the boot's reads (addDP:
+  // KEYS, DPX, LBL, DEF and po, a stored flag or a ?panes= bookmark ruling as at the boot), joins DP (apply's loop), ALL (reconcile
+  // rebuilds KEYS from it) and OPT (its gear row), its NEW rail button gets the toggle and its frame the load hook the boot wires;
+  // then the boot's reconcile and apply, which load a frame that is on screen. Built once per page: a set change is an offer to reload
+  window.__rompPaneJoinController=function(rows){var nb=[],nf=[];rows.forEach(function(p){if(!p||!p.id||ALL.indexOf(p.id)>=0)return;
+    addDP(p);DP.push(p);ALL.push(p.id);if(OPT.indexOf(p.id)<0)OPT.push(p.id);
+    Array.prototype.forEach.call(document.querySelectorAll('.rail-btn[data-pane='+p.id+']'),function(b){nb.push(b);});
+    var f=document.getElementById('f-'+p.id);if(f)nf.push(f);});
+    nb.forEach(function(b){b.addEventListener('click',function(){togglePane(b.getAttribute('data-pane'));});});
+    reconcile();apply();
+    nf.forEach(function(f){f.addEventListener('load',function(){tell(f,panesMsg());tell(f,chatTabsMsg());});});};
 })();
 """
 
@@ -78445,11 +78595,19 @@ if(r0.migrated)save();}}catch(e){}
 """
 
 
-def _stale_block(v, pv=None):
-    # the reload core first: the banner script below registers as its refused fallback and announces a reload; `pv` the
-    # revision the landing's one registry listing read (one build, one revision)
+# The shell's reload core takes the pane set's revision from the GET /panes read (adoptPanes): the builder adopts it when the read lands
+# after the core exists; this, spliced into the core's own element, adopts it when the read had already landed (and been checked,
+# RR.rev) before the core was made, the core coming after the bundles. One of the two always runs.
+_PANES_ADOPT_JS = "(function(){try{var RR=window.__rompPaneRecords,RL=window.__rompReload;if(RR&&RR.rev&&RL&&RL.adoptPanes)RL.adoptPanes(RR.rev);}catch(e){}})();"
+
+
+def _stale_block(v):
+    # the reload core first: the banner script below registers as its refused fallback and announces a reload. The core bakes NO
+    # pane-set revision (the empty baseline, which leaves notePanes inert): the page takes it from its GET /panes read, the one
+    # the shell builds its custom panes from, through the core's adoptPanes, called here when the read has already landed and
+    # by the shell's builder (_LANDING_PANE_RECORDS_JS) when it lands later
     return ("<style>" + _STALE_CSS + "</style>" + _STALE_HTML
-            + "<script>" + _reload_core(v, pv) + "</script>"
+            + "<script>" + _reload_core(v, "") + _PANES_ADOPT_JS + "</script>"
             + "<script>" + _STALE_JS.replace("__LOADEDVER__", str(int(v))) + "</script>")
 
 
@@ -79068,8 +79226,11 @@ def _mtab_buttons_html(panes=None):
 
 
 def _landing():
-    snap = _panes_snapshot()   # ONE listing of the pane registry per build (plans/panes-as-data.md): every builder below takes this list, and the
-    panes = _pane_order(snap["data"]); pv = snap["rev"]   # reload core the same listing's revision (the 1919 read: a second listing could disagree)
+    # the landing renders the SHIPPED panes alone, the same bytes whatever the registry holds: the panes defined at the kernel
+    # reach the browser from GET /panes, the records `romp pane list` reads, and the shell builds them there
+    # (_LANDING_PANE_RECORDS_JS), one source for the pane records. The reload core takes the pane set's revision from the same
+    # read (its adoptPanes), so the page bakes none and the build lists no registry
+    panes = list(_CODE_PANES)
     # one flex row of up to FOUR independently-toggled panes (chat | fleet | feed | timeline) behind a far-left
     # rail; draggable gutters between visible panes; the rail also pins the ⛭ settings + ↻ refresh actions at
     # its bottom. Pane on/off + sizes persist in localStorage.
@@ -79193,7 +79354,22 @@ def _landing():
             # the session cookie, as the pane iframes do.
             "try{var _u=new URL(location.href);if(_u.searchParams.has('token')){_u.searchParams['delete']('token');"
             "history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);}}"
-            "catch(e){}</script>"
+            "catch(e){}"
+            # The panes defined at the kernel (`romp pane define`) are not in this page: the shell builds them from GET /panes, the
+            # records `romp pane list` reads, one source for the pane records. The read starts HERE, as early as it can (it overlaps
+            # the body's parse), and after the token scrub above, so its Referer carries no token. It is a bare same-origin fetch,
+            # which the page-key script _send puts first in the head keys like every read of the shell's. Its outcome is kept in one
+            # state object, window.__rompPaneRecords: the builder (_LANDING_PANE_RECORDS_JS, after the last inline consumer has parsed)
+            # and the boot splash subscribe through its done list, and the bundles read it or hear the builder's romp-pane-records
+            # event. No timer here: the builder arms the read's backstop. A 403 asking for a new sign-in is marked (reauth), since the
+            # page-key script is already taking the top frame to /login and the builder logs nothing for it.
+            "try{var _rr=window.__rompPaneRecords={state:'loading',body:null,rev:'',rows:null,frames:null,error:'',status:0,reauth:false,done:[]};"
+            "var _rd=function(){var d=_rr.done;_rr.done=[];for(var i=0;i<d.length;i++){try{d[i]();}catch(e){}}};"
+            "fetch('/panes',{cache:'no-store'}).then(function(r){_rr.status=r.status;if(!r.ok){_rr.reauth=r.status===403&&!!(r.headers&&r.headers.get('X-Romp-Reauth'));"
+            "throw new Error('/panes answered HTTP '+r.status);}return r.json();})"
+            ".then(function(j){_rr.state='ok';_rr.body=j;_rd();},function(e){_rr.state='failed';_rr.error=String((e&&e.message)||e);_rd();});}"
+            "catch(e){try{window.__rompPaneRecords={state:'failed',body:null,rev:'',rows:null,frames:null,error:String((e&&e.message)||e),status:0,reauth:false,done:[]};}catch(x){}}"
+            "</script>"
             # the install surface (plans/ios-app.md proposal 1): manifest + touch icon + Apple metas on
             # the SHELL only — the chat/feed/timeline pages are panes inside it, never install targets.
             # status-bar-style black (opaque), not black-translucent: opaque keeps the webview BELOW the
@@ -80056,6 +80232,7 @@ def _landing():
             ".rerr-chip.k-stalled,.rerr-chip.k-warn{color:#ffd166;border-color:rgba(255,209,102,0.6)}"
             ".rerr-chip.k-refused{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # a change that did not land: the warning yellow, its own kind
             ".rerr-chip.k-frozen{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # cards frozen at their last update (the maintainer's round 6 of the wsBytesByHost review, ui-1): stale, not lost, so the warning yellow
+            ".rerr-chip.k-panes{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # the custom panes could not be read (GET /panes): missing from the page until a reload, nothing lost, so the warning yellow
             # "not sent" rides with the follow-up-failed red: both mean a message of yours didn't land, and
             # this one is the harder loss of the two — nothing was delivered at all (the user 2026-07-29)
             ".rerr-chip.k-nudge,.rerr-chip.k-undelivered{color:#ff6a6a;border-color:rgba(255,106,106,0.6)}"
@@ -80267,7 +80444,7 @@ def _landing():
             # the pane loads on its first tap; on the desktop _LANDING_DESKTOP_PANES_JS promotes it at boot, so the column loads as it
             # always did (its rail toggle is off by default and it has no gear row, so the controller's list does not carry it).
             "<div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>"
-            + _data_pane_markup(panes) +   # the GENERIC panes, after Files: the Artifacts record and the data panes (plans/panes-as-data.md)
+            + _data_pane_markup(panes) +   # the GENERIC panes after Files that ship with the kernel (the Artifacts record); the panes defined at the kernel join the row from GET /panes (_LANDING_PANE_RECORDS_JS)
             "</div>"
             "<div id=gv-ghost></div>"   # the divider drag's landing line (position:fixed; gutter() in _LANDING_JS moves it)
             "<div id=col-ghost></div>"   # a tab drag's provisional rectangle: the right half of the rightmost chat column (position:fixed; _LANDING_SPLIT_JS places it)
@@ -80495,7 +80672,7 @@ def _landing():
             "<script>" + _LANDING_PUSH_JS + "</script>"
             "<script>" + _LANDING_REVEAL_JS + "</script>"
             "<script>" + _LANDING_COLLAPSE_JS + "</script>"
-            "<script>" + _LANDING_SPLIT_JS + "</script>"   # chat split columns (2026-09-08), after the controller it leans on
+            "<script>" + _LANDING_PANE_RECORDS_JS + _LANDING_SPLIT_JS + "</script>"   # the panes defined at the kernel, built from GET /panes once the last inline consumer has parsed (its own try, so it cannot stop the split); chat split columns (2026-09-08), after the controller they lean on
             # the command palette (Cmd/Ctrl+P) and the session quick-switcher hotkey (Cmd/Ctrl+O):
             # a dist bundle (ui/webview/palette-main.ts) like age-color-global above. Loaded last —
             # it reads the __romp* globals lazily, at command run time, so order is cosmetic.
@@ -80503,7 +80680,7 @@ def _landing():
             # the pane docking engine (ui/webview/panedock-main.ts, plans/pane-docking.md): inert unless
             # the gear's paneDocking switch is on, so with it off the shipped pane layout above is untouched
             + ("<script src=/dist/panedock-main.js?v=%d></script>" % v)
-            + _stale_block(v, pv) + _update_block() + _rdrift_block() +
+            + _stale_block(v) + _update_block() + _rdrift_block() +
             "</body></html>")
 
 
@@ -81514,10 +81691,13 @@ class Handler(BaseHTTPRequestHandler):
                               "walkGates": {k: v for k, v in (nd.get("walkGates") or {}).items() if mine(k)}},
                 }), "application/json", cache="no-cache")
             if p == "/panes":
-                # every pane this kernel knows, for `romp pane list|show` and a page asking what exists: the shipped panes
-                # marked builtin, then the data panes (plans/panes-as-data.md, phase one)
-                rows = [dict(d, builtin=True) for d in _CODE_PANES] + [dict(d, builtin=False) for d in _data_panes()]
-                return self._send(200, json.dumps({"panes": rows, "rev": _panes_rev()}), "application/json", cache="no-cache")
+                # every pane this kernel knows, for `romp pane list|show` and for the dashboard shell, which builds the panes
+                # defined here from this answer: the shipped panes marked builtin, then the data panes (plans/panes-as-data.md,
+                # phase one). The rows and the revision come from ONE listing: the shell takes both from this response, and two
+                # listings could pair one set's rows with another set's revision across a define landing between them
+                snap = _panes_snapshot()
+                rows = [dict(d, builtin=True) for d in _CODE_PANES] + [dict(d, builtin=False) for d in _data_panes(_pane_order(snap["data"]))]
+                return self._send(200, json.dumps({"panes": rows, "rev": snap["rev"]}), "application/json", cache="no-cache")
             if p == "/boards":
                 # every board this kernel knows, for `romp board list|show`: the code-defined table and the data-defined
                 # files, each marked with its source (plans/card-boards.md, phase three)

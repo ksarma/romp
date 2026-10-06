@@ -539,6 +539,53 @@ class TokenLeavesTheUrl(unittest.TestCase):
         self.assertLess(scrub, html.index("</script>"), "inside the head script, not a script of its own")
         self.assertLess(scrub, html.index("<link rel=manifest"))
         self.assertLess(scrub, html.index("<iframe"))
+        # ...and ahead of the shell's own first request, its GET /panes read (the panes defined at the kernel, which the shell builds),
+        # which starts at the end of the same head script: its Referer carries no token
+        self.assertTrue("fetch('/panes',{cache:'no-store'})" in html, "the shell reads GET /panes for the panes defined at the kernel")
+        self.assertLess(scrub, html.index("fetch('/panes',{cache:'no-store'})"))
+        self.assertLess(html.index("fetch('/panes',{cache:'no-store'})"), html.index("</script>"), "the read is a statement of the head script")
+
+    def test_the_head_scripts_pane_list_read_keeps_its_outcome_and_marks_a_refusal_that_asks_for_a_new_sign_in(self):
+        # executed: the shell's head script against a fetch stub. The outcome lands in window.__rompPaneRecords and its subscribers
+        # run once; a 403 carrying X-Romp-Reauth is marked (the page-key script is taking the top frame to /login, so the builder
+        # logs nothing for it), and no other failure is
+        import subprocess
+        stub = r"""
+const FETCHED = [];
+global.__ANSWER = __ANSWER_JS__;
+global.fetch = (u, o) => { FETCHED.push([u, (o && o.cache) || '']); const a = global.__ANSWER;
+  return Promise.resolve({ ok: a.status >= 200 && a.status < 300, status: a.status, json: () => Promise.resolve(a.body),
+    headers: { get: (k) => (k === 'X-Romp-Reauth' && a.reauth ? '1' : null) } }); };
+"""
+        driver = r"""
+const RR = window.__rompPaneRecords || { state: null, status: 0, reauth: null, error: '', body: null, done: [] }; let ran = 0; RR.done.push(() => { ran++; });   // null: no read in the head script
+setTimeout(() => { console.log(JSON.stringify({ fetched: FETCHED, state: RR.state, status: RR.status, reauth: RR.reauth, error: RR.error,
+  body: RR.body, ran, left: RR.done.length })); }, 0);
+"""
+        head = _head_script(km._landing())
+
+        def run(answer):
+            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write(_HEAD_HARNESS + stub.replace("__ANSWER_JS__", json.dumps(answer)) + head + driver)
+                path = f.name
+            try:
+                r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30,
+                                   env=dict(os.environ, ROMP_TEST_HREF="http://localhost:7777/"))
+            finally:
+                os.unlink(path)
+            self.assertEqual(r.returncode, 0, r.stderr[-800:])
+            return json.loads(r.stdout.strip().splitlines()[-1])
+        body = {"panes": [], "rev": "r1"}
+        o = run({"status": 200, "body": body})
+        self.assertEqual((o["fetched"], o["state"], o["status"], o["reauth"], o["body"], o["ran"], o["left"]),
+                         ([["/panes", "no-store"]], "ok", 200, False, body, 1, 0), "an answer: kept, its subscribers run once: %r" % o)
+        o = run({"status": 403, "reauth": True, "body": {}})
+        self.assertEqual((o["state"], o["status"], o["reauth"], o["error"], o["ran"]), ("failed", 403, True, "/panes answered HTTP 403", 1),
+                         "a refusal that asks for a new sign-in is marked: %r" % o)
+        for answer in ({"status": 403, "body": {}}, {"status": 500, "body": {}}):
+            o = run(answer)
+            self.assertEqual((o["state"], o["reauth"], o["error"]), ("failed", False, "/panes answered HTTP %d" % answer["status"]),
+                             "any other failure is a failed read the builder shows: %r" % o)
 
     def test_every_page_the_kernel_serves_carries_referrer_policy_same_origin(self):
         # the shell on its token bootstrap: the response that sets the cookie is the one whose page

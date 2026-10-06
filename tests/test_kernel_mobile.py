@@ -11,6 +11,7 @@ import subprocess
 import sys
 import unittest
 from romp_load import load_source
+import pane_records_stub   # the shell's GET /panes road over a stub page (the head read's state, the builder's DOM calls)
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -3689,7 +3690,9 @@ class NotifiedSessionSeed(unittest.TestCase):
 # tab then, so its copy of data-src to src used to run before the gear had ruled and in every layout; the controller's apply copied a
 # generic pane's src by the desktop flag into a frame the phone never shows. Both scripts run here, in the boot's order, over a DOM
 # stub of the phone's shell: the tab bar (one button per NON-experimental pane, as _mtab_buttons_html renders it), the frames with
-# data-src, the body, the store, a media query the seed flips.
+# data-src, the body, the store, a media query the seed flips. The generic pane the page ships with (the Artifacts record) rides the
+# body attribute; the panes defined at the kernel arrive by the shell's GET /panes road after both scripts parsed (the head read's
+# state, the builder, its joins), and a remembered tab of one of them is restored then, once (the mobile script's deferred restore).
 _TWO_HARNESS = r"""
 'use strict';
 const ATTR = __ATTR__, STORE = __STORE__; let MQ_ON = __MOBILE__;
@@ -3705,6 +3708,14 @@ const frames = {}; KEYS.forEach((k) => { frames['f-' + k] = el('f-' + k, (k === 
 const TABS = HAND.concat(ATTR.filter((p) => !p.experimental).map((p) => p.id));   // an experimental record has no phone tab
 const buttons = TABS.map((k) => el('mtab-' + k, { 'data-pane': k }));
 const railBtns = KEYS.map((k) => el('rail-' + k, { 'data-pane': k }));
+const keysNow = () => Object.keys(frames).map((id) => id.slice(2));   // the frames on the page now: the served ones, then any the GET /panes road built
+// a pane the shell builds from GET /panes joins this stub's lists as it enters the document: its frame (src writes counted), its tab, its rail button
+function adoptRecord(e) {
+  const id = e.attrs.id || '';
+  if (e.tagName === 'IFRAME' && id.indexOf('f-') === 0) { const sa = e.setAttribute; e.setAttribute = (k, v) => { sa(k, v); if (k === 'src') SETS[id] = (SETS[id] || 0) + 1; }; frames[id] = e; }
+  else if (e.tagName === 'BUTTON') buttons.push(e);
+  else if (e.attrs.class === 'rail-btn') railBtns.push(e);
+}
 const bar = el('mtabs'); bar.querySelectorAll = (sel) => (sel === 'button[data-pane]' ? buttons : []);
 const BODY_ATTR = { 'data-panes': JSON.stringify(ATTR) }; const bodyCls = new Set(['po-chat', 'po-feed', 'po-timeline']);
 const body = { getAttribute: (k) => (k in BODY_ATTR ? BODY_ATTR[k] : null), setAttribute: (k, v) => { BODY_ATTR[k] = v; }, removeAttribute: (k) => { delete BODY_ATTR[k]; },
@@ -3733,23 +3744,31 @@ global.MessageChannel = class { constructor() { this.port1 = { postMessage() {},
 // `sets`: the src writes to the GENERIC panes' frames (the hand-written optional panes, timeline, fleet and feed, load by their flag on every layout, as before)
 const generic = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => ['f-chat', 'f-timeline', 'f-fleet', 'f-feed', 'f-files'].indexOf(k) < 0));
 const snap = () => ({ tab: BODY_ATTR['data-tab'] || null, remembered: STORE['romp-mobile-tab'] || null, sets: generic(SETS),
-  src: Object.fromEntries(KEYS.map((k) => [k, frames['f-' + k].getAttribute('src')])), shown: KEYS.filter((k) => frames['f-' + k].classList.contains('m-on')), po: [...bodyCls].filter((c) => c.indexOf('po-') === 0).sort() });
+  src: Object.fromEntries(keysNow().map((k) => [k, frames['f-' + k].getAttribute('src')])), shown: keysNow().filter((k) => frames['f-' + k].classList.contains('m-on')), po: [...bodyCls].filter((c) => c.indexOf('po-') === 0).sort() });
 const out = {};
 """
 _TWO_MIDDLE = r"""
 out.afterMobile = snap();   // the mobile script parsed and restored the remembered tab; the pane controller has not parsed yet
 """
+_TWO_CONTROLLER = r"""
+out.afterController = snap();   // both scripts parsed: the controller's boot reconcile and apply have run; the GET /panes road has not built yet
+"""
 _TWO_DRIVER = r"""
-out.afterBoot = snap();     // both scripts parsed: the controller's boot reconcile and apply have run
+out.afterBoot = snap();     // the road built the panes defined at the kernel and joined them (the read settled, or still loading: __DRIVE__ settles it)
 MQ_ON = !MQ_ON; MQ._ls.forEach((f) => f({ matches: MQ_ON }));   // the layout flips (a rotation across the breakpoint): the media query's change event
 out.afterFlip = snap();
 console.log(JSON.stringify(out));
 """
 
 
-def _run_two(rows, store, mobile):
+def _run_two(rows, store, mobile, records=(), state="ok", drive=""):
+    """The two scripts over the phone's stub: `rows` the body attribute (the generic panes the page ships with), `records` GET /panes's
+    rows for the panes defined at the kernel (the head read in `state`), `drive` JS run after both scripts parsed, before afterBoot."""
+    road = (pane_records_stub.RECORDS_DOM + "installRecordsDom(document, { bar, adopt: adoptRecord });\n"
+            + pane_records_stub.records_state(rows=list(records), state=state, **({"error": "/panes answered HTTP 500", "status": 500} if state == "failed" else {})))
     js = (_TWO_HARNESS.replace("__ATTR__", json.dumps(rows)).replace("__STORE__", json.dumps({k: json.dumps(v) if not isinstance(v, str) else v for k, v in store.items()}))
-          .replace("__MOBILE__", "true" if mobile else "false") + km._LANDING_MOBILE_JS + _TWO_MIDDLE + km._LANDING_COLLAPSE_JS + _TWO_DRIVER)
+          .replace("__MOBILE__", "true" if mobile else "false") + road + km._LANDING_MOBILE_JS + _TWO_MIDDLE + km._LANDING_COLLAPSE_JS + _TWO_CONTROLLER
+          + getattr(km, "_LANDING_PANE_RECORDS_JS", "") + drive + _TWO_DRIVER)   # defaulted: a kernel without the road (the base) reds on behaviour, nothing built
     with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
         f.write(js)
         path = f.name
@@ -3761,43 +3780,68 @@ def _run_two(rows, store, mobile):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
-_ART = {"id": "artifacts", "title": "Artifacts", "protocol": "romp", "experimental": True, "on": False, "builtin": True}
-_NOTES = {"id": "notes", "title": "Notes", "protocol": "romp", "experimental": False, "on": True, "builtin": False}
-_DOCS = {"id": "docs", "title": "Docs", "protocol": "none", "experimental": False, "on": True, "builtin": False}
+_ART = {"id": "artifacts", "title": "Artifacts", "protocol": "romp", "experimental": True, "on": False, "builtin": True}   # the body attribute's row (the shipped record)
+_RECORDS = pane_records_stub.door_rows({"id": "notes", "title": "Notes", "source": "/notes", "on": True},
+                                       {"id": "docs", "title": "Docs", "source": "/docs", "on": True})   # GET /panes's rows for two panes defined at the kernel (synthetic routes)
 
 
 class TheMobileSwitcherAndThePaneControllerBoot(unittest.TestCase):
+    def built(self, snap):
+        # the road delivered: the panes defined at the kernel are on the page (their frames), built from GET /panes
+        self.assertTrue({"notes", "docs"} <= set(snap["src"]), "the panes defined at the kernel were built from GET /panes: %r" % sorted(snap["src"]))
+
     def test_a_remembered_tab_of_a_pane_with_no_tab_falls_to_the_chat_and_loads_nothing(self):
         # a stale artifacts key with the gear on: the pane is enabled but has no tab, so the chat shows, its key is repaired, nothing loads
-        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "artifacts", "romp:settings": {"panes": {"artifacts": True}}, "romp-panes": {"artifacts": True}}, mobile=True)
+        r = _run_two([_ART], {"romp-mobile-tab": "artifacts", "romp:settings": {"panes": {"artifacts": True}}, "romp-panes": {"artifacts": True}}, mobile=True, records=_RECORDS)
         m, b = r["afterMobile"], r["afterBoot"]
         self.assertEqual((m["tab"], m["remembered"]), ("chat", "chat"), "the restore falls to the chat and repairs the key: %r" % m)
         self.assertEqual(m["sets"], {}, "no src copied by the restore")
-        self.assertEqual((b["tab"], b["src"]["artifacts"], b["shown"]), ("chat", None, ["chat"]), "after the controller: still the chat, the Artifacts page never loaded: %r" % b)
+        self.assertEqual((b["tab"], b["src"]["artifacts"], b["shown"]), ("chat", None, ["chat"]), "after the controller and the road: still the chat, the Artifacts page never loaded: %r" % b)
         self.assertIn("po-artifacts", b["po"], "the pane's flag stands for the desktop")
+        self.built(b)
         self.assertEqual(r["afterFlip"]["src"]["artifacts"], "/artifacts", "the layout flipped to the desktop: the flag loads it there, where it shows")
 
-    def test_a_remembered_tab_of_a_pane_the_gear_disabled_never_loads_and_the_controller_reroutes_to_the_chat(self):
-        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "notes", "romp:settings": {"panes": {"notes": False}}}, mobile=True)
+    def test_a_remembered_tab_of_a_pane_the_gear_disabled_never_loads(self):
+        r = _run_two([_ART], {"romp-mobile-tab": "notes", "romp:settings": {"panes": {"notes": False}}}, mobile=True, records=_RECORDS)
         m, b = r["afterMobile"], r["afterBoot"]
-        self.assertEqual((m["tab"], m["src"]["notes"]), ("notes", None), "the restore shows the remembered tab but copies no src before the controller has ruled: %r" % m)
-        self.assertEqual((b["tab"], b["src"]["notes"]), ("chat", None), "the controller hides the gear-disabled pane's tab and reroutes to the chat; nothing loaded: %r" % b)
+        self.assertEqual((m["tab"], m["remembered"], "notes" in m["src"]), ("chat", "notes", False), "the pane is not on the page yet: the chat shows and the key is kept for the road: %r" % m)
+        self.assertEqual((b["tab"], b["src"]["notes"]), ("chat", None), "the controller hides the gear-disabled pane's tab, so the restore does not go there; nothing loaded: %r" % b)
         self.assertEqual(b["sets"], {}, "no src written at all")
+        self.built(b)
 
     def test_a_remembered_narrow_layout_key_on_a_desktop_boot_loads_nothing_off_screen(self):
-        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False, "docs": False}}, mobile=False)
-        m, b = r["afterMobile"], r["afterBoot"]
-        self.assertEqual(m["src"]["notes"], None, "a desktop boot copies nothing for the remembered tab: %r" % m)
-        self.assertEqual((b["src"]["notes"], b["src"]["docs"]), (None, None), "the desktop loads by the flag alone; both off: nothing: %r" % b)
+        r = _run_two([_ART], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False, "docs": False}}, mobile=False, records=_RECORDS)
+        b = r["afterBoot"]
+        self.built(b)
+        self.assertEqual((b["src"]["notes"], b["src"]["docs"]), (None, None), "the desktop loads by the flag alone; both off: nothing, the restore included: %r" % b)
         self.assertEqual(b["sets"], {})
 
-    def test_on_a_phone_the_current_tab_loads_on_the_controllers_apply_and_the_flip_loads_the_rest(self):
-        r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False}}, mobile=True)
-        m, b, f = r["afterMobile"], r["afterBoot"], r["afterFlip"]
-        self.assertEqual((m["tab"], m["src"]["notes"]), ("notes", None), "the restore: the tab, no src yet")
-        self.assertEqual((b["tab"], b["src"]["notes"], b["sets"]), ("notes", "/notes", {"f-notes": 1}), "the controller's boot apply loads the CURRENT tab's frame, once (its key is in the dashboard): %r" % b)
+    def test_on_a_phone_a_remembered_tab_of_a_pane_built_from_get_panes_is_restored_once_the_read_lands_and_the_flip_loads_the_rest(self):
+        r = _run_two([_ART], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False}}, mobile=True, records=_RECORDS)
+        m, c, b, f = r["afterMobile"], r["afterController"], r["afterBoot"], r["afterFlip"]
+        self.assertEqual((m["tab"], m["remembered"]), ("chat", "notes"), "the boot shows the chat and keeps the remembered tab pending: %r" % m)
+        self.assertEqual((c["tab"], c["remembered"]), ("chat", "notes"), "the controller's boot leaves it pending")
+        self.assertEqual((b["tab"], b["src"]["notes"], b["sets"]), ("notes", "/notes", {"f-notes": 1}), "the read landed: the remembered tab shows and its frame loads, once: %r" % b)
         self.assertEqual(b["src"]["docs"], None, "the docs pane (flag on, not the current tab) is not loaded into a frame the phone never shows")
         self.assertEqual((f["src"]["docs"], f["sets"]), ("/docs", {"f-notes": 1, "f-docs": 1}), "the layout flipped to the desktop: the flag loads the docs pane; the notes frame is not re-assigned: %r" % f)
+
+    def test_a_tab_shown_before_the_read_lands_wins_over_the_remembered_one(self):
+        # still loading at the boot; the user taps the Feed tab, then the read lands: every show() writes the key, so it no longer
+        # holds the pending tab, and the restore stands down
+        drive = "window.__rompMobileTab('feed'); out.tapped = snap(); settleRecords('ok', { panes: " + json.dumps(_RECORDS) + ", rev: 'r1' });\n"
+        r = _run_two([_ART], {"romp-mobile-tab": "notes"}, mobile=True, records=_RECORDS, state="loading", drive=drive)
+        self.assertEqual((r["tapped"]["tab"], r["tapped"]["remembered"]), ("feed", "feed"))
+        b = r["afterBoot"]
+        self.built(b)
+        self.assertEqual((b["tab"], b["remembered"], b["src"]["notes"]), ("feed", "feed", None), "the tap wins: no restore, the notes frame not loaded: %r" % b)
+
+    def test_a_failed_read_keeps_the_remembered_tab_for_the_next_load_and_a_pane_no_longer_listed_writes_the_chat(self):
+        r = _run_two([_ART], {"romp-mobile-tab": "notes"}, mobile=True, records=_RECORDS, state="failed")
+        b = r["afterBoot"]
+        self.assertEqual((b["tab"], b["remembered"], "notes" in b["src"]), ("chat", "notes", False), "a failed read builds nothing and the key waits for the next load's read: %r" % b)
+        r = _run_two([_ART], {"romp-mobile-tab": "gone"}, mobile=True, records=_RECORDS)
+        b = r["afterBoot"]
+        self.assertEqual((b["tab"], b["remembered"]), ("chat", "chat"), "the read no longer lists the remembered pane: the key goes to the chat: %r" % b)
 
 
 if __name__ == "__main__":

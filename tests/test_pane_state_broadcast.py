@@ -32,6 +32,7 @@ import unittest
 from pathlib import Path
 
 from romp_load import load_source
+import pane_records_stub   # the shell's GET /panes road over a stub page (the head read's state, the builder's DOM calls)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -800,8 +801,9 @@ def _mobile_show_roads():
     toggleFleet arm and the bar's buttons all pass through userSwitch, whose fork declaration reads the layout), `userSwitch declaration,
     gated` and `userSwitch declaration, shadowed` (the fork's and the project's: the later binds, pinned apart), `phone-only by
     construction` (the failed overlay's retry, an element the desktop stylesheet hides, pinned apart), `both layouts by design` (the boot
-    show, so a flip to the phone has a tab; the controller's reconcile, a tab whose pane this browser has off being no place to go on
-    either layout), or `UNCLASSIFIED`."""
+    show, so a flip to the phone has a tab; its deferred half, the restore of a remembered tab whose pane the shell builds from GET
+    /panes once the read lands, which completes that boot show; the controller's reconcile, a tab whose pane this browser has off
+    being no place to go on either layout), or `UNCLASSIFIED`."""
     hlines = km._landing().split("\n")
     sites = []
     for i, raw in enumerate(hlines):
@@ -834,6 +836,8 @@ def _mobile_show_roads():
             s["cls"] = "phone-only by construction"
         elif ln.rstrip().endswith("show(last);"):
             s["cls"] = "both layouts by design"
+        elif ln.startswith("window.__rompPaneRestoreTab=function(){"):
+            s["cls"] = "both layouts by design"   # the boot show's deferred half: a remembered tab of a pane the shell builds from GET /panes
         else:
             s["cls"] = "UNCLASSIFIED"
     return sites
@@ -865,7 +869,7 @@ class MobileShowRoads(unittest.TestCase):
         by = {}
         for s in sites:
             by[s["cls"]] = by.get(s["cls"], 0) + 1
-        self.assertEqual(by.get("both layouts by design"), 2, "the boot show and the controller's reconcile, no other: %r" % (by,))
+        self.assertEqual(by.get("both layouts by design"), 3, "the boot show, its deferred half (the remembered tab of a pane built from GET /panes, restored once the read lands) and the controller's reconcile, no other: %r" % (by,))
         self.assertEqual(by.get("phone-only by construction"), 1, "the failed overlay's retry")
         self.assertEqual((by.get("userSwitch declaration, gated"), by.get("userSwitch declaration, shadowed")), (1, 1), "the fork's gated declaration and the project's, once each: %r" % (by,))
         self.assertGreaterEqual(by.get("through userSwitch", 0), 5, "reveal's body, its two arrivals, the toggleFleet arm, the bar's buttons")
@@ -1466,7 +1470,7 @@ KEYS.forEach((k) => {
     removeAttribute: (a) => { delete attrs[a]; },
     addEventListener: (ev, f) => { if (ev === 'load') (LOADS[k] = LOADS[k] || []).push(f); } };
 });
-const BTNS = {};
+const BTNS = {}, RAILX = {}, XTABS = [];   // RAILX and XTABS: the rail buttons and phone tabs of the panes the shell builds from GET /panes (adoptRecord)
 KEYS.forEach((k) => { BTNS[k] = { hidden: false, title: '', getAttribute: (a) => (a === 'data-pane' ? k : null), classList: cls(new Set()), addEventListener() {} }; });
 const BODY_CLS = new Set(['po-chat', 'po-feed', 'po-timeline']); let TAB = null;
 global.window = global;
@@ -1486,14 +1490,29 @@ global.setTimeout = (f, ms) => { TIMERS.push({ f, ms }); return TIMERS.length; }
 global.setInterval = () => 0;
 global.localStorage = { getItem: (k) => (k in STORE ? STORE[k] : null), setItem: (k, v) => { STORE[k] = v; } };
 global.__rompPaneEnabled = (k) => { try { const s = JSON.parse(STORE['romp:settings'] || '{}'), p = s && s.panes; return !(p && typeof p === 'object' && p[k] === false); } catch (e) { return true; } };   // the head script's reader, as served
-const BAR = { offsetHeight: 44, querySelectorAll: (sel) => (sel === 'button[data-pane]' ? KEYS.map((k) => BTNS[k]) : []) };
+const BAR = { offsetHeight: 44, querySelectorAll: (sel) => (sel === 'button[data-pane]' ? KEYS.concat(XTABS).map((k) => BTNS[k]) : []) };
 global.document = {
   visibilityState: 'visible', addEventListener: () => {},
   documentElement: { scrollTop: 0, style: { setProperty() {} } },
   body: { classList: cls(BODY_CLS), setAttribute: (a, v) => { if (a === 'data-tab') TAB = v; }, getAttribute: (a) => (a === 'data-tab' ? TAB : a === 'data-panes' ? (global.DPANES || null) : null) },   // data-panes: the generic panes a seed names (global.DPANES, the served attribute's JSON), absent otherwise
-  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return KEYS.map((k) => BTNS[k]); if (sel === 'iframe') return KEYS.map((k) => frames['f-' + k]); const m = /data-pane=(\w+)/.exec(sel); return m && BTNS[m[1]] ? [BTNS[m[1]]] : []; },
+  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return KEYS.map((k) => BTNS[k]).concat(Object.values(RAILX)); if (sel === 'iframe') return Object.values(frames); const m = /data-pane=(\w+)/.exec(sel); return m && BTNS[m[1]] ? [BTNS[m[1]]].concat(RAILX[m[1]] ? [RAILX[m[1]]] : []) : []; },
   getElementById: (id) => (id === 'mtabs' ? BAR : id === 'pane-load-msg' ? MSG : id === 'pane-load' ? LOADEL : id === 'pane-load-retry' ? RETRY : (frames[id] || null)),
 };
+// a pane the shell builds from GET /panes joins this stub's maps as it enters the document, in the served frames' shape: its frame (src
+// writes counted and logged, load listeners kept, posts kept, its .pane div's classes read like the served ones), its tab, its rail button
+function adoptRecord(el) {
+  const id = el.attrs.id || '';
+  if (el.tagName === 'IFRAME' && id.indexOf('f-') === 0) {
+    const k = id.slice(2), attrs = el.attrs, divCls = new Set(['pane']);
+    DIVS[k] = { classList: cls(divCls), cls: divCls };
+    Object.assign(el, { parentNode: DIVS[k], contentDocument: {}, classList: cls(new Set()),
+      contentWindow: { postMessage: (m) => { (POSTED[k] = POSTED[k] || []).push(JSON.parse(JSON.stringify(m))); }, addEventListener() {} },
+      setAttribute: (a, v) => { attrs[a] = v; if (a === 'src') { SETS[k] = (SETS[k] || 0) + 1; LOG.push('src:' + k); } },
+      addEventListener: (ev, f) => { if (ev === 'load') (LOADS[k] = LOADS[k] || []).push(f); } });
+    frames[id] = el;
+  } else if (el.tagName === 'BUTTON') { BTNS[el.attrs['data-pane']] = el; XTABS.push(el.attrs['data-pane']); }
+  else if (el.attrs.class === 'rail-btn') RAILX[el.attrs['data-pane']] = el;
+}
 __SEED__
 """
 _LAZY_TOOLS = r"""
@@ -2058,21 +2077,24 @@ console.log(JSON.stringify(out));
 # ones: artifacts (experimental, never asked for in the gear), notes (the stored tab), docs (rail off; tapped, its load fails: the audit's
 # K-2 sequence), web (a URL pane: protocol none, sandboxed, at a second synthetic origin), wiki (rail on) and logs (rail off), the last
 # two never tapped. Before the ruling the phone's boot parked every generic frame under data-lazy-src and promote() loaded, judged and
-# retried them; the stored tab was promoted at the restore, where upstream leaves it to the controller's boot apply.
+# retried them; the stored tab was promoted at the restore, where upstream leaves it to the controller's boot apply. The Artifacts
+# record rides the served markup (body[data-panes]); the five others are defined at the kernel and built by the shell from GET /panes
+# (the head read settled), so the stored tab notes is restored once the read has landed (the mobile script's deferred restore).
 _GENERIC_IDS = ("artifacts", "notes", "docs", "web", "wiki", "logs")
 _GENERIC_SEED = ("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'notes'; STORE['romp-panes'] = JSON.stringify({ docs: false, logs: false });"
-                 "global.DPANES = JSON.stringify([['artifacts', 'romp', true], ['notes', 'romp', false], ['docs', 'romp', false], ['web', 'none', false], ['wiki', 'romp', false], ['logs', 'romp', false]]"
-                 ".map(([id, protocol, experimental]) => ({ id, title: id, protocol, experimental, on: !experimental, builtin: id === 'artifacts' })));"
-                 "Object.assign(frames['f-web'].attrs, { 'data-src': 'http://TESTHOST:2/web/', 'data-protocol': 'none', sandbox: 'allow-scripts allow-forms allow-popups' });")
+                 "global.DPANES = JSON.stringify([{ id: 'artifacts', title: 'artifacts', protocol: 'romp', experimental: true, on: false, builtin: true }]);")
+_GENERIC_RECORDS = pane_records_stub.door_rows(*({"id": k, "title": k, "source": src, "on": True} for k, src in
+                                                 (("notes", "/notes"), ("docs", "/docs"), ("web", "http://TESTHOST:2/web/"), ("wiki", "/wiki"), ("logs", "/logs"))))
 _GENERIC_PANES_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
 const G = ['artifacts', 'notes', 'docs', 'web', 'wiki', 'logs'];
-const S1 = (k) => ({ src: frames['f-' + k].getAttribute('src'), dataSrc: frames['f-' + k].getAttribute('data-src'), lazy: frames['f-' + k].getAttribute('data-lazy-src'),
-  div: divCls(k), sets: SETS[k] || 0, listeners: (LOADS[k] || []).length });
+const S1 = (k) => (!frames['f-' + k] ? null : { src: frames['f-' + k].getAttribute('src'), dataSrc: frames['f-' + k].getAttribute('data-src'), lazy: frames['f-' + k].getAttribute('data-lazy-src'),
+  div: divCls(k), sets: SETS[k] || 0, listeners: (LOADS[k] || []).length });   // null: the pane's frame is not on the page
 const SNAP = () => Object.assign({ body: { tab: TAB, loading: BODY_CLS.has('pane-loading'), failed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, retryHidden: RETRY.hidden },
   backstops: TIMERS.filter((t) => t.ms === 30000).length }, Object.fromEntries(G.map((k) => [k, S1(k)])));
 const retry = () => RETRY.clicks.forEach((f) => f({ stopPropagation() {} }));
 out.boot = SNAP();   // the phone's boot with the generic tab notes stored: the restore, then the controller's boot apply
+if (G.some((k) => !frames['f-' + k])) { console.log(JSON.stringify(out)); return; }   // a pane not on the page: the boot's read says which, and the rest has nothing to drive
 out.waitingBoot = S1('waiting');   // a hand pane, for the contrast: parked at the boot...
 window.__rompMobileTab('waiting');   // ...and its tap is the lazy panes' promotion
 out.waitingTap = Object.assign(S1('waiting'), { backstops: TIMERS.filter((t) => t.ms === 30000).length });
@@ -2093,16 +2115,19 @@ out.back = SNAP();
 retry(); out.backRetry = SNAP();
 console.log(JSON.stringify(out));
 """
-def _lazy(seed, driver, phone=True, abort_mobile=False, generic=()):
+def _lazy(seed, driver, phone=True, abort_mobile=False, generic=(), records=()):
     """The three shell scripts in the served order: the desktop promotion (_LANDING_DESKTOP_PANES_JS, review round 1), the mobile
     script, the pane controller. `abort_mobile` wraps the mobile script in a try so the harness's seed can make it throw partway
     (BAR.querySelectorAll) and the test reads what the other two scripts still did; the throw is recorded in global.__labThrew.
-    `generic`: the ids of GENERIC panes (registry panes) whose frames and tab buttons join the hand-written ones; the seed names
-    them in body[data-panes] (global.DPANES) and sets any attribute their markup carries (a URL pane's data-protocol=none)."""
+    `generic`: the ids of the GENERIC panes the served markup carries (the Artifacts record), whose frames and tab buttons join the
+    hand-written ones; the seed names them in body[data-panes] (global.DPANES). `records`: GET /panes's rows for the panes defined at
+    the kernel, which the shell builds through its road (the head read settled; _LANDING_PANE_RECORDS_JS after the controller, its
+    elements adopted into the stub's maps by adoptRecord)."""
     keys = [k for k, _ in km._PANE_ORDER if k in km._HAND_PANES] + list(generic)   # the hand-written pane frames the served markup carries, then any generic ones a case names (they join the scripts' F and KEYS from body[data-panes])
     harness = _LAZY_HARNESS.replace("__KEYS__", json.dumps(keys)).replace("__PHONE__", "true" if phone else "false").replace("__SEED__", seed)
     mobile = ("try{" + km._LANDING_MOBILE_JS + "}catch(e){global.__labThrew=String(e);}") if abort_mobile else km._LANDING_MOBILE_JS
-    return _run(harness + km._LANDING_DESKTOP_PANES_JS + mobile + km._LANDING_COLLAPSE_JS + driver)
+    road = (pane_records_stub.RECORDS_DOM + "installRecordsDom(document, { bar: BAR, adopt: adoptRecord });\n" + pane_records_stub.records_state(rows=list(records))) if records else ""
+    return _run(harness + road + km._LANDING_DESKTOP_PANES_JS + mobile + km._LANDING_COLLAPSE_JS + (getattr(km, "_LANDING_PANE_RECORDS_JS", "") if records else "") + driver)   # defaulted: a kernel without the road (the base) reds on behaviour
 
 
 def _kernel_source():
@@ -3475,7 +3500,8 @@ class LazyPanes(unittest.TestCase):
         # frames load by upstream's roads alone: the boot's stored tab by the controller's apply (tests/test_kernel_mobile.py
         # TheMobileSwitcherAndThePaneControllerBoot reads the restore and the apply apart), a tap by show()'s copy of data-src, the
         # desktop by the rail flag.
-        o = _lazy(_GENERIC_SEED, _GENERIC_PANES_DRIVER, generic=_GENERIC_IDS)
+        o = _lazy(_GENERIC_SEED, _GENERIC_PANES_DRIVER, generic=("artifacts",), records=_GENERIC_RECORDS)
+        self.assertEqual([k for k in _GENERIC_IDS if o["boot"][k] is None], [], "every generic pane is on the page: the Artifacts record served, the five others built from GET /panes")
         steps = ("boot", "docsTap", "docsFailed", "docsRetry", "web", "desktop", "back", "backRetry")
         base = o["boot"]["artifacts"]["listeners"]   # the shell's own load hooks on every frame: the count of a frame nothing loaded
         for st in steps:
@@ -3491,7 +3517,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((o["back"]["backstops"], o["backRetry"]["backstops"]), (o["desktop"]["backstops"],) * 2, "nor by the flip back or its Try again (the desktop's own are the hand panes' promotions; the listener counts above show no generic one)")
         srcs = lambda st: {k: (o[st][k]["src"], o[st][k]["dataSrc"], o[st][k]["sets"]) for k in _GENERIC_IDS}
         self.assertEqual(srcs("boot"), {"artifacts": (None, "/artifacts", 0), "notes": ("/notes", "/notes", 1), "docs": (None, "/docs", 0), "web": (None, "http://TESTHOST:2/web/", 0), "wiki": (None, "/wiki", 0), "logs": (None, "/logs", 0)},
-                         "the boot: the stored tab's frame loaded once, every other generic frame waits on its data-src (before the ruling: all parked under data-lazy-src)")
+                         "the boot: the stored tab's frame, restored once GET /panes landed, loaded once; every other generic frame waits on its data-src (before the ruling: all parked under data-lazy-src)")
         self.assertEqual((o["boot"]["body"]["tab"], o["boot"]["body"]["loading"]), ("notes", False), "no loader over a generic tab")
         self.assertEqual((o["docsTap"]["docs"]["src"], o["docsTap"]["docs"]["sets"], o["docsTap"]["body"]["loading"]), ("/docs", 1, False), "the tab tap loads the frame once, by upstream's copy")
         quiet = {"tab": "docs", "loading": False, "failed": False, "msg": "", "retryHidden": True}
