@@ -557,8 +557,12 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
             # start_new_session the shell's pid is the group's id, and the group holds every process the
             # helper forked that did not leave it. SIGKILL to the group, then a drain bounded by
             # HELPER_DRAIN_S: it reads the pipe to its end, which comes once every holder of the write end
-            # has exited, and reaps the shell, so the call returns after the group is gone and leaves no
-            # zombie. p.kill() is the fallback when the drain runs out.
+            # has closed it, and reaps the shell. The drain thus returns once every holder of the pipe has
+            # closed it and the shell is reaped; the group's other members have SIGKILL pending and finish
+            # exiting on their own, possibly just after the call returns. When the drain runs out, the
+            # fallback p.kill() reaps the shell the group's SIGKILL ended (send_signal polls before it
+            # signals, so the poll reaps it and nothing is sent). Either way the call leaves no zombie of
+            # the shell.
             # Not covered: a process that left the group itself (setsid, setpgid, a daemonizing helper) is
             # not signalled and runs on. If it still holds stdout, the drain waits its whole bound for an
             # end that does not come, the call raises that much later, and the process keeps a pipe whose
@@ -572,7 +576,12 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
             # but communicate first waits up to a quarter second for the shell and reaps it if it has exited
             # by then, and then the group is not signalled, as with subprocess.run before (a member still
             # holding stdout runs on, and its next write fails once the pipe is closed below). A run
-            # on another thread goes on to its bound, and a helper still running when the kernel exits runs on.
+            # on another thread goes on to its bound. A helper still running when the kernel exits runs on
+            # until it exits by itself. Under the systemd unit, KillMode=control-group ends it only when
+            # the unit stops or restarts (a manager exit, as the stale-manager self-bounce, is one); the
+            # manager's kernel restart (romp refresh, a dashboard restart, a quiet-window apply, a
+            # restarting settings pick) signals the kernel's pid alone (termThenKill in bin/romp-manager),
+            # so a hung helper runs on through it, as it did with subprocess.run before.
             try:
                 os.killpg(p.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
