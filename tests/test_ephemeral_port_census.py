@@ -4135,7 +4135,10 @@ class Plants(unittest.TestCase):
                  % (2 * n, n, n)),
                 ("a comparison", "test_x.py",
                  'x = 0\nx = f()\nport = %d + (x == 0)\nport = %d + (x in (0, 1))\n'
-                 'port = random.randrange(%d + (x > 3), %d)\n' % (LOW - 1, LOW - 1, n, n + 9)),
+                 'port = random.randrange(%d + (x > 3), %d)\n'
+                 'port = %d + (x != 1)\nport = %d + (x < 1)\nport = %d + (x <= 0)\nport = %d + (x >= 0)\n'
+                 'y = None\nport = %d + (y is None)\nport = %d + (x is not None)\nport = %d + (x not in (1, 2))\n'
+                 % ((LOW - 1, LOW - 1, n, n + 9) + (LOW - 1,) * 7)),
                 ("| over a name a conditional expression or an or gives a negative int beside one in the range",
                  "test_x.py", 'S = %d\nS = -2 if fast else f()\nrow = {"port": S | 0}\nT = %d\nT = -2 or f()\n'
                  'row = {"port": T | 0}\n' % (n, n)),
