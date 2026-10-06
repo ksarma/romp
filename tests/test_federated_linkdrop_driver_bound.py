@@ -89,6 +89,7 @@ ROOT = os.path.dirname(HERE)
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 sys.path.insert(0, HERE)
+import lab_result                             # noqa: E402  the result protocol the spy below plays the driver's half of
 import test_federated_linkdrop_served as L   # noqa: E402  the lab module: the constants, BUDGET_JS, _drive
 
 CFG_KEYS = ("driverBudgetMs", "pageWaitMs", "phaseSettleMs", "quietTries", "quietStepMs")   # plus waitsMs.<mark>, below
@@ -1364,8 +1365,15 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         seen = {}
 
         def spy(cmd, *a, **kw):
+            # the driver's half of the result protocol (tests/lab_result.cjs writeResult): the record to the file the cfg names,
+            # under the cfg's nonce, and one RESULT: line naming both
             seen["cmd"], seen["kw"] = list(cmd), kw
-            return subprocess.CompletedProcess(cmd, 0, stdout='RESULT:{"marks": {}}\n', stderr="")
+            with open(kw["env"]["CFG"], encoding="utf-8") as f:
+                tgt = json.load(f)
+            with open(tgt["resultPath"], "w", encoding="utf-8") as f:
+                json.dump({"nonce": tgt["resultNonce"], "record": {"marks": {}}}, f)
+            line = lab_result.PREFIX + json.dumps({"resultPath": tgt["resultPath"], "nonce": tgt["resultNonce"]})
+            return subprocess.CompletedProcess(cmd, 0, stdout="\n" + line + "\n", stderr="")
         with mock.patch.object(L.subprocess, "run", spy):
             Drive._drive()
         self.assertEqual(seen["cmd"][:1], ["node"], seen)
@@ -1423,18 +1431,22 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertIn("no playwright browser", str(cm.exception), "a probe that answers no browser stays the skip: %s" % cm.exception)
 
     def test_a_drive_that_outlives_its_timeout_keeps_the_result_it_printed(self):
-        """_drive's TimeoutExpired branch (the maintainer's round 6, extra4-4): the driver prints its RESULT line before `await
-        browser.close()`, so a kill at DRIVER_TIMEOUT_S can land in the close with the record whole in the partial output. Under
-        node with a stub driver and the timeout at one second: a RESULT line followed by a sleep past the timeout leaves the record
-        HELD (result parsed, no driver_error, the kill noted in driver_note naming DRIVER_TIMEOUT_S); a RESULT line the kill left
-        truncated (unbalanced JSON) stays driver_error naming the truncation, with no result; a driver that printed no RESULT stays
-        the timed-out driver_error. Red before: the branch discarded a complete RESULT it was already holding."""
+        """_drive's TimeoutExpired branch (the maintainer's round 6, extra4-4): the driver writes its record and prints the RESULT
+        line naming it (tests/lab_result.cjs) before `await browser.close()`, so a kill at DRIVER_TIMEOUT_S can land in the close
+        with the record whole in its file. Under node with a stub driver and the timeout at one second: the helper's record
+        followed by a sleep past the timeout leaves the record HELD (result read, no driver_error, the kill noted in driver_note
+        naming DRIVER_TIMEOUT_S); a RESULT line the kill left truncated (unbalanced JSON) stays driver_error naming the reader's
+        refusal, with no result; a driver that printed no RESULT stays the timed-out driver_error. Red before: the branch
+        discarded a complete RESULT it was already holding."""
         if not shutil.which("node"):
             raise unittest.SkipTest("node absent: the stub driver needs it")
-        record = 'console.log("RESULT:" + JSON.stringify({ marks: { end: 1 }, held: true }));\n'
+        head = ('import fs from "node:fs";\nimport { createRequire } from "node:module";\n'
+                'const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));\n'
+                "const lab = createRequire(import.meta.url)(cfg.resultLib);\n")
+        record = head + "lab.writeResult(cfg, { marks: { end: 1 }, held: true });\n"
         hang = "await new Promise((r) => setTimeout(r, 30000));\n"
         cases = (("held", record + hang, {"marks": {"end": 1}, "held": True}, None, "outlived DRIVER_TIMEOUT_S (1 s)"),
-                 ("truncated", 'console.log("RESULT:{\\"marks\\": {\\"end\\": 1");\n' + hang, None, "the kill left truncated", None),
+                 ("truncated", 'console.log("RESULT:{\\"resultPath\\": ");\n' + hang, None, "a RESULT line the reader refused", None),
                  ("no result", 'console.log("starting");\n' + hang, None, "driver timed out; partial output", None))
         for name, js, want_result, want_error, want_note in cases:
             with self.subTest(driver=name):

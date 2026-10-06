@@ -252,8 +252,11 @@ REFLECTIVE_ATTR_OUTSIDE = ("compile",)
 # PR 860's tests/test_relay_dial_declares_held_pair.py (tests/test_federated_dial_terms_served.py imports it inside a function),
 # which unpacks a WebSocket frame's length with it: a module that packs and unpacks bytes and starts nothing (its own source
 # imports nothing but _struct, a C module with no Python source, built in on some interpreters and an extension module on
-# others, CI's among them, and the road cell's derivation reads that source and finds no road in it).
-ALLOWED_IMPORTS = ("base64", "contextlib", "errno", "fcntl", "fnmatch", "hashlib", "http", "json", "os", "pathlib", "re", "select",
+# others, CI's among them, and the road cell's derivation reads that source and finds no road in it). secrets is here since
+# the lab module reads its driver's record through tests/lab_result.py, which mints each drive's nonce with secrets.token_hex:
+# a module that draws random bytes and starts nothing (its own source imports base64, hmac and random, and the road cell's
+# derivation reads that source and finds no road in it).
+ALLOWED_IMPORTS = ("base64", "contextlib", "errno", "fcntl", "fnmatch", "hashlib", "http", "json", "os", "pathlib", "re", "secrets", "select",
                    "shlex", "shutil", "signal", "socket", "struct", "subprocess", "sys", "tempfile", "threading", "time", "unittest", "urllib", "uuid")
 # the hand-kept DENY list the import pin keys on beside the equality: none of these eight is allowed (the check is this list,
 # not a property of every allowed module's source; that property is derived, above)

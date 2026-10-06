@@ -132,8 +132,10 @@ and a SCRIPT_METHODS call (evaluate, evaluateHandle, waitForFunction, addInitScr
 anything but a function literal or a name the tree binds to one, since a string handed to the page is script this census
 does not parse (the driver's `hook` is an arrow). A module is loaded only the driver's way: an `import` of node:module or
 node:fs, the one module-level `const require = createRequire(...)` (a second createRequire, or one bound to another name, is
-refused) and `require("playwright")` (a require of any other module or of a built name, and `require` read as a value, are
-refused); a dynamic `import()` is refused whatever its argument. A loop's exit is a bound this census reads only where the
+refused), `require("playwright")`, and the result helper's one load, the module-level `const lab = require(cfg.resultLib)`
+(tests/lab_result.cjs, whose path the lab's cfg carries; the driver reads one member of it, writeResult, held in KNOWN_MEMBERS)
+(a require of any other module or of a built name, a second load of cfg.resultLib among them, and `require` read as a value,
+are refused); a dynamic `import()` is refused whatever its argument. A loop's exit is a bound this census reads only where the
 header states it: a while, do or for statement whose header (the condition, a for's incrementor) holds a receiver, the budget
 or its poll, or CALLS a helper the walk resolves to one that reads a receiver, the budget, its poll or fetch, in its own body
 or through the helpers it calls over the calls the walk follows (the maintainer's round 6, tests-1: the same poll written one
@@ -155,13 +157,14 @@ a loop whose header reads no receiver (a busy loop over Date.now in the driver; 
 raced by budget.bounded since pass 11, which bounds the DRIVER's wait on that read and not the renderer: the loop keeps the
 renderer wedged, every later locator.count() (class (1) of the allow-list, a call that does not auto-wait but a protocol read
 the renderer answers) waits for the wedge to end outside the budget, and the drive's bound there is DRIVER_TIMEOUT_S, the
-kill, with the RESULT line held when the driver had printed one (pass 11's fixer pass measured it: the race lost at the
+kill, with the record held when the driver had written it (pass 11's fixer pass measured it: the race lost at the
 budget's remaining time and the next count() returned when the wedge ended); one handed to waitForFunction by its capped
 timeout), CPU-bound work, and an awaited
 object whose `then` never settles, since the census reads call sites and their timeouts and resolves no loop's exit beyond the
 header rule and the cycle rule above; (2) a call of a known global (`String`,
 `setTimeout` inside the sleep, `fetch`) or of a known member of a global or a module (`Date.now`, `JSON.parse`, the driver's
-own `fs.readFileSync`), with ANY argument and however the member is reached (the root's name, an alias of the root, the
+own `fs.readFileSync`, the result helper's `lab.writeResult`, whose stdout write waits out a full pipe until the Python side
+drains it, tests/lab_result.cjs writeAll), with ANY argument and however the member is reached (the root's name, an alias of the root, the
 member bound to a name, a name imported from the module): the census keys on WHICH global is read, WHICH module is loaded
 and WHICH member is read, all three held equal to the driver (KNOWN_GLOBALS, IMPORTS_ALLOWED, KNOWN_MEMBERS), and not on the
 arguments, so the driver's `fs.readFileSync(process.env.CFG)` and a planted `fs.readFileSync("/dev/stdin")` are one call to
@@ -204,11 +207,13 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
+import lab_result                                         # noqa: E402  the parse helper's record comes back through it
 import test_federated_linkdrop_served as L               # noqa: E402  the driver: DRIVER (BUDGET_JS first)
 import test_federated_linkdrop_driver_bound as B         # noqa: E402  the tables: WAIT_FORMS, CAPPED, FIXED_DWELLS, ALLOWED_CALLS, LOCATOR_MAKERS
 
 # The helper node runs: argv[2] a JSON file of [{name, src}], argv[3] the directory whose node_modules holds the typescript
-# package (resolved from there, so the helper can live anywhere). Prints {tsVersion, sources: [{name, diagnostics, tree}]}.
+# package (resolved from there, so the helper can live anywhere). Hands back {tsVersion, sources: [{name, diagnostics, tree}]}
+# through tests/lab_result.cjs (the record to the file LAB_RESULT names, one short RESULT: line naming it).
 # A tree node is {k, s, e, c, t, op}: the kind's name (VariableStatement and the literal kinds spelled by their own names,
 # where SyntaxKind's reverse map spells them by a range alias), start and end offsets into src, the children in forEachChild
 # order (punctuation, keywords other than this/super/null/true/false, and the end-of-file marker as kind "Token"), the text
@@ -217,6 +222,7 @@ import test_federated_linkdrop_driver_bound as B         # noqa: E402  the table
 PARSE_HELPER = r"""
 const ts = require(require.resolve("typescript", { paths: [process.argv[3]] }));
 const fs = require("fs");
+const lab = require(JSON.parse(process.env.LAB_RESULT).resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 const inputs = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const kindName = (n) => {
   if (ts.isVariableStatement(n)) return "VariableStatement";
@@ -248,7 +254,7 @@ const out = inputs.map(({ name, src }) => {
   const diagnostics = (sf.parseDiagnostics || []).map((d) => ts.flattenDiagnosticMessageText(d.messageText, " "));
   return { name, diagnostics, tree: ser(sf, sf) };
 });
-process.stdout.write(JSON.stringify({ tsVersion: ts.version, sources: out }));
+lab.writeResult(lab.targetFromEnv(), { tsVersion: ts.version, sources: out });
 """
 
 # the calls that return a receiver of another kind; a page's or a locator's LOCATOR_MAKERS call returns a locator
@@ -267,7 +273,11 @@ LOOP_KINDS = ("WhileStatement", "DoStatement", "ForStatement")   # the loops who
 KNOWN_OPTIONS = (("browser", "newContext", "viewport"), ("locator", "waitFor", "state"), ("locator", "waitFor", "timeout"), ("page", "addInitScript", "stripCaps"),
                  ("page", "goto", "timeout"), ("page", "locator", "hasText"), ("page", "waitForFunction", "timeout"))
 IMPORTS_ALLOWED = ("node:module", "node:fs")       # the driver's own imports; any other module is a road the census does not know
-REQUIRE_ALLOWED = ("playwright",)
+# the modules the driver requires: playwright by name, and the result helper (tests/lab_result.cjs) by the one spelling of its
+# load the walk admits, the module-level `const lab = require(cfg.resultLib)` (a path the cfg carries; any other require of a
+# value that is not a string literal, a second load of cfg.resultLib among them, is refused)
+RESULT_LIB = "cfg.resultLib"
+REQUIRE_ALLOWED = ("playwright", RESULT_LIB)
 # names refused wherever they appear as an identifier (a reference, a member name, a binding), by the road each opens: script
 # text this census does not parse (eval, the Function constructor), a wait spelled with no timer name (Atomics.wait), the global
 # object (a member of it named by a string is a name the walk cannot read)
@@ -290,14 +300,15 @@ SHADOW = object()          # a declared name with no receiver type: it hides an 
 # unplanted driver, so a global the driver starts or stops reading is a red until the tuple says so. What is done with one is
 # the disclosed class (the module docstring); TIMERS, PROMISE_ALLOWED, REFUSED_NAMES and the fetch count refuse particular uses.
 KNOWN_GLOBALS = ("Array", "Date", "JSON", "Math", "Object", "Promise", "String", "console", "document", "fetch", "process", "setTimeout", "undefined", "window")
-# The members the driver reads on those globals and on the modules it loads (by the module's specifier), the ONE list of such
+# The members the driver reads on those globals and on the modules it loads (by the module's specifier; the result helper by
+# RESULT_LIB, the spelling of its load), the ONE list of such
 # members the walk resolves; a member of a root outside it is refused wherever it is read (`process.binding`, `fs.promises`),
 # a computed member on a root is refused (the walk cannot name it), and the driver cell holds this tuple EQUAL to the walk's
 # list over the unplanted driver. A member reached through an alias of the root, bound to a name, or imported from the module
 # by name is the same member; what the member is called with is not read (the disclosed class, the module docstring).
 KNOWN_MEMBERS = (("Array", "isArray"), ("Date", "now"), ("JSON", "parse"), ("JSON", "stringify"), ("Math", "max"), ("Math", "min"),
-                 ("Object", "assign"), ("Object", "keys"), ("Promise", "all"), ("Promise", "race"), ("Promise", "resolve"), ("console", "error"), ("console", "log"),
-                 ("document", "querySelector"), ("node:fs", "readFileSync"), ("process", "env"), ("process", "exit"),
+                 ("Object", "assign"), ("Object", "keys"), ("Promise", "all"), ("Promise", "race"), ("Promise", "resolve"), ("console", "error"),
+                 ("document", "querySelector"), ("node:fs", "readFileSync"), ("process", "env"), ("process", "exit"), (RESULT_LIB, "writeResult"),
                  ("window", "WebSocket"), ("window", "__rompLocalUp"), ("window", "__sends"), ("window", "__socks"))
 # the parents whose FIRST identifier child is a name being declared, not a reference read; and the parents under which an
 # identifier is never a reference (a binding pattern's names, an import's names, a label, `import.meta`)
@@ -320,12 +331,13 @@ def parse_js(sources):
             f.write(PARSE_HELPER)
         with open(inputs, "w", encoding="utf-8") as f:
             json.dump([{"name": n, "src": s} for n, s in sources], f)
-        p = subprocess.run(["node", helper, inputs, EXT], capture_output=True, text=True, timeout=120)
+        tgt = lab_result.target(d, "parse")   # the parse's result file and nonce (tests/lab_result.py), read before the directory goes
+        p = subprocess.run(["node", helper, inputs, EXT], capture_output=True, text=True, timeout=120, env=dict(os.environ, **lab_result.env(tgt)))
+        if p.returncode != 0:
+            raise AssertionError("the parse helper failed under node: %s%s" % (p.stdout[-800:], p.stderr[-800:]))
+        out = lab_result.read(p, tgt)
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    if p.returncode != 0:
-        raise AssertionError("the parse helper failed under node: %s%s" % (p.stdout[-800:], p.stderr[-800:]))
-    out = json.loads(p.stdout)
     return out["tsVersion"], {s["name"]: (s["diagnostics"], s["tree"]) for s in out["sources"]}
 
 
@@ -657,6 +669,18 @@ class Walk:
         self.member_reads.setdefault((root, member), []).append(self.line(at))
         return None
 
+    def _result_lib_load(self, n, args):
+        """Whether the require call `n` is the result helper's one load: `const lab = require(cfg.resultLib)` at module level, its
+        one argument the member resultLib of the name cfg. Any other require of a value that is not a string literal is a module
+        the census does not know, refused with the rest in _outside_playwright."""
+        if len(args) != 1 or args[0]["k"] != "PropertyAccessExpression":
+            return False
+        obj, member = (self.kids(args[0]) + [None, None])[:2]
+        if not (obj and obj["k"] == "Identifier" and obj.get("t") == "cfg" and member and member.get("t") == "resultLib"):
+            return False
+        p = self.parent[id(n)]
+        return p is not None and p["k"] == "VariableDeclaration" and self.kids(p)[0].get("t") == "lab" and self.scope_of(p)["k"] == "SourceFile"
+
     def _call(self, n, kids):
         raw = n.get("c", [])
         if raw and raw[0]["k"] == "Token" and raw[0].get("t") == "import":
@@ -668,7 +692,11 @@ class Walk:
             name = callee["t"]
             if name == "require":
                 mod = args[0]["t"] if args and args[0]["k"] == "StringLiteral" else None
+                if mod is None and self._result_lib_load(n, args):
+                    mod = RESULT_LIB
                 self.requires.append((mod, line))
+                if mod == RESULT_LIB:
+                    return ("module", RESULT_LIB, None)   # a module binding: its members are KNOWN_MEMBERS or refused
                 return "playwright" if mod == "playwright" else None
             if name == "createRequire":
                 # the one loader the driver makes: `const require = createRequire(...)` at module level; a second loader, or one
@@ -1239,7 +1267,7 @@ class Walk:
                 self.refuse_at(line, "import ... from %r" % mod, "an import of a module the census does not know")
         for mod, line in self.requires:
             if mod not in REQUIRE_ALLOWED:
-                self.refuse_at(line, "require(%r)" % (mod,), "a require of a module the census does not know" if mod is not None else "a require whose module is not a string literal: a name built at run time")
+                self.refuse_at(line, "require(%r)" % (mod,), "a require of a module the census does not know" if mod is not None else "a require whose module is not a string literal: a name built at run time (the one such load the walk admits is the module scope's `const lab = require(cfg.resultLib)`, the result helper)")
 
 
 def census(src, tree):
@@ -1382,6 +1410,10 @@ PLANTS = (
     ("createrequire-import-meta", 'const req4 = createRequire(import.meta.url); req4("child_process").execSync("sleep 100");', "refused"),
     ("require-alias", 'const rq = require; const tp2 = rq("node:timers/promises"); await tp2.scheduler.wait(100000);', "refused"),
     ("require-built-name", 'const cp = require("child_" + "process"); cp.execSync("sleep 100");', "refused"),
+    # the result helper: its one load is the module scope's `const lab = require(cfg.resultLib)`, and writeResult its one member
+    ("result-lib-second-load", "const lab2 = require(cfg.resultLib); lab2.writeResult(cfg, out);", "refused"),
+    ("require-other-cfg-member", "const m2 = require(cfg.provSel);", "refused"),
+    ("result-lib-other-member", 'lab.writeLine("KPID", 1);', "refused"),
     # Promise read as anything but the sleep's constructor or Promise.resolve/Promise.all; fetch as anything but a callee
     ("promise-alias", "const PC = Promise; await new PC(() => {});", "refused"),
     ("promise-reject-alias", "const PR = Promise.reject; await PR(1).catch(() => {});", "refused"),

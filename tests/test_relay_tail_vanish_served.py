@@ -26,6 +26,7 @@ two-kernel relay harness of test_federated_history_scroll_served.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import subprocess
@@ -59,6 +60,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -161,7 +163,7 @@ try {
     out.scenarios[name] = { before, after };
   }
 } catch (e) { out.died = String(e).slice(0, 500); }
-console.log("RESULT:" + JSON.stringify(out));
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -271,17 +273,20 @@ class RelayVanishGuards(unittest.TestCase):
         neighbors = ["api-u%03d" % (MID_TURN - 1), "api-a%03d" % (MID_TURN - 1), "api-a%03d" % MID_TURN,
                      "api-u%03d" % (MID_TURN + 1), "api-a%03d" % (MID_TURN + 1)]
         cfg = os.path.join(cls.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=%s&token=%s" % (cls.hport, WID, cls.htoken),
+                "remote": REMOTE, "readUuid": read_uuid, "neighbors": neighbors, "sessionName": "api",
+                "scenarios": SCENARIOS, "frameEvents": cls._tail_pairs(cwd), "deltaEvents": cls._delta_pairs(cwd),
+                # legitimate larger windows for the MEDIUM: turns [read-run hi .. end] and [mid-of-read-run .. end]
+                "eventsFromHi": cls._range_pairs(cwd, 263, PAIRS), "eventsFromMid": cls._range_pairs(cwd, MID_TURN, PAIRS),
+                "midTailLo": MID_TURN,   # a turn INSIDE the read run [137,263]; straddle merge keeps it lossless
+                "tailRunLo": TAIL_RUN_LO,   # the tail run's own lo; tailrun_drop aims a frame's tailLo here (the tail run guard 3 never checked)
+                "eventsFork": cls._range_pairs(cwd, 50, 56),   # a fork's short new tail (turns 50-55), below both held runs: nothing of them is carried
+                "forkLo": 50,
+                "fromLow": 40}       # a numeric-`from` truncation point inside the read run's events (below the read point at ~index 126): LOW a
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=%s&token=%s" % (cls.hport, WID, cls.htoken),
-                       "remote": REMOTE, "readUuid": read_uuid, "neighbors": neighbors, "sessionName": "api",
-                       "scenarios": SCENARIOS, "frameEvents": cls._tail_pairs(cwd), "deltaEvents": cls._delta_pairs(cwd),
-                       # legitimate larger windows for the MEDIUM: turns [read-run hi .. end] and [mid-of-read-run .. end]
-                       "eventsFromHi": cls._range_pairs(cwd, 263, PAIRS), "eventsFromMid": cls._range_pairs(cwd, MID_TURN, PAIRS),
-                       "midTailLo": MID_TURN,   # a turn INSIDE the read run [137,263]; straddle merge keeps it lossless
-                       "tailRunLo": TAIL_RUN_LO,   # the tail run's own lo; tailrun_drop aims a frame's tailLo here (the tail run guard 3 never checked)
-                       "eventsFork": cls._range_pairs(cwd, 50, 56),   # a fork's short new tail (turns 50-55), below both held runs: nothing of them is carried
-                       "forkLo": 50,
-                       "fromLow": 40}, f)       # a numeric-`from` truncation point inside the read run's events (below the read point at ~index 126): LOW a
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -296,11 +301,11 @@ class RelayVanishGuards(unittest.TestCase):
         if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None:
-            cls.driver_error = "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:]
+        try:
+            cls.result = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = str(e)
             return
-        cls.result = json.loads(line[len("RESULT:"):])
 
     @classmethod
     def tearDownClass(cls):

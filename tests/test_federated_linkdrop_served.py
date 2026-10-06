@@ -178,6 +178,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -280,7 +281,7 @@ def driver_worst_case_s(cls):
     work between the waits that the budget does not cover, each at its own bound: the down dwell, the hub restart, the
     change bundles (A, D, B and, with the local drop, C), the phases' settles, and DRIVER_FIXED_S (the launch at
     playwright's default timeout and the work between the waits). The browser's close after the RESULT line is outside
-    this sum: it discards no measurement (_drive keeps a RESULT the kill left whole). Pinned under DRIVER_TIMEOUT_S by
+    this sum: it discards no measurement (_drive keeps the record a kill in the close leaves whole). Pinned under DRIVER_TIMEOUT_S by
     tests/test_federated_linkdrop_driver_bound.py, which reports the headroom."""
     phases = 3 if cls.local_drop else 2
     restart = hub_restart_bound_s() if cls.local_drop else 0.0
@@ -642,6 +643,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -830,7 +832,7 @@ try {
   out.died = String(e).slice(0, 400);
   for (const app of Object.keys(pages)) { try { out.pages[app] = await snap(pages[app]); } catch (e2) {} }
 }
-console.log("RESULT:" + JSON.stringify(out));
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -1144,6 +1146,8 @@ class _LinkDrop(unittest.TestCase):
                 "stripCaps": cls.strip_caps, "localDrop": cls.local_drop, "waitMs": cls.wait_ms, "downDwellMs": cls.down_dwell_ms, "apps": list(cls.apps), "provSel": PROV_SEL,
                 "waitsMs": dict(cls.waits_ms), "pageWaitMs": cls.page_wait_ms, "driverBudgetMs": cls.driver_budget_ms,
                 "phaseSettleMs": PHASE_SETTLE_MS, "quietTries": QUIET_TRIES, "quietStepMs": QUIET_STEP_MS}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
             json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
@@ -1156,18 +1160,18 @@ class _LinkDrop(unittest.TestCase):
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=DRIVER_TIMEOUT_S,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         except subprocess.TimeoutExpired as e:
-            # the driver prints its RESULT line before `await browser.close()`, so a kill at DRIVER_TIMEOUT_S can land in the close
-            # with the record whole in the partial output: that record is HELD, since a discarded measurement is not a hang (the
-            # maintainer's round 6, extra4-4); a RESULT line the kill truncated stays driver_error, and the kill is noted either way
+            # the driver writes its record and prints the RESULT line naming it before `await browser.close()`, so a kill at
+            # DRIVER_TIMEOUT_S can land in the close with the record whole in its file: that record is HELD, since a discarded
+            # measurement is not a hang (the maintainer's round 6, extra4-4); a RESULT line the reader refuses (one the kill cut)
+            # stays driver_error, and the kill is noted either way
             so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
-            line = next((ln for ln in so.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
+            if not any(ln.startswith(lab_result.PREFIX) for ln in so.split("\n")):
                 cls.driver_error = "driver timed out; partial output:\n%s" % so
                 return
             try:
-                cls.result = json.loads(line[len("RESULT:"):])
-            except ValueError as err:
-                cls.driver_error = "driver timed out after printing a RESULT line the kill left truncated (%s); partial output:\n%s" % (err, so)
+                cls.result = lab_result.read(e, tgt)
+            except lab_result.ResultError as err:
+                cls.driver_error = "driver timed out after printing a RESULT line the reader refused: %s" % err
                 return
             cls.driver_note = ("the driver outlived DRIVER_TIMEOUT_S (%d s) after printing its RESULT line and was killed in its close; the record is held whole "
                                "(the browser's close is outside the arithmetic: it comes after the last mark and discards no measurement)" % DRIVER_TIMEOUT_S)
@@ -1177,11 +1181,11 @@ class _LinkDrop(unittest.TestCase):
         if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None:
-            cls.driver_error = "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:]
+        try:
+            cls.result = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = str(e)
             return
-        cls.result = json.loads(line[len("RESULT:"):])
 
     @classmethod
     def _hub_tunnels_row(cls):
