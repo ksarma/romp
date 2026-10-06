@@ -17,9 +17,10 @@ completing after the survivor's, and a cancelled required check blocks; GitHub a
 
 The step's script is run for real, with `gh` replaced by a shim on PATH that prints a canned label list
 (or fails), so the zero / one / two / alias / unreadable cases are behaviour, not a grep. Source pins
-cover what the script cannot show: the trigger types, the read-only token (the workflow's one
-permissions block, no job-level override), the concurrency stanza and the check's name, which the
-ruleset requires by name and app and so must never change. The accepted label SET is read back from the
+cover what the script cannot show: the trigger types (the four label events and no others, the fork's
+second divergence), the read-only token (the workflow's one permissions block, no job-level override),
+the concurrency stanza and the check's name, which the ruleset requires by name and app and so must
+never change. The accepted label SET is read back from the
 workflow, not pinned here: tests/test_tier_policy.py (the tier-policy change) pins it against the policy.
 
 Synthetic only: an invented repository name and PR number, no network."""
@@ -116,10 +117,18 @@ class WorkflowPins(unittest.TestCase):
         # un-require it
         self.assertIn("    name: Exactly one tier label\n", self.src)
 
-    def test_every_label_changing_event_reruns_it(self):
+    def test_every_label_changing_event_reruns_it_and_nothing_else_does(self):
+        # The fork's copy runs on the events that can change what it reads, and not on synchronize or
+        # edited (2026-09-27, the header's second fork divergence): those change no label, and on a
+        # private repository each run bills at least a minute.
         m = re.search(r"pull_request:\n\s+types: \[([^\]]+)\]", self.src)
+        self.assertIsNotNone(m, "no `types: [...]` line under pull_request:; re-anchor this pin")
         types = {t.strip() for t in m.group(1).split(",")}
-        self.assertTrue({"opened", "reopened", "labeled", "unlabeled", "synchronize"} <= types, types)
+        self.assertTrue({"opened", "reopened", "labeled", "unlabeled"} <= types, "a label-changing event no longer re-runs the check: %r" % types)
+        self.assertEqual(types & {"synchronize", "edited"}, set(), "the check runs on a push or an edit again, which changes no label")
+        self.assertEqual(types, {"opened", "reopened", "labeled", "unlabeled"}, "an event outside the four: %r" % types)
+        self.assertEqual(len(re.findall(r"^  [a-z_]+:", self.src[self.src.index("\non:"):self.src.index("\npermissions:")], re.M)), 1,
+                         "one trigger (pull_request); another would run the check on more events")
 
     def test_runs_for_one_pr_are_kept_and_never_cancelled(self):
         self.assertIn("concurrency:\n  group: pr-tier-${{ github.event.pull_request.number }}\n"
