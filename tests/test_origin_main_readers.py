@@ -61,7 +61,10 @@ an empty scan (census_problems, which compares the lines, never their count; its
 classification was confirmed by execution where the text did not settle it: the modules and bats files that run
 scripts/batch.py, scripts/pr-orphans.sh, scripts/release.sh, the kernel's release and GitHub-link probes and
 scripts/sweep.py were run in a checkout make_checkout made, with a git first on PATH logging each call made through it,
-and none read that checkout's origin/main, nor any ref of it but HEAD (2026-10-03).
+and none read that checkout's origin/main, nor any ref of it but HEAD (2026-10-03). tests/fork-remotes.bats, which runs
+scripts/fork-remotes.sh, was run the same way in a checkout built as make_checkout builds one, with each call's ref
+reads traced (GIT_TRACE_REFS): its one read of that checkout was of HEAD, by an onbranch include in the test's own
+global config file (fork PR 974, 2026-10-06).
 
 At this head three test files read the checkout's own origin/main (READERS), all brought by the merge of fork main
 through fork PR 926's merge of it: the history case of tests/gitleaks-config.bats, the three tests of
@@ -200,8 +203,12 @@ CLASSIFIED = {
                          "(tests/test_batch_tool.py: Fixture.__init__ copies it into its dev clone, or ROMP_BATCH_REPO "
                          "names a built repository), and its runs of this checkout's copy print help or meet a planted "
                          "git first; the rest are docstrings and messages"),
-    "scripts/fork-remotes.sh": ((NOT_A_READ,), "comparisons of configuration values with origin; and a comment naming "
-                                               "a per-branch push beside the next line's `read -r` (split_hits)"),
+    "scripts/fork-remotes.sh": ((NOT_A_READ,),
+                                "read_urls's `git remote get-url --all` and `--push --all`, and the same read of "
+                                "upstream's push urls, which resolve a remote's urls from configuration and the "
+                                "legacy remote files and read no ref but HEAD, in the clone the script lives in (it "
+                                "cds there), which its tests build (tests/fork-remotes.bats copies it into $REPO); "
+                                "comments naming those options; and a message naming origin's url"),
     "scripts/pr-orphans.sh": ((SYNTHETIC, NOT_A_READ),
                               "reads refs/remotes/origin/$MAIN in the clone above its own scripts/ (it cds there); "
                               "tests/pr-orphans.bats copies it into a repository its setup builds, and batch.py's finish "
@@ -219,7 +226,13 @@ CLASSIFIED = {
                                                   "parses one (its [:/]); it runs no git (split_hits)"),
     "tests/bootstrap-sh.bats": ((NOT_A_READ,), "compares `git remote` of the clone made from the built origin "
                                                   "($ROMP_REPO, setup) with origin: configuration"),
-    "tests/fork-remotes.bats": ((NOT_A_READ,), "configuration values of the clone its setup builds, and a comment"),
+    "tests/fork-remotes.bats": ((NOT_A_READ,),
+                                "reads and writes of configuration in the clone its setup builds ($REPO) or in the "
+                                "test's own global config file (git_hermetic's GIT_CONFIG_GLOBAL): `config --get`, "
+                                "which reads no ref, `remote get-url --all`, which reads none but HEAD, and `config "
+                                "remote.<name>.fetch`, which writes a refspec; the legacy remote files it writes, "
+                                "chmods and removes under $REPO/.git/remotes/, which define a remote and are no "
+                                "remote-tracking ref; and expected texts naming those files"),
     "tests/gitleaks-config.bats": ((READS, SYNTHETIC, NOT_A_READ),
                                    "history_scan_range reads origin/main of the repository it is given, and the history "
                                    "case gives it ROMP_DIR, the checkout (READERS); the range's cases give it the "
