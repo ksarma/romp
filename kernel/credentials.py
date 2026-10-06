@@ -538,66 +538,76 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
     environment, one more each time helper_key asked again. The session makes the group the helper's alone,
     so the kill never reaches the kernel's own group. It also leaves the helper without a controlling
     terminal, and outside a terminal's foreground group (the comment at the kill has the consequences and
-    what the kill does not reach)."""
+    what the kill does not reach).
+
+    The run is the Popen's own context manager, as subprocess.run's was: whatever ends it once the shell
+    has started (the run finishing, so that the key or a CredentialError follows; the bound or another
+    exception; a KeyboardInterrupt during the wait or anywhere in the kill) leaves the block through
+    Popen.__exit__, which closes the pipe and then reaps the shell. On KeyboardInterrupt that reap waits at
+    most a quarter second for the shell and the interrupt goes on; otherwise it waits for a shell that by
+    then has been reaped or sent SIGKILL by the kill."""
     bound = HELPER_TIMEOUT_S if timeout_s is None else timeout_s
-    p = None
     try:
-        p = subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, env=helper_env(), start_new_session=True)
-        out = p.communicate(timeout=bound)[0]
+        with subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, env=helper_env(), start_new_session=True) as p:
+            try:
+                out = p.communicate(timeout=bound)[0]
+            finally:
+                if p.returncode is None:
+                    # The run did not finish (communicate sets returncode only once the shell is reaped). With
+                    # start_new_session the shell's pid is the group's id, and the group holds every process
+                    # the helper forked that did not leave it. SIGKILL to the group, then a drain bounded by
+                    # HELPER_DRAIN_S: it reads the pipe to its end, which comes once every holder of the write
+                    # end has closed it, and reaps the shell. The drain thus returns once every holder of the
+                    # pipe has closed it and the shell is reaped; the group's other members have SIGKILL
+                    # pending and finish exiting on their own, possibly just after the call returns. When the
+                    # drain runs out, the fallback p.kill() reaps the shell the group's SIGKILL ended
+                    # (send_signal polls before it signals, so the poll reaps it and nothing is sent), and
+                    # Popen.__exit__'s wait would reap it as well. Either way the call leaves no zombie of the
+                    # shell.
+                    # Not covered: a process that left the group itself (setsid, setpgid, a daemonizing
+                    # helper) is not signalled and runs on. If it still holds stdout, the drain waits its whole
+                    # bound for an end that does not come, the call raises that much later, and the process
+                    # keeps a pipe whose read end Popen.__exit__ closes, so its next write to stdout fails
+                    # (EPIPE, or SIGPIPE for a shell). The finished roads kill nothing: a process the helper
+                    # leaves running without stdout outlives a run that exited, as it always did. What the
+                    # session changes for a helper: it has no controlling terminal, so opening /dev/tty to
+                    # prompt fails at once (the systemd unit gives the kernel no terminal, so there it failed
+                    # before too; a kernel started in a terminal gave the helper that terminal), and a
+                    # terminal's Ctrl-C signals the kernel's group, not the helper.
+                    # A KeyboardInterrupt on the thread waiting in communicate: communicate first waits up to a
+                    # quarter second for the shell and reaps it if it has exited by then, and then the group is
+                    # not signalled, as with subprocess.run before (a member still holding stdout runs on, and
+                    # its next write fails once Popen.__exit__ closes the pipe); a shell still running is
+                    # ended here with its group, as at the bound. A KeyboardInterrupt inside the kill cuts the
+                    # rest of it, and Popen.__exit__ still closes the pipe: one in the drain, in the fallback or
+                    # just after os.killpg finds the shell ended by the group's SIGKILL, and the quarter-second
+                    # wait (the interrupted drain's, or else Popen.__exit__'s) reaps it; one that lands before
+                    # os.killpg signals nothing, that wait runs out, and the shell runs on. A run on another
+                    # thread goes on to its bound. A helper still running when the kernel exits runs on until it
+                    # exits by itself. Under the systemd unit, KillMode=control-group ends it only when the unit
+                    # stops or restarts (a manager exit, as the stale-manager self-bounce, is one); the
+                    # manager's kernel restart (romp refresh, a dashboard restart, a quiet-window apply, a
+                    # restarting settings pick) signals the kernel's pid alone (termThenKill in
+                    # bin/romp-manager), so a hung helper runs on through it, as it did with subprocess.run
+                    # before.
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                    try:
+                        p.communicate(timeout=HELPER_DRAIN_S)
+                    except Exception:
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
     except FileNotFoundError:
         raise CredentialError("%s could not run: /bin/sh is not available" % label) from None
     except subprocess.TimeoutExpired:
         raise CredentialError("%s timed out after %d s" % (label, bound)) from None
     except OSError:
         raise CredentialError("%s could not be run" % label) from None
-    finally:
-        if p is not None and p.returncode is None:
-            # The run did not finish (communicate sets returncode only once the shell is reaped). With
-            # start_new_session the shell's pid is the group's id, and the group holds every process the
-            # helper forked that did not leave it. SIGKILL to the group, then a drain bounded by
-            # HELPER_DRAIN_S: it reads the pipe to its end, which comes once every holder of the write end
-            # has closed it, and reaps the shell. The drain thus returns once every holder of the pipe has
-            # closed it and the shell is reaped; the group's other members have SIGKILL pending and finish
-            # exiting on their own, possibly just after the call returns. When the drain runs out, the
-            # fallback p.kill() reaps the shell the group's SIGKILL ended (send_signal polls before it
-            # signals, so the poll reaps it and nothing is sent). Either way the call leaves no zombie of
-            # the shell.
-            # Not covered: a process that left the group itself (setsid, setpgid, a daemonizing helper) is
-            # not signalled and runs on. If it still holds stdout, the drain waits its whole bound for an
-            # end that does not come, the call raises that much later, and the process keeps a pipe whose
-            # read end is closed below, so its next write to stdout fails (EPIPE, or SIGPIPE for a shell).
-            # The finished roads kill nothing: a process the helper leaves running without stdout outlives
-            # a run that exited, as it always did. What the session changes for a helper: it has no
-            # controlling terminal, so opening /dev/tty to prompt fails at once (the systemd unit gives the
-            # kernel no terminal, so there it failed before too; a kernel started in a terminal gave the
-            # helper that terminal), and a terminal's Ctrl-C signals the kernel's group, not the helper. A
-            # KeyboardInterrupt on the thread waiting here ends the group while the shell is still unreaped,
-            # but communicate first waits up to a quarter second for the shell and reaps it if it has exited
-            # by then, and then the group is not signalled, as with subprocess.run before (a member still
-            # holding stdout runs on, and its next write fails once the pipe is closed below). A run
-            # on another thread goes on to its bound. A helper still running when the kernel exits runs on
-            # until it exits by itself. Under the systemd unit, KillMode=control-group ends it only when
-            # the unit stops or restarts (a manager exit, as the stale-manager self-bounce, is one); the
-            # manager's kernel restart (romp refresh, a dashboard restart, a quiet-window apply, a
-            # restarting settings pick) signals the kernel's pid alone (termThenKill in bin/romp-manager),
-            # so a hung helper runs on through it, as it did with subprocess.run before.
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            try:
-                p.communicate(timeout=HELPER_DRAIN_S)
-            except Exception:
-                try:
-                    p.kill()
-                except Exception:
-                    pass
-        if p is not None and p.stdout is not None:
-            # Closed whatever the returncode: on the KeyboardInterrupt road above the shell is already
-            # reaped, and the pipe would otherwise stay open until the Popen is collected, where
-            # subprocess.run's Popen.__exit__ closed it at once.
-            p.stdout.close()
     if p.returncode:
         raise CredentialError("%s is not on the manager's PATH (exit 127)" % label if p.returncode == 127
                               else "%s failed (non-zero exit)" % label)
