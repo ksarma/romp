@@ -48,8 +48,10 @@ wrap only where it still cannot.
   button's own fill, which the button keeps on hover, its border and label still turning accent (round 1, extra6-2), and
   every colour it wears reads at 3:1 or more (a graphic, romp-manager's call 7) on the card and on that fill, at rest and
   hovered, in both themes: in the light theme its dialing grey and
-  needs-you red are darker than the shell's (feed.css's --rn-wait and --rn-warn, #777777 and #dc3f46 where the shell has
-  #8a8a8a and #e5484d, which read 2.59 and 2.94:1 on that theme's button fill, #e7ded2).
+  needs-you red are darker than the shell's (feed.css's --rn-wait and --rn-warn, #777777 and #db3d5a where the shell has
+  #8a8a8a and #e5484d, which read 2.59 and 2.94:1 on that theme's button fill, #e7ded2). The red is turned in hue too,
+  from the shell's 23 degrees to 15 in OKLCH, so it stays as far from the connected node's clay (#c2410c) as the shell's
+  red is: 9.04 in OKLab distance x100, where the shell's has 8.94 (romp-manager's call 1 at round 1).
 - The fallback. The action cluster is one element (.mtabs-acts) and the bar may wrap: where the tabs and the three actions
   left do not fit one row (below 322px in Chromium and 318px in WebKit and Firefox, so at 320px in Chromium and not in the
   other two; below 358px in Chromium and 353px in WebKit and Firefox with the Files tab on, so at 320px in all three), the
@@ -117,7 +119,8 @@ Remote kernels glyph's colours in the dark and the light theme (THEMES), each on
 opened from the bar's Settings, every colour the glyph can wear (GLYPH: the glyph lit and attaching, read on its svg, a node connected,
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
 colour read with its class set and the element's transitions off; and again with the pointer moved onto the button (its
-transitions off), against the fill it wears hovered, :hover read as the premise. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
+transitions off), against the fill it wears hovered, :hover read as the premise; and the needs-you red stays
+SEPARATION_FLOOR or more from the connected node's colour in OKLab. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
 clicked at its centre, shows no row of moved actions (not displayed, its buttons boxless: the rail has its own).
 MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
@@ -142,7 +145,8 @@ asked reads as one with no reading (Usage disabled with its line). The layout le
 only when it opens (the row still shown in the widened window), and its glyph line red without the clear of the drop's class
 when the row shows again (the flash then plays at the narrowing). The contrast pin is red at the shell's literals in the light theme, in
 all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill; its
-hovered half is red where the button takes the row's accent wash on hover, on which the dark needs-you red reads 2.95:1. Runs in the "Browser-backed served-page tests (pytest)" step of the
+hovered half is red where the button takes the row's accent wash on hover, on which the dark needs-you red reads 2.95:1;
+and the separation's pin is red at the darker red the light theme had at the shell's hue, #dc3f46, 7.10 from the clay. Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
 ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs all three).
@@ -201,6 +205,11 @@ USAGE_NONE = "No reading yet"   # the card's line under a disabled Usage (gear.j
 THEMES = (("dark", "classic"), ("light", "yatharth-light"))
 GLYPH = ("lit", "attaching", "connected", "dialing", "needs you")   # every colour the glyph can wear, as the driver names them
 GLYPH_FLOOR = 3.0   # the contrast a graphic needs (WCAG's non-text 3:1), against the card's background and the button's fill
+# ...and how far the needs-you red stays from the connected node's colour, as OKLab distance x100 (romp-manager's call 1 at
+# PR 976's round 1): at least the separation the shell's own pair has in the light theme, #e5484d from the clay #c2410c,
+# 8.94, so the light card's darker red tells the two states apart no worse than the shell does (the same red darker at the
+# shell's hue was 7.10)
+SEPARATION_FLOOR = 8.9
 DESKTOP = (1280, 800)
 WIDE = (900, 844)   # the window the layout leg widens to with the card open: past the phone query's 820px, in a fine-pointer context
 RAIL = ((821, 800), (1100, 800))   # the desktop rail: just past the phone query's 820px, and a laptop
@@ -619,10 +628,25 @@ def _hex(c):
     return "#" + "".join("%02x" % int(round(x)) for x in c[:3])
 
 
+def _oklab_distance(a, b):
+    """The Euclidean distance between two opaque sRGB colours in OKLab (Ottosson's matrices), x100."""
+    def lab(c):
+        r, g, bl = [x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4 for x in (v / 255.0 for v in c[:3])]
+        lms = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * bl,
+               0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * bl,
+               0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * bl)
+        l_, m_, s_ = [v ** (1.0 / 3.0) for v in lms]
+        return (0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+                1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+                0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_)
+    return 100.0 * sum((p - q) ** 2 for p, q in zip(lab(a), lab(b))) ** 0.5
+
+
 def _contrast_problems(engine, contrast):
     """Each colour the Remote kernels glyph wears reads at GLYPH_FLOOR or more against the card's background and against the
     button's own fill (the glyph sits on the button), at rest and with the pointer on the button (PR 976's round 1,
-    extra6-2: the hovered fill is a fill the glyph sits on too), in the dark and the light theme."""
+    extra6-2: the hovered fill is a fill the glyph sits on too), in the dark and the light theme; and the needs-you red stays
+    SEPARATION_FLOOR or more from the connected node's colour in OKLab."""
     out = []
     for name, theme in THEMES:
         where = "%s Remote kernels glyph, %s theme (%s)" % (engine, name, theme)
@@ -646,6 +670,11 @@ def _contrast_problems(engine, contrast):
                 if on_card < GLYPH_FLOOR or on_fill < GLYPH_FLOOR:
                     out.append("%s: %s, %s, reads %.2f:1 on the card (%s) and %.2f:1 on the button's fill (%s), under %g:1" % (
                         where, k, _hex(_over(col, fill)), on_card, _hex(card), on_fill, _hex(fill), GLYPH_FLOOR))
+            ok, warn = (_over(_rgba((t.get("colours") or {}).get(k)), fill) for k in ("connected", "needs you"))
+            apart = _oklab_distance(ok, warn)
+            if apart < SEPARATION_FLOOR:
+                out.append("%s: the needs-you red %s is %.2f from the connected node's %s (OKLab distance x100), under %g" % (
+                    where, _hex(warn), apart, _hex(ok), SEPARATION_FLOOR))
             hv = t.get("hover") or {}
             if hv.get("hovered") is not True:
                 out.append("%s: the pointer on the Remote kernels button does not hover it (the hovered fill's premise): %r" % (where, hv))

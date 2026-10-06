@@ -84,7 +84,8 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    rnet-drop and rnet-march keyframes), restated because this page loads none of the shell's stylesheet; the node colours
    through tokens, each with the shell's literal as its fallback: the accent, and feed.css's --rn-wait and --rn-warn, the
    dialing grey and the needs-you red, the shell's literals in the dark theme and darker in the light one, where the
-   shell's two read under 3:1 on the button's fill. Every colour the glyph wears reads at 3:1 or more (a graphic) on the
+   shell's two read under 3:1 on the button's fill (the red turned in hue there too, so it stays as far from the connected
+   node's colour as the shell's red is; feed.css says by how much). Every colour the glyph wears reads at 3:1 or more (a graphic) on the
    card and on that fill, at rest and hovered, in both themes, measured in the served card by tests/test_mtabs_fit_served.py.
    The accent goes on the glyph alone, as on the rail, where the icon is a glyph and nothing else (PR 976's round 1, ui-3):
    the button's label keeps the card's text colour, since the accent here marks a state, and in the light theme the accent

@@ -187,8 +187,11 @@ body.theme-light {
   --outbound-line: #6b645a;   /* mirrored from styles.css (4.90:1 on the page) */
   --rn-wait: #777777;   /* darker than the shell's #8a8a8a, which reads 2.59:1 on this theme's button fill (--btn-bg, under the card's
                            glyph): 3.36:1 there and 4.13:1 on the card (--surface-raised), the same grey lower in OKLCH lightness */
-  --rn-warn: #dc3f46;   /* darker than the shell's #e5484d (2.94:1 on that fill): 3.26:1 there and 4.00:1 on the card, the same
-                           OKLCH hue and chroma lower in lightness; each glyph colour needs 3:1 on both (a graphic) */
+  --rn-warn: #db3d5a;   /* darker than the shell's #e5484d (2.94:1 on that fill): 3.27:1 there and 4.01:1 on the card, lower
+                           in OKLCH lightness, and turned from the shell's hue (23 degrees) to 15, away from the connected
+                           node's clay (--accent, hue 38): their OKLab distance x100 is 9.04, where the shell's red has 8.94
+                           and the darker red at the shell's hue had 7.10 (romp-manager's call 1 at PR 976's round 1,
+                           2026-10-06). Each glyph colour needs 3:1 on both (a graphic) */
   --detail-bg: rgba(0, 0, 0, 0.04);
   --rel-done: #3E7D0E;       /* the light ok-green (matches --green) */
   --rel-decision: #1478B8;   /* the classic blue, darkened to read on cream */
