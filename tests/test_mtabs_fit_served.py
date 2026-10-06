@@ -30,7 +30,9 @@ wrap only where it still cannot.
   before. They are buttons in a card, so they wear the card's button vocabulary, the dress of its other word buttons
   (Customize shortcuts' rules, copied), not the menu vocabulary of a dropdown's rows. The Remote kernels glyph keeps its
   live state there: the shell's /tunnels poll paints the card's copy as it painted the bar's (connected, attaching, each
-  node's colour, the drop flash), and the card's opening paints it from the last poll. The drop flash plays only where the
+  node's colour, the drop flash), and the card's opening brings it in step with the rail's glyph (the rail icon's live
+  classes and the last poll's node colours; tests/test_remotes_panel_render.py holds that the opening paints nothing on the
+  rail, so an Attach in flight keeps its busy there and the card shows it too). The drop flash plays only where the
   card is open at the drop: a closed card runs no animation, so the class a drop left on its copy is cleared when the card
   opens, where it would otherwise play the flash late. Usage explains rather than hides when it has nothing to show
   (romp-manager's call 6): the shell's usage panel opens only over a reading, so with none the card shows Usage disabled

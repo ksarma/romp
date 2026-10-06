@@ -86,6 +86,7 @@ const SUB = __SUB__;            // /tunnels/of answer (a PEER's own rows); null 
 const TQ = __TQ__;              // a QUEUE of /tunnels answers ({ok, status, body}), one per poll in order; empty = TUNNELS, ok, every time
 const HQ = __HQ__;              // a QUEUE of /ssh-hosts answers ({ok, status, body} or {reject}), one per load; empty = {hosts:['TESTHOST']}, ok
 const POSTS = [];               // every write the panel makes, so a test can assert what Attach sent
+let PROBE_FN = null;            // a drive may set it: its answer is reported as `probe`, read after the drive's promises settle
 function fetch(url, opts){
   if (opts && opts.method === 'POST') {
     POSTS.push({url:url, body:JSON.parse(opts.body || '{}')});
@@ -145,7 +146,7 @@ setTimeout_(() => {
       hosts:dl.children.map(function(o){return o.value;}), hostsHtml:String(dl.innerHTML||''),
       hostsLastDisabled:!!(dl.children.length&&dl.children[dl.children.length-1].disabled),
       fromOpts:fs.children.map(function(o){return [o.value, o.textContent];}), fromHtml:String(fs.innerHTML||''),
-      htmlSets:HTML_SETS, posts:POSTS, alerts:ALERTS}), function(){process.exit(0);});
+      htmlSets:HTML_SETS, posts:POSTS, alerts:ALERTS, probe:(typeof PROBE_FN === 'function' ? PROBE_FN() : null)}), function(){process.exit(0);});
     // exit once the measurement has FLUSHED: a pipe write is asynchronous, and exit() right after it cut a
     // 600-row report mid-string (unterminated JSON); the panel re-arms its own poll timer forever otherwise
   }, 40);
@@ -630,6 +631,53 @@ class PendingHostsRowCopy(_PanelHarness, unittest.TestCase):
         out = self._run(drive=self.DELIVER, tunnels=t)
         self.assertNotIn("loading sessions", out["html"])
         self.assertIn("reconnecting", out["html"])
+
+
+class SettingsCardGlyphAtTheOpening(_PanelHarness, unittest.TestCase):
+    """The settings card's copy of the Remote kernels glyph (gear.js #rs-pact-net, the phone's button since iOS item 4g) when
+    the card opens: the shell's settings-open listener brings the copy in step with the rail's glyph and paints nothing on the
+    rail (PR 976's round 1, regression-1). The listener once replayed the last poll's paint through paintIcon, which rewrote
+    the rail too: an Attach in flight, whose click adds busy to the rail's icon before any poll reports it, lost its busy on
+    the rail and on the card's copy the moment the card opened, until the next poll. Executed in node against the DOM stub,
+    with the settings frame's document stubbed to hold the card's button and its three nodes, and the Attach's POST left
+    unanswered (in flight). The opening is delivered as gear.js posts it, {romp:'settings',on:true}, from the settings
+    frame's window. Two orders: the card's page loaded before the Attach click (the click marks the copy busy as well), and
+    loaded after it (only the rail's icon carries busy, which the opening copies)."""
+
+    SETUP = r"""
+    const SFWIN = {};
+    function node(c){ return {cls:c, setAttribute(k,v){ if(k==='class') this.cls=String(v); }, getAttribute(k){ return k==='class'?this.cls:null; }}; }
+    const CARD = mkEl('rs-pact-net');
+    const NODES = {'.rn-me':node('rn-me'), '.rn-a':node('rn-a'), '.rn-b':node('rn-b')};
+    CARD.querySelector = function(s){ return NODES[s]||null; };
+    function loadCard(){ const f=document.getElementById('f-settings'); f.contentWindow=SFWIN;
+      f.contentDocument={getElementById(id){ return id==='rs-pact-net'?CARD:null; }}; }
+    function opening(){ (window._l.message||[]).forEach(function(l){ l({data:{romp:'settings',on:true}, source:SFWIN}); }); }
+    fetch = (function(f){ return function(u,o){ if(u==='/tunnels'&&o&&o.method==='POST'){ POSTS.push({url:u, body:JSON.parse(o.body||'{}')}); return new Promise(function(){}); } return f(u,o); }; })(fetch);
+    function attachNow(){ ELS['rnet-plus'].click(); ELS['rnet-host'].value='TESTHOST2'; ELS['rnet-attach'].click(); }
+    PROBE_FN = function(){ const i=ELS['rail-net'];
+      return {rail:{on:i.classList.contains('on'), busy:i.classList.contains('busy')},
+              card:{on:CARD.classList.contains('on'), busy:CARD.classList.contains('busy'),
+                    nodes:[NODES['.rn-me'].cls, NODES['.rn-a'].cls, NODES['.rn-b'].cls]},
+              posts:POSTS.map(function(p){ return p.url; })}; };
+    """
+
+    def _check(self, out):
+        self.assertEqual(out.get("errors"), [], "the refresh must not report a failure")
+        p = out["probe"]
+        self.assertEqual(p["posts"], ["/tunnels"], "the Attach's POST was made (and is left in flight)")
+        # one comparison, so a red names the rail and the card together: the rail keeps the busy the Attach's click gave it,
+        # and the card's copy is lit as the rail is (a host is connected), shows the Attach in flight as the rail does, and
+        # wears the last poll's node colours
+        self.assertEqual({"rail": p["rail"], "card": p["card"]},
+                         {"rail": {"on": True, "busy": True},
+                          "card": {"on": True, "busy": True, "nodes": ["rn-me rn-ok", "rn-a rn-ok", "rn-b rn-ok"]}})
+
+    def test_an_attach_in_flight_keeps_the_rails_busy_and_the_cards_copy_shows_it_when_the_page_was_loaded_first(self):
+        self._check(self._run(drive=self.SETUP + "loadCard(); attachNow(); opening();"))
+
+    def test_an_attach_in_flight_keeps_the_rails_busy_and_the_cards_copy_shows_it_when_the_page_loads_after_the_click(self):
+        self._check(self._run(drive=self.SETUP + "attachNow(); loadCard(); opening();"))
 
 
 if __name__ == "__main__":

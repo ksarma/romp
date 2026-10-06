@@ -72916,8 +72916,8 @@ function apBusy(p){return p==='pushing'||p==='pulling'||p==='asking'||p==='waiti
 // glyph). It sat on the phone's bottom bar until iOS item 4g (2026-10-05) moved it into the settings card (gear.js
 // #rs-pact-net, in the row of buttons under the card's title that the card shows on the phone layout), so it lives in the
 // #f-settings document: null until that page has loaded (its opener fetches it on the first open), painted by every poll
-// after that and, from the last poll, each time the card opens (the settings message below paintIcon). gear.css carries
-// the glyph's colours there, since that page loads none of the shell's rules.
+// after that and, from the rail's own glyph, each time the card opens (the settings message below paintIcon). gear.css
+// carries the glyph's colours there, since that page loads none of the shell's rules.
 function mnet(){try{var f=document.getElementById('f-settings'),d=f&&f.contentDocument;return d?d.getElementById('rs-pact-net'):null;}catch(e){return null;}}
 // One host's contribution to the glyph (the user 2026-07-29): 'ok' connected and on this build, 'warn'
 // it needs you (drifted, no kernel answering, errored, or down long enough that romp's backoff has
@@ -72941,19 +72941,24 @@ a.setAttribute('class','rn-a'+(nodes?' rn-'+nodes[0]:''));
 b.setAttribute('class','rn-b'+(nodes?' rn-'+nodes[1]:''));
 // this machine is by definition reachable — if you can read this, its kernel answered
 if(me)me.setAttribute('class','rn-me'+(nodes?' rn-ok':''));}
-var lastPaint=null;   // the last poll's paint, for the settings card's copy of the glyph when the card opens
+var lastPaint=null;   // the last poll's paint: its node colours, for the settings card's copy of the glyph when the card opens
 function paintIcon(up,busy,nodes){lastPaint=[up,busy,nodes];icon.classList.toggle('on',up);icon.classList.toggle('busy',busy);
 paintNodes(icon,nodes);
 var m=mnet();if(m){m.classList.toggle('on',up);m.classList.toggle('busy',busy);paintNodes(m,nodes);}}
-// the settings card opening ({romp:'settings',on:true}, gear.js feedFull) shows the phone's Remote kernels button: paint it
-// from the last poll then, so the card never shows the glyph's default between polls (its page loads on the first open,
-// after polls that found no button to paint). Nothing before the first poll: the default glyph is what the rail shows too.
+// the settings card opening ({romp:'settings',on:true}, gear.js feedFull) shows the phone's Remote kernels button: bring
+// that copy in step with the rail's glyph then, so the card never shows the glyph's default between polls (its page loads
+// on the first open, after polls that found no button to paint). Only the copy is painted, never the rail: the copy takes
+// the rail icon's live on and busy classes, which can hold more than the last poll said (an Attach or a Retry in flight
+// adds busy to the icon at the click, before a poll reports it, and a replay of the last poll's paint would strip it from
+// the rail and the card both), and the node colours of the last poll. Before the first poll the icon has neither class and there are no node
+// colours: the default glyph, which the rail shows too.
 // A drop's flash is cleared first: a host that dropped while the card was closed left rn-drop on the button (flashDrop
 // below) in a document that runs no animation then, so no animationend took it off, and the flash would play now, at the
 // opening, however long after the drop. The cue shows at the drop or not at all; the node colours carry the state after it.
 window.addEventListener('message',function(e){var m=e.data;if(!m||m.romp!=='settings'||!m.on)return;
-var c=mnet();if(c)c.classList.remove('rn-drop');
-if(lastPaint)paintIcon(lastPaint[0],lastPaint[1],lastPaint[2]);});
+var c=mnet();if(!c)return;c.classList.remove('rn-drop');
+c.classList.toggle('on',icon.classList.contains('on'));c.classList.toggle('busy',icon.classList.contains('busy'));
+if(lastPaint)paintNodes(c,lastPaint[2]);});
 // A host DROPPING is an EVENT, and it gets an event's cue: the rail's network glyph flashes red three
 // times and stops (the user 2026-07-29). This replaces a banner that dropped across the top of the pane
 // and covered the session tabs — the one strip you are actually reading — to announce a machine going
