@@ -1333,7 +1333,7 @@ test("round 6, tenth and eleventh commits: decision 47 and the hook header recor
     const flat = text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
     for (const phrase of ['round 6, tenth commit (2026-09-22', 'round 6, eleventh commit (2026-09-22', 'the ifs rule', 'the multi-digit positional', 'the alternate value', 'the vanishing head', 'the routed standard output', 'the counted slice', 'the bound name', 'the keyword dash runs', 'one home']) assert.ok(flat.includes(phrase), `${name} records: ${phrase}`);
   }
-  for (const fn of ['headMayVanish', 'vanishedHeadTexts', 'dashCommandRoads', 'runHeadSplices', 'absSpelled', 'rereadForVanish']) assert.ok(hook.includes(fn), `the hook has ${fn}`);
+  for (const fn of ['headMayVanish', 'vanishedHeadTexts', 'dashCommandRoads', 'runHeadSplices', 'bindWrite', 'rereadForVanish']) assert.ok(hook.includes(fn), `the hook has ${fn}`);
   // where the code lives; what it does is pinned by execution in the eleventh commit's rows test (tools/romp-track-bash-guard.test.mjs, the S11 rows)
   assert.equal((hook.match(/dashCommandRoads\(seg\.words\[(p|at)\], (p|at)\);/g) || []).length, 3, "the three keyword sites (function, coproc, repeat) ask the roads under dash's grammar");
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');

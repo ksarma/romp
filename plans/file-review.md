@@ -5198,7 +5198,8 @@ document stands on its own, each with the reasoning it was given.
     they are given and 101 assign none), and the census has a behavioural leg: every word the table calls assign-none
     that a shell present runs as a builtin is run in that shell under nine operand shapes that assign a name if the word
     evaluates an operand as arithmetic or as a subscript, or runs a command its operands give, and a word under which
-    the name changed reds. It runs live only, so CI asks bash alone; six words are not run for what running them does
+    the name changed reds. It runs live only, so CI's Linux runner asks bash and dash (the macos cell adds zsh but a
+    bash below SHELL_FLOOR); six words are not run for what running them does
     (kill, suspend, clone, ztcp, zftp, zsocket), and the gap pass asked them by hand with operands that do nothing; the
     reserved words `[[` and repeat, which take a grammar of their own, are asked with one arithmetic operand each; and
     it is a sample of operand shapes, not a proof. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`

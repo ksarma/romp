@@ -80,7 +80,7 @@ const SHELL_OWN_DERIVED = {
 // `compgen -b` and `compgen -k`; zsh's `builtins` and `reswords` keys after loading every module installed under its module_path (zsh/newuser aside,
 // which defines no builtin and may run its install function), so zparseopts, vared, print and the zsh/files and zsh/system words are in it; dash has no
 // list, so `type` is asked of a candidate universe (the bash and zsh populations, the committed dash list and every identifier in the dash binary) and
-// the words it calls a shell builtin or keyword are its population. A shell absent on the runner (CI has neither zsh nor dash) is checked against the
+// the words it calls a shell builtin or keyword are its population. A shell absent on the runner (on CI's Linux runner that is zsh, since it asks bash and dash live; the macos cell adds zsh but a bash below SHELL_FLOOR) is checked against the
 // lists below, derived on this box on bash 5.2.21, zsh 5.9 and dash 0.5.12 by the same method; the test says which shells it asked live
 const SHELL_WORDS_DERIVED = {
   bash: ['!', '.', ':', '[', '[[', ']]', 'alias', 'bg', 'bind', 'break', 'builtin', 'caller', 'case', 'cd', 'command', 'compgen', 'complete', 'compopt', 'continue', 'coproc', 'declare', 'dirs', 'disown', 'do', 'done', 'echo', 'elif', 'else', 'enable', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg', 'fi', 'for', 'function', 'getopts', 'hash', 'help', 'history', 'if', 'in', 'jobs', 'kill', 'let', 'local', 'logout', 'mapfile', 'popd', 'printf', 'pushd', 'pwd', 'read', 'readarray', 'readonly', 'return', 'select', 'set', 'shift', 'shopt', 'source', 'suspend', 'test', 'then', 'time', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
@@ -116,7 +116,7 @@ const assigningCensus = (pops, table) => {
 // in every shell it runs. Six words are not run, each for what running it would do (ASSIGN_LEG_SKIP); the gap pass asked them by hand with operands
 // that do nothing (signal 0, a closed port on the loopback address). Reserved words are no builtins and take a grammar of their own: `[[`'s arithmetic
 // comparison and zsh's repeat count are asked with one operand each (RESERVED_ASSIGN_PROBES). The leg is live only: a shell absent on the runner is not
-// asked (CI has bash alone), and the test says which shells it ran. A sample of operand shapes, not a proof: a word that assigns only under some other
+// asked (CI's Linux runner runs the leg in bash and dash; the macos cell adds zsh but a bash below SHELL_FLOOR), and the test says which shells it ran. A sample of operand shapes, not a proof: a word that assigns only under some other
 // operand is outside what the leg can see
 const ASSIGN_SHAPES = [["'p=1'"], ["'0*(p=1)+1'"], ['-v', "'a[p=1]'"], ['-x', 'eval', "'p=1'"], ['eval', "'p=1'"], ["'+0*(p=1)'"], ['1', '-eq', "'0*(p=1)+1'"], ['-u', "'0*(p=1)'", "'0*(p=1)'"], ['-n', "'0*(p=1)+1'"]];
 const ASSIGN_LEG_SKIP = { kill: 'sends a signal to the process its operand names', suspend: 'stops the shell', clone: 'starts a shell on the terminal it names', ztcp: 'opens a network connection', zftp: 'opens a network connection', zsocket: 'opens a socket' };

@@ -14321,7 +14321,10 @@ test("round 7, twenty-sixth commit, the rows: a modeled writer's `--` option not
     // searched text only on the line below, in quotes and with no `cwd:`, where a search of this file would pass on nothing)
     const libSrc = fs.readFileSync(fileURLToPath(new URL('./romp-track-bash-guard-testlib.mjs', import.meta.url)), 'utf8');
     const hookHelper = libSrc.split('\n').find((l) => l.includes('const hook = (cmd, cwd) => { const r = spawnSync(process.execPath, [HOOK]'));
-    assert.ok(hookHelper && !/cwd:/.test(hookHelper), 'extra6-3: the test world hook spawn passes no cwd option (both refuters ruled that spawning with the row\'s cwd would hide the class)');
+    // the rows above (E63-*) are the executed guard; this is a source backstop. It reds on an explicit (`cwd:`), shorthand (`cwd,`, `cwd}`) or quoted
+    // (`'cwd':`) cwd key in the spawn options -- `\bcwd\b(?!\))` passes only where every `cwd` is a parameter use followed by `)` (`(cmd, cwd)`,
+    // `payload(cmd, cwd)`) -- but not on a spread (`...opts`), which no line-level regex can read (fork PR 975's round 2, tests-6 and regression-4)
+    assert.ok(hookHelper && !/\bcwd\b(?!\))/.test(hookHelper), 'extra6-3: the test world hook spawn passes no cwd option (both refuters ruled that spawning with the row\'s cwd would hide the class)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
