@@ -23,6 +23,7 @@ import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 from test_queued_rescind_browser import QueuedLab, SID   # noqa: E402  the shared boot: a session mid-turn that parks every send
+import lab_result   # noqa: E402
 
 DRIVER = r"""
 import { createRequire } from "node:module";
@@ -30,6 +31,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -96,7 +98,7 @@ await page.evaluate(() => document.body.classList.add("theme-light")); await pag
 const light = await read(); await shot("light");
 await page.evaluate(() => document.body.classList.remove("theme-light"));
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify({ dark, light }) + "\n", () => process.exit(0));
+lab.writeResult(cfg, { dark, light }); process.exit(0);
 """
 
 
@@ -107,9 +109,12 @@ class ServedProvisionalCmdDress(QueuedLab):
         cls = type(self)
         if cls._r is None:
             cfg = os.path.join(self.lab, "cfg.json")
+            conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
+                    "shots": os.environ.get("CMD_DRESS_SHOTS", "")}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
-                           "shots": os.environ.get("CMD_DRESS_SHOTS", "")}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver.mjs")
             with open(driver, "w") as f:
                 f.write(DRIVER)
@@ -118,9 +123,7 @@ class ServedProvisionalCmdDress(QueuedLab):
             if p.returncode == 3:
                 raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
             self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-            cls._r = json.loads(line[len("RESULT:"):])
+            cls._r = lab_result.read(p, tgt)
             if os.environ.get("CMD_DRESS_DUMP"):
                 with open(os.environ["CMD_DRESS_DUMP"], "w") as f:
                     json.dump(cls._r, f, indent=1)

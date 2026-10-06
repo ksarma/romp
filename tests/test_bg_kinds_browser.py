@@ -30,6 +30,7 @@ sys.path.insert(0, HERE)
 from test_queued_rescind_browser import BIN, EXT, SID, _lab, iso   # noqa: E402  the shared boot's pieces (never its TestCase)
 import lab_dist
 import lab_ports
+import lab_result
 
 AGENT_ID, CMD_ID, WATCH_ID, SVC_ID, PLACED_ID, DONE_ID = "tu_agent_1", "tu_cmd_1", "watch-1", "tu_svc_1", "tu_placed_1", "tu_svc_done"
 KEPT_WORD = "· kept running, not waited on"
@@ -40,6 +41,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -146,7 +148,7 @@ const idleOne = await settle({ ...f0, status: { ...f0.status, state: "idle", awa
 if (cfg.shots) { fs.mkdirSync(cfg.shots, { recursive: true }); await page.screenshot({ path: cfg.shots + "/romp_chat-T394-bg-kinds-light-served.png" }); }
 const frames = await page.evaluate(() => window.__frames); const held = await page.evaluate(() => window.__held);
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify({ dark, light, placedOnly, placedKept, doneOnly, idleOne, peerIdle, nested, frames, errors, held, replay, afterReplay }) + "\n", () => process.exit(0));
+lab.writeResult(cfg, { dark, light, placedOnly, placedKept, doneOnly, idleOne, peerIdle, nested, frames, errors, held, replay, afterReplay }); process.exit(0);
 """
 
 
@@ -246,9 +248,12 @@ class ServedBgKinds(unittest.TestCase):
                          # a service that finished: terminal, so no suffix and no count (round one, low 1); its dot the dim ink
                          {"id": DONE_ID, "status": "completed", "summary": "Warm the docs cache", "command": "mkdocs build --dirty", "output": "done"}]}}
             cfg = os.path.join(self.lab, "cfg.json")
+            conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "frame": frame, "placedId": PLACED_ID, "doneId": DONE_ID, "cmdId": CMD_ID, "svcId": SVC_ID,
+                    "shots": os.environ.get("BG_KINDS_SHOTS", "")}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "frame": frame, "placedId": PLACED_ID, "doneId": DONE_ID, "cmdId": CMD_ID, "svcId": SVC_ID,
-                           "shots": os.environ.get("BG_KINDS_SHOTS", "")}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver.mjs")
             with open(driver, "w") as f:
                 f.write(DRIVER)
@@ -257,9 +262,7 @@ class ServedBgKinds(unittest.TestCase):
             if p.returncode == 3:
                 raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
             self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-            cls._r = json.loads(line[len("RESULT:"):])
+            cls._r = lab_result.read(p, tgt)
         print("RESULT:" + json.dumps(cls._r), file=sys.stderr)   # the whole measurement rides every test's captured stderr (-rA shows it for a pass)
         return cls._r
 

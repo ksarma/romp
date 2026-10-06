@@ -34,6 +34,7 @@ import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 from test_queued_rescind_browser import QueuedLab, SID   # noqa: E402  the shared boot: a session mid-turn that parks every send
+import lab_result   # noqa: E402
 
 TEXT_A = "first, tighten the search index"
 TEXT_B = "second, add the missing test"
@@ -45,6 +46,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -98,8 +100,9 @@ const afterC0 = await rows();
 await page.waitForTimeout(2000); const afterC1 = await rows();
 const sends = await page.evaluate(() => window.__sent.filter((m) => m.type === "sendMessage").map((m) => m.text));
 await browser.close();
-// through the stream, drained before the exit: a single synchronous write past the pipe's 64 KiB buffer comes out truncated
-process.stdout.write("RESULT:" + JSON.stringify({ afterA, bAtOnce, afterB0, afterB1, afterB2, cAtOnce, afterC0, afterC1, sends }) + "\n", () => process.exit(0));
+// the record goes to the drive's result file and stdout carries one short line naming it (tests/lab_result.cjs): a single
+// synchronous write of the record past the pipe's buffer comes out truncated
+lab.writeResult(cfg, { afterA, bAtOnce, afterB0, afterB1, afterB2, cAtOnce, afterC0, afterC1, sends }); process.exit(0);
 """
 
 
@@ -111,6 +114,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -152,7 +156,7 @@ await inject(taken); await page.waitForTimeout(500); const held2 = await rows();
 await inject(landed); await page.waitForTimeout(700); const after = await rows();
 await inject(landed); await page.waitForTimeout(700); const after2 = await rows();   // and the push after the landing
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify({ listed, held, held2, after, after2, baseEvents: base.events.length }) + "\n", () => process.exit(0));
+lab.writeResult(cfg, { listed, held, held2, after, after2, baseEvents: base.events.length }); process.exit(0);
 """
 
 
@@ -174,9 +178,12 @@ class ServedProvisionalRows(QueuedLab):
         cls = type(self)
         if cls._r is None:
             cfg = os.path.join(self.lab, "cfg.json")
+            conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
+                    "textA": TEXT_A, "textB": TEXT_B, "textC": TEXT_C}
+            tgt = lab_result.target(self.lab, "rows")   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
-                           "textA": TEXT_A, "textB": TEXT_B, "textC": TEXT_C}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver.mjs")
             with open(driver, "w") as f:
                 f.write(DRIVER)
@@ -186,9 +193,7 @@ class ServedProvisionalRows(QueuedLab):
             if p.returncode == 3:
                 raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
             self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-            cls._r = json.loads(line[len("RESULT:"):])
+            cls._r = lab_result.read(p, tgt)
         print("RESULT:" + json.dumps(cls._r), file=sys.stderr)   # the whole measurement rides EVERY test's captured stderr: a failing test shows it
         return cls._r
 
@@ -216,8 +221,11 @@ class ServedHeldUnderOverlay(QueuedLab):
         cls = type(self)
         if cls._r is None:
             cfg = os.path.join(self.lab, "held-cfg.json")
+            conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "textA": TEXT_A, "todoSubject": self.TODO_SUBJECT}
+            tgt = lab_result.target(self.lab, "held")   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "textA": TEXT_A, "todoSubject": self.TODO_SUBJECT}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "held-driver.mjs")
             with open(driver, "w") as f:
                 f.write(HELD_DRIVER)
@@ -226,9 +234,7 @@ class ServedHeldUnderOverlay(QueuedLab):
             if p.returncode == 3:
                 raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
             self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-            cls._r = json.loads(line[len("RESULT:"):])
+            cls._r = lab_result.read(p, tgt)
         print("RESULT:" + json.dumps(cls._r), file=sys.stderr)
         return cls._r
 

@@ -35,6 +35,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 from test_queued_rescind_browser import QueuedLab, SID   # noqa: E402  the shared boot
+import lab_result   # noqa: E402
 
 SID_ON = "22222222-3333-4444-5555-666666666666"
 SID_OFF = "77777777-8888-4444-5555-999999999999"
@@ -229,6 +230,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -331,7 +333,7 @@ await waitFrame((f) => f.offHosts && f.offHosts.length === 0 && f.pendingHosts &
 await page.waitForTimeout(800);
 out.d = { frame: await lastFrame(), store: await store(), notes: await notes(), frames: await frames() };
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n", () => process.exit(0));
+lab.writeResult(cfg, out); process.exit(0);
 """
 
 
@@ -381,11 +383,14 @@ class ServedTaskTrackingFederation(QueuedLab):
             stale_on = "w|%s:gone|%d|distill|@HOSTON" % (SID_ON, now - 900)
             stale_local = "n|%s:gone|@" % SID                         # the local host's shape: the empty segment
             stale_old = "w|%s:old|%d|distill" % (SID_ON, now - 900)     # the shape before round seven: no segment at all
+            conf = {"landing": base + "/?token=" + self.token, "hostOnCtl": "http://127.0.0.1:%d" % host_on.port,
+                    "hostOffCtl": "http://127.0.0.1:%d" % host_off.port, "hostOff": "HOSTOFF", "hostOn": "HOSTON",
+                    "offCard": off1["itemId"], "onCard0": on0["itemId"], "onCard2": on2["itemId"],
+                    "staleOnMark": stale_on, "staleLocalMark": stale_local, "staleOldMark": stale_old}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"landing": base + "/?token=" + self.token, "hostOnCtl": "http://127.0.0.1:%d" % host_on.port,
-                           "hostOffCtl": "http://127.0.0.1:%d" % host_off.port, "hostOff": "HOSTOFF", "hostOn": "HOSTON",
-                           "offCard": off1["itemId"], "onCard0": on0["itemId"], "onCard2": on2["itemId"],
-                           "staleOnMark": stale_on, "staleLocalMark": stale_local, "staleOldMark": stale_old}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver_fed.mjs")
             src = DRIVER.replace("CFG_OFF_CARD", json.dumps(off1["itemId"])).replace("CFG_ON_CARD0", json.dumps(on0["itemId"])) \
                         .replace("CFG_ON_CARD2", json.dumps(on2["itemId"])).replace("CFG_HOST_OFF", json.dumps("HOSTOFF"))
@@ -396,9 +401,7 @@ class ServedTaskTrackingFederation(QueuedLab):
             if p.returncode == 3:
                 raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
             self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-            cls._r = json.loads(line[len("RESULT:"):])
+            cls._r = lab_result.read(p, tgt)
             cls._r["cfg"] = json.load(open(cfg))
             cls._r["pushed"] = {"on": host_on.pushed, "off": host_off.pushed}
             if os.environ.get("TASK_TRACKING_DUMP"):
