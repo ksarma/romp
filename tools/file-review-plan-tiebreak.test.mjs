@@ -29,7 +29,12 @@ const host = read('tools', 'file-comments-host.mjs');
 const panel = read('ui', 'webview', 'file-comments.ts');
 const model = read('ui', 'webview', 'file-comments-model.ts');
 const adr = read('docs', 'adr', '0002-file-comments-in-the-track-changents-sidecar.md').replace(/\s+/g, ' ');
-const guide = read('docs', 'guide.md').replace(/\s+/g, ' ');
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front
+// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there.
+// The check that the retired wording is gone reads DOCS, the guide and the reference together, so the wording coming back on
+// either page turns it red.
+const guide = read('docs', 'reference.md').replace(/\s+/g, ' ');
+const DOCS = (read('docs', 'guide.md') + '\n\n' + read('docs', 'reference.md')).replace(/\s+/g, ' ');
 
 // The text between two headings, hard wraps collapsed so an assertion survives a rewrap.
 function section(from, to) {
@@ -224,7 +229,7 @@ test('the ADR counts six additive fields and names the three new ones; the guide
   assert.ok(adr.includes('and `ordinal`, `copies` and `section` (the copy\'s index among the anchor\'s matches and their count, and the heading path above the passage, which place a comment once its position no longer names a copy; the tie-break, 2026-09-11)'));
   assert.ok(!adr.includes('three additive fields'), 'the old count is gone');
   assert.ok(guide.includes("When the file has changed around that occurrence, the comment's own record of where it was, which copy it is and the heading above it places it again. When none of those can tell which copy the comment meant, its highlight is dashed and the card carries a **passage recurs** tag: the copy shown is a guess, and the card says so. Saving the comment again from the right copy, as the card asks, adds a new card on that copy with no tag; the old card keeps its tag, so resolve it once the new one is saved."), 'the guide\'s sentence, as the review reworded it');
-  assert.ok(!guide.includes('saving it again from the right copy confirms it'), 'the earlier wording promised a confirmation of the same comment, which no verb performs (the review, 2026-09-11)');
+  assert.ok(!DOCS.includes('saving it again from the right copy confirms it'), 'the earlier wording promised a confirmation of the same comment, which no verb performs (the review, 2026-09-11)');
   assert.ok(tests.includes('`tools/file-review-plan-tiebreak.test.mjs` pins decision 51 and the tie-break\'s sentences here against the host (`locateStored`, `stampCopy`, the fields), the panel (`placedAt`, the words), the model, the ADR\'s six fields and the guide\'s sentence, and the tie-break modules against the tree.'));
   // no em dash in the tie-break's records
   for (const [name, text] of [['decision 51', decisions.slice(decisions.indexOf('51. **'))], ['the ADR bullet', adr.slice(adr.indexOf('six additive'), adr.indexOf('- A romp-only field'))], ['the guide sentence', guide.slice(guide.indexOf('When the file has changed around that occurrence'), guide.indexOf('When the session has'))]]) {

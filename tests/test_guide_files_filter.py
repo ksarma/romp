@@ -26,6 +26,24 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
+def _files_section():
+    """The guide's Files section as docs/reference.md holds it since fold 4 moved the fork's paragraphs out of docs/guide.md
+    (the front pages are the project's, CLAUDE.md "The documentation front pages"): the body of "## The Files pane", then the
+    paragraphs of the three viewer sections the reference keeps with the chat pane ("Links inside a file", "Text size and
+    width", "A file's own HTML"), which sat in the guide's Files section on this fork."""
+    ref = _read("docs", "reference.md")
+    parts = [_ref_section(ref, "The Files pane").strip("\n")]
+    parts += [_ref_section(ref, h).strip("\n") for h in ("Links inside a file", "Text size and width", "A file's own HTML")]
+    return "\n\n".join(parts) + "\n"
+
+
 def _section(md, heading):
     """The body of one `### heading` up to the next heading of any level."""
     m = re.search(r"^### " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} )", md, re.S | re.M)
@@ -49,7 +67,7 @@ class TrackChangesParagraphDescribesTheFilter(unittest.TestCase):
     """The Track changes paragraph says the filter exists, what each option hides, and how it is kept."""
 
     def setUp(self):
-        self.paragraph = _paragraph(_section(_read("docs", "guide.md"), "Files"), "**Track changes**")
+        self.paragraph = _paragraph(_files_section(), "**Track changes**")
         self.panel = _read("ui", "webview", "file-comments.ts")
         self.model = _read("ui", "webview", "file-comments-model.ts")
         self.settings = _read("ui", "webview", "settings.ts")
@@ -114,7 +132,7 @@ class TheParagraphKeepsTheVocabulary(unittest.TestCase):
     """The new sentences say comment and change, never the storage format's words."""
 
     def test_no_avoid_word(self):
-        paragraph = _paragraph(_section(_read("docs", "guide.md"), "Files"), "**Track changes**")
+        paragraph = _paragraph(_files_section(), "**Track changes**")
         for word in ("suggestion", "thread", "annotation", "diff", "fleet"):
             self.assertNotRegex(paragraph, re.compile(r"\b" + word + r"s?\b", re.I), word)
 

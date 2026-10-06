@@ -333,9 +333,10 @@ class TheReferenceUsesTheTodoVocabulary(unittest.TestCase):
         self.assertIn("so no todo appears under Waiting on you", para)
 
     def test_the_guide_and_the_reference_name_the_object_alike(self):
-        guide = _read("docs", "guide.md")
-        m = re.search(r"^### Waiting on you\n(.*?)(?=^#{2,3} )", guide, re.S | re.M)
-        assert m, "the guide's Waiting on you section"
+        # the guide's Waiting on you section is docs/reference.md's "## The Waiting on you pane" since fold 4 (CLAUDE.md "The
+        # documentation front pages")
+        m = re.search(r"^## The Waiting on you pane\n(.*?)(?=^#{2,3} )", _read("docs", "reference.md"), re.S | re.M)
+        assert m, "the reference's Waiting on you pane section"
         self.assertIn("todo", _flat(m.group(1)))
         self.assertIn("todo", _paragraph(self.ref, "**User todos.**"))
 
