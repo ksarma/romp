@@ -32,10 +32,12 @@ THE RULES.
      the rest of the line read again the same way (_blank_comments). So a call split across lines is still read, a
      call after a block comment that closes on its line is read, and a comment that starts after code on a line is read
      with the code. String literals are read as code, on purpose: a form spelled anywhere outside a comment is refused.
-     A comment on one line (a // comment, or a /* */ comment that closes on its line) is read as white space after the
-     last value a form reads (process or console bound to a name, the fd of an fs write, the second stdio entry) and
-     after the comma that ends the first stdio entry (_GAP), so const { stdout } = process // the stream is read, and so
-     is "inherit" on the line after "pipe", // stdin.
+     A comment on one line (a // comment, or a /* comment read through the first */ after it, on its line) is read as
+     white space after the last value a form reads (process or console bound to a name, the fd of an fs write, the
+     second stdio entry) and after the comma that ends the first stdio entry (_GAP), so
+     const { stdout } = process // the stream is read, and so is "inherit" on the line after "pipe", // stdin. The code
+     between two block comments is read as code, so stdio: ["pipe", /* stdout */ "pipe", /* stderr */ "inherit"], a
+     pipe for stdout, passes.
      The forms, each keyed on its spelling (WRITE_FORMS):
        console         a console member other than error, warn, trace and assert (those four write to stderr; log,
                        info, debug, dir, table and the rest write to stdout), or a computed member, white space after
@@ -140,8 +142,9 @@ _LOAD = r"(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s+)"
 _FS_WRITERS = (r"(?:writeSync|write|writev|writevSync|writeFile|writeFileSync|appendFile|appendFileSync|writeString|"
                r"writeBuffer|writeBuffers)")
 # what a form reads as white space after the last value it reads, and after the comma that ends the first stdio entry:
-# white space, a // comment (read to its line's end) and a /* */ comment that closes on its line
-_GAP = r"(?:\s|//.*(?!.)|/\*.*?\*/)*"
+# white space, a // comment (read to its line's end) and a /* comment read through the first */ after it, on its line.
+# The block comment's body holds no */, so the code between two block comments is read as code
+_GAP = r"(?:\s|//.*(?!.)|/\*(?:[^*\n]|\*(?!/))*\*/)*"
 # where a value bound to a name ends: ; , ) } ] or the line's end, after _GAP
 _END = _GAP + r"(?:[;,)}\]]|$)"
 
@@ -668,7 +671,8 @@ FORM_PLANTS = {
                      "const {\n  stdout,\n} = process;", "const {\n  argv,\n  stdout: o\n} = globalThis.process;",
                      "const { stdout: { write } } = process;", "const { stdout } = process // the stream",
                      "const {\n  stdout,\n} = process // the stream", "const { stdout: { write } } = process // the stream",
-                     "const { stdout } = process /* the stream */", "const {\n  stdout,\n} = process /* the stream */"],
+                     "const { stdout } = process /* the stream */", "const {\n  stdout,\n} = process /* the stream */",
+                     "const { stdout } = process /** the stream */"],
     "fd-1": ["fs.writeSync(1, JSON.stringify(out));", "fs.writeSync(\n  1, s);", 'require("fs").writeFileSync(1, s);',
              "fs.write(1, s, () => {});", 'fs["writeSync"](1, JSON.stringify(out));', "fs.writeSync?.(1, s);",
              "/* old road */ fs.writeSync(1, JSON.stringify(out));", "/* a */ /* b */ fs.writeSync(1, s);",
@@ -717,6 +721,13 @@ CLEAN_LINES = [
     'spawn(cmd, args, { "stdio": ["inherit", "pipe", "pipe"] });',
     # a comment after process is read as white space, not as the value's end: this destructures process.env
     "const { stdout: o } = process /* the env */ .env;",
+    # a block comment is read through its first */ and no further, so the code between two block comments is code: the
+    # first two samples hand the child a pipe for stdout (stderr inherited), the third destructures process.env and the
+    # fourth binds console.error
+    'spawn(cmd, args, { stdio: ["pipe", /* stdout */ "pipe", /* stderr */ "inherit"] });',
+    'spawn(cmd, args, { stdio: [/* stdin */ "ignore", /* stdout */ "pipe", /* stderr */ "inherit"] });',
+    "const { stdout: o } = process /* the env */ .env /* a setting */;",
+    "const c = console /* the logger */ .error /* stderr */;",
     # a // comment is read whole, to its line's end and no further: in the first sample below the "inherit" it names is
     # not the second entry; in the second the second entry is the pipe on the line after the comment (stdin and stderr
     # inherited, stdout a pipe)
