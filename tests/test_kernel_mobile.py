@@ -2557,7 +2557,12 @@ def _bell_rule_classes(html):
     names insertRule, deleteRule, replaceSync, adoptedStyleSheets, CSSStyleSheet, styleSheets, cssRules or `.sheet`, and each of their 7
     `.replace(` calls passes two arguments, a string's replace); of the 4 that load a bundle by src, palette-main.js writes two, the
     command palette's and the shortcuts card's, each when it first opens (ui/webview/palette.ts and shortcuts-modal.ts: a style element
-    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write.
+    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write. Both ends
+    of a selector are a third stated limit: served_css strips Python's whitespace there, a wider set than CSS's, before the printable
+    ASCII refusal above reads the selector, so a no-break space, a vertical tab or an em space at either end is dropped unread.
+    `#mtabs #mbell.on` with a no-break space after it reads as naming `on`, a class the scripts set, and passes, where a browser reads
+    a no-break space or an em space as a name character and a vertical tab as an invalid selector, and applies the rule to no bell;
+    with `busy` in place of `on` the census still turns red. served_css is shared with the other censuses, so its strip stays.
 
     Some refusals read more than a browser does, the safe side; the served CSS trips none of them, and BellRuleReader pins each beside
     what an author writes instead. The escape refusal reads every backslash in a style element, so an escape inside a string
@@ -2650,7 +2655,7 @@ const settle = async () => { for (let i = 0; i < 40; i++) await new Promise((r) 
 const SET = {};
 for (const b of [mbell, railBell]) {
   const got = SET[b.id] = new Set(), cl = b.classList, add = cl.add, toggle = cl.toggle, setA = b.setAttribute.bind(b);
-  const tokens = (v) => String(v).split(/\s+/).filter(Boolean);
+  const tokens = (v) => String(v).split(/[ \t\n\f\r]+/).filter(Boolean);   // the DOM splits a class value on ASCII whitespace alone
   cl.add = (...cs) => cs.forEach((c) => { got.add(c); add(c); });
   cl.toggle = (c, f) => { const on = toggle(c, f); if (on) got.add(c); return on; };
   cl.replace = (a, c) => { if (!cl.contains(a)) return false; cl.remove(a); got.add(c); add(c); return true; };
@@ -2722,17 +2727,22 @@ class BellStateClassCensus(unittest.TestCase):
         cls.writers = [js for js in scripts if _NAMES_A_BELL.search(js)]
         bar_script = served_css.js_code(_mobile_js())
         assert scripts.count(bar_script) == 1, "the phone bar's script is not served exactly once as written"
-        run = [js for js in scripts if js in cls.writers or js == bar_script]
+        cls.ran = [js for js in scripts if js in cls.writers or js == bar_script]
+        cls.out = cls._drive(cls.ran)
+        cls.script_classes = {b: set(cls.out["set"].get(b, [])) for b in _BELLS}
+
+    @staticmethod
+    def _drive(scripts):
+        """_BELL_CLASS_DRIVER's record of a run of these scripts, in this order, on _BELL_HARNESS's stub shell."""
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
-            f.write(_BELL_HARNESS + "const SCRIPTS=%s;" % json.dumps(run) + _BELL_CLASS_DRIVER)
+            f.write(_BELL_HARNESS + "const SCRIPTS=%s;" % json.dumps(scripts) + _BELL_CLASS_DRIVER)
             path = f.name
         try:
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
         assert r.returncode == 0, "the shell scripts threw: " + r.stderr[:1200]
-        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
-        cls.script_classes = {b: set(cls.out["set"].get(b, [])) for b in _BELLS}
+        return json.loads(r.stdout.strip().splitlines()[-1])
 
     def test_every_class_a_rule_names_on_a_bell_is_one_a_served_script_sets_there(self):
         self.assertTrue(self.writers, "no served script names a bell, so there is nothing to execute")
@@ -2759,6 +2769,39 @@ class BellStateClassCensus(unittest.TestCase):
         for sel, dead in cases:
             with self.subTest(sel=sel):
                 self.assertEqual(self._dead(BellRuleReader._read(sel + "{opacity:.45}")), dead)
+
+    def test_a_selector_end_python_strips_and_css_keeps_is_read_past(self):
+        # the third stated limit in _bell_rule_classes, a green plant (the check of the url() whitespace pins, 2026-10-06): served_css
+        # strips Python's whitespace from both ends of a selector before the printable ASCII refusal reads it, so a rule that ends or
+        # starts with a no-break space, a vertical tab or an em space reads as naming `on` on the bell, a class the scripts set, and
+        # passes, where Chromium 151 and WebKit 26.5 apply the rule to no bell (they keep either space in the selector as a name
+        # character and drop the rule at the vertical tab); with `busy` in place of `on` the census still turns red
+        for ch in ("\u00a0", "\x0b", "\u2003"):   # a no-break space, a vertical tab, an em space
+            for at, form in (("end", "#mtabs #mbell.%s" + ch), ("start", ch + "#mtabs #mbell.%s")):
+                with self.subTest(ch="U+%04X" % ord(ch), at=at):
+                    on = BellRuleReader._read(form % "on" + "{opacity:.45}")
+                    self.assertEqual(on, {"mbell": {"on"}, "rail-bell": set()})
+                    self.assertEqual(self._dead(on), {})
+                    self.assertEqual(self._dead(BellRuleReader._read(form % "busy" + "{opacity:.45}")), {"mbell": ["busy"]})
+
+    def test_a_class_value_splits_on_the_doms_whitespace_alone(self):
+        # the script half splits a className or class attribute value where the DOM does, at space, tab, LF, FF and CR. With JavaScript's
+        # \s there it also split at a no-break space, a vertical tab or an em space, so a script writing `x`, one of those, then `busy`
+        # was recorded as setting busy on the bell, where Chromium 151 and WebKit 26.5 read one class and no busy (the check of the
+        # url() whitespace pins, 2026-10-06). The served scripts run first, as in setUpClass, so each transition the driver makes still
+        # finds its writer.
+        odd = ("\u00a0", "\x0b", "\u2003")   # a no-break space, a vertical tab, an em space
+        values = [("x%sbusy" % ch, "y%sbusy" % ch) for ch in odd] + [("a1 a2\ta3\na4\fa5\ra6", "b1 b2\tb3\nb4\fb5\rb6")]
+        js = "(function(){var m=document.getElementById('mbell'),r=document.getElementById('rail-bell');%s})();" % "".join(
+            "m.className=%s;r.setAttribute('class',%s);" % (json.dumps(m), json.dumps(r)) for m, r in values)
+        got = self._drive(self.ran + [js])["set"]
+        want = {"mbell": ["x%sbusy" % ch for ch in odd] + ["a%d" % i for i in range(1, 7)],
+                "rail-bell": ["y%sbusy" % ch for ch in odd] + ["b%d" % i for i in range(1, 7)]}
+        for b in _BELLS:
+            with self.subTest(bell=b):
+                self.assertEqual(sorted(set(got[b]) - self.script_classes[b]), sorted(want[b]),
+                                 "the classes this script adds on #%s beyond the served run's: a value splits at ASCII whitespace "
+                                 "alone, so a value with no ASCII whitespace before busy records no busy" % b)
 
     def test_the_run_reached_every_transition_it_drives(self):
         self.assertEqual(self.out["opened"], [True, False, True, False], "each bell opens the popover, a second tap or an outside tap closes it")
@@ -2945,6 +2988,12 @@ class BellRuleReader(unittest.TestCase):
         for ch in " \t\n\r\f":
             with self.subTest(ch="U+%04X" % ord(ch)):
                 self.assertEqual(self._read('#x{background:url(%s"it\'s.png")}' % ch), {"mbell": set(), "rail-bell": set()})
+        # and so does a single quote, with or without any of the five before it: _URL's lookahead names both quotes, and without the
+        # apostrophe there `url('a.png')` reads as an unquoted url() that holds a quote, refused (the check of the whitespace pins,
+        # 2026-10-06)
+        for ch in ("",) + tuple(" \t\n\r\f"):
+            with self.subTest(single="U+%04X" % ord(ch) if ch else "none"):
+                self.assertEqual(self._read("#x{background:url(%s'a.png')}" % ch), {"mbell": set(), "rail-bell": set()})
         # and _URL skips each of the five before an unquoted body, so a brace in that body is refused. A skip that left one out read no
         # url() there and kept the cases above green, where Chromium 151 and WebKit 26.5 read an unquoted url() and dim a busy bell
         # under it (the check of the whitespace fix, 2026-10-06)
