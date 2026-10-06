@@ -41,30 +41,45 @@ name: CI
 # on 3.12 and 3.14t, and for 3.10, 3.11 and 3.13 their projected phases of each shard's slower 3.12
 # run (the python job's cap comment), the estimate the weighted run's measured ones, and with 3.10,
 # 3.11 and 3.13 at those projected phases and 3.12 and 3.14t at the weighted run's, a batch run would
-# bill about 500 minutes, 44 more than the estimate's 456. The fork had 30 CI runs on
-# batch branches in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27
-# since 2026-09-21, when batches began to land daily, about 58 a month at that rate), so about 82
-# dollars a month at 30 runs and about 159 at 58. A manual run, Linux alone by default (below), bills
-# about 453 minutes, about 2.72 dollars, and at last month's pace of 29 manual runs that is about 79
-# dollars a month, so about 161 dollars a month for this workflow at 30 batch runs and about 238 at 58.
-# The repository's other workflows add about 5,200 minutes a month at the pace of the week to
-# 2026-10-04, about 31 dollars (tests/test_ci_cost_estimate.py holds these sums to their inputs):
-# secret-scan.yml on each push that is not a batch push, about 910 a month (212 in that week, counted
-# as this workflow's pull_request runs on branches other than batch branches, 199, and its runs on
-# pushes to main, 13, while main's copy of this file ran on both), at 3 billed minutes a run (75 over
-# its 25 runs in that week), about 2,730 minutes; pr-tier.yml on each pull request opened, reopened,
-# labeled or unlabeled, 534 runs in that week at 1 billed minute each (all 45 sampled), about 2,290
-# minutes a month; ledger.yml, pr-orphans.yml and docs.yml on pushes to main, 36 runs and 43 billed
-# minutes in that week, about 180 minutes a month; and tier-policy.yml, whose one job is skipped
-# outside the project's repository (its job-level if:), so its runs bill nothing. So about 192
-# dollars a month in all at 30 batch runs and about 269 at 58. These dollars are the list price of
-# every minute: the owner of a private repository pays only for the minutes past its plan's included
-# allowance, which GitHub documents as 50,000 minutes a month for Enterprise Cloud, on standard
-# GitHub-hosted runners such as these (read 2026-10-05). That allowance is charged to the
-# repository's owner, so the owner's other private repositories draw on it too, and this
-# repository's estimate, about 32,000 to 44,800 minutes a month (30 to 58 batch runs at 456, 29
-# manual runs at 453 and the other workflows' 5,200), would use a large part of it. The times of this
-# workflow's other Linux jobs are the public runner's, on 4 CPUs and 16 GB. A local measurement on
+# bill about 500 minutes, 44 more than the estimate's 456. The fork had 30 CI runs on batch branches
+# in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27 since 2026-09-21,
+# when batches began to land daily, about 58 a month at that rate), so about 82 dollars a month at
+# 30 runs and about 159 at 58. A manual run, Linux alone by default (below), bills about 453
+# minutes, about 2.72 dollars. Manual runs are counted at the normal pace, one or two a month, here
+# two: of the 29 in the 30 days to 2026-10-04, 28 came from 2026-09-27 on, CI-infrastructure work on
+# four branches, and one came in the 22 days before. So about 14,600 minutes and about 88 dollars a
+# month for this workflow at 30 batch runs, and about 27,400 minutes and about 164 dollars at 58.
+# The repository's other workflows add about 4,200 minutes a month, about 25 dollars, at the pace of
+# the week to 2026-10-04 (2026-09-28 to 2026-10-04) scaled to 30 days
+# (tests/test_ci_cost_estimate.py holds these sums to their inputs). The rates for secret-scan.yml
+# and pr-tier.yml were measured on 2026-10-05 and supersede the 2,730 and 2,290 minutes a month this
+# estimate gave them before. secret-scan.yml runs on each push that is not a batch push: 238 in that
+# week by the repository activity API (187 branch pushes, 35 branch creations, 3 force-pushes and 13
+# merges to main; pushes to batch branches and branch deletions not counted), where the earlier 212
+# counted this workflow's runs on pull requests outside batch branches and on pushes to main, so
+# about 1,020 a month at 3 billed minutes a run (75 over its 25 runs in that week), about 3,060
+# minutes. pr-tier.yml runs on each pull request opened, reopened, labeled or unlabeled: 152 in that
+# week (47 pull requests opened, by the pulls API, and 95 labels added, 10 removed and none
+# reopened, by the issue-events API), where the earlier 534 counted every run of that week, when
+# main's copy also ran on each push to a pull request and each edit; those 534 runs billed 535
+# minutes (one took 2), so about 650 minutes a month. ledger.yml and pr-orphans.yml run on each push
+# to main and docs.yml on those that touch the site's inputs: 32 runs and 39 billed minutes in that
+# week (13, 13 and 6 runs; docs.yml's other 4 runs were on pull requests), about 170 minutes a
+# month. docs.yml also runs on each pull request that touches the site's inputs (its header names
+# them), a trigger on main since 2026-10-05. At that week's pace that is 78 runs: the openings of
+# and pushes to such pull requests that started a run of pr-tier.yml then, whose copy on main ran on
+# both (on 20 pull requests, their files read on 2026-10-06; a newer push cancels an older run, so
+# fewer may bill), at 1 billed minute a run (each of its 4 runs on a pull request that week), about
+# 330 minutes a month. tier-policy.yml's one job is skipped outside the project's repository (its
+# job-level if:), so its runs bill nothing. So about 18,800 minutes and about 113 dollars a month in
+# all at 30 batch runs, and about 31,600 minutes and about 189 dollars at 58. These dollars are the
+# list price, and every minute here would be billed at list price: GitHub documents 50,000 included
+# minutes a month for Enterprise Cloud on standard GitHub-hosted runners such as these, charged to
+# the repository's owner (read 2026-10-05), and the owner's other repositories use them up in about
+# the first week of each month. One of them alone used about 28,000 on 1 to 4 October 2026, a pace
+# that spends the 50,000 in about seven days (its runs' jobs read from the jobs API, each rounded up
+# to a whole minute; the owner's billing figures could not be read). The times of this workflow's
+# other Linux jobs are the public runner's, on 4 CPUs and 16 GB. A local measurement on
 # 2026-10-05, under a systemd CPUQuota of 200 percent against 400 percent, found their longest steps
 # barely slower on 2 CPUs: a sample of the served-page tests ran 539 s against 554 s, and two samples
 # of the bats suites ran 9 percent longer and 17 percent shorter (the second moved by the machine's

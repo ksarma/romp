@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """ci.yml's cost estimate (its header comment, 2026-10-05): every workflow the private repository bills is counted, the
-sums follow from inputs held here, the dollars are named as the list price ahead of the plan's included minutes, and the
-jobs whose caps the private runner's shape was not measured for are named for the first private batch run to confirm.
+sums follow from inputs held here, the dollars are the list price, at which every minute here would be billed since the
+owner's other repositories use the plan's included minutes up, and the jobs whose caps the private runner's shape was not
+measured for are named for the first private batch run to confirm.
 
 The repository moves to a private one (approved 2026-10-04), where every run is billed by the job-minute, each job rounded
 up to a whole minute. A review on 2026-10-05 found three gaps in the header's estimate. Its total "in all" counted ci.yml's
-runs and secret-scan.yml's copy on a batch push but none of the repository's other workflows, about 5,200 minutes a month
-at the pace of the week to 2026-10-04. It priced every minute at the list rate without saying that the owner of a private
-repository pays only for the minutes past its plan's included allowance. And it called the other Linux jobs' public-runner
-times a floor on the private runner's 2 CPUs, where a local measurement found their longest steps barely slower, and named
-no job whose cap the first private run must confirm.
+runs and secret-scan.yml's copy on a batch push but none of the repository's other workflows (about 5,200 minutes a month
+at the pace of the week to 2026-10-04 by the rates taken then, about 4,200 by the rates measured since: item 6). It priced
+every minute at the list rate without saying how the plan's included minutes bear on the bill. And it called the other
+Linux jobs' public-runner times a floor on the private runner's 2 CPUs, where a local measurement found their longest
+steps barely slower, and named no job whose cap the first private run must confirm.
 
 Pins over ci.yml's header comment (its comment lines before `on:`, joined into one line):
 1. EVERY WORKFLOW IS COUNTED (EveryWorkflowIsCounted): each file in .github/workflows, read from the directory, is named in
    the header, so a workflow added later is priced there or stated free.
 2. THE SUMS (TheSums): the header states the figures this file derives from inputs of its own, each a literal here (the
-   jobs API's seconds and the runs API's counts, read on 2026-10-05): a batch run's and a manual run's minutes, ci.yml's
-   dollars a month at 30 and 58 batch runs, the other workflows' minutes and dollars, the totals in all, and the minutes a
-   month the allowance sentence quotes. Each stated figure must be within its rounding of the derived one.
-3. THE ALLOWANCE (TheAllowance): the header says its dollars are the list price, states the allowance GitHub documents for
-   the plan (50,000 minutes a month for Enterprise Cloud, read 2026-10-05), and says the owner's other private repositories
-   draw on it.
+   jobs API's seconds and minutes and the runs, pulls, issue-events and activity APIs' counts, read on 2026-10-05 and
+   2026-10-06): a batch run's and a manual run's minutes, the batch runs' dollars, ci.yml's minutes and dollars a month and
+   the totals in all at 30 and 58 batch runs, each other workflow's minutes, their sum and its dollars, and the minutes the
+   allowance sentence quotes. Each stated figure must be within its rounding of the derived one.
+3. THE ALLOWANCE (TheAllowance): the header says its dollars are the list price and that every minute here would be billed
+   at it, states the included minutes GitHub documents for the plan (50,000 a month for Enterprise Cloud, read
+   2026-10-05), and says the owner's other repositories use them up in about the first week of each month, with the
+   minutes one of them used on 1 to 4 October 2026 and the days 50,000 last at that pace.
 4. THE CAPS THE FIRST PRIVATE RUN CONFIRMS (CapsTheFirstPrivateRunConfirms): each Linux job other than the python shards
    whose time in run 37212676524 was more than half its cap is named in the header's sentence on the first private batch
    run. On 2 CPUs where the public runner has 4, a job bound by the CPUs takes at most about twice as long, so a job under
@@ -39,6 +42,18 @@ At the commit before these pins, all four are red: the header named secret-scan.
    caps' basis: 482 minutes, 26 more than the estimate, at the weighted run's projections, the caps' basis until the
    slowest-run rule. Red at the commit before the sentence named 3.12 and 3.14t: it said the two take different phases
    for 3.10, 3.11 and 3.13 alone, and did not say where the figure holds 3.12 and 3.14t.
+6. THE MEASURED RATES (2026-10-05, within TheSums and TheAllowance): a measurement of the fork's activity on 2026-10-05,
+   re-derived from the APIs on 2026-10-06, replaced three inputs, and the header states each rate with its week and what
+   was counted. pr-tier.yml is priced at its four trigger events, 152 in the week to 2026-10-04, where the earlier 534
+   counted every run of that week, when main's copy also ran on each push to a pull request and each edit; secret-scan.yml
+   at the pushes the activity API lists, 238, where the earlier 212 counted ci.yml's runs on pull requests and on main;
+   manual runs at the normal pace, one or two a month, counted at two, where the earlier 29 were last month's, 28 of them
+   CI-infrastructure work. The merge of main brought docs.yml's pull_request trigger, priced at that week's pace: the
+   openings of and pushes to the pull requests touching the site's inputs that started a run of pr-tier.yml then. Its 4
+   pull-request runs of that week move out of the pushes to main. The allowance sentence says the owner's other
+   repositories use the included minutes up, so every minute here is billed, where it said this repository would use a
+   large part of them. Red at the commit before it: these inputs and figures changed first, and TheSums and TheAllowance
+   failed against the unchanged header.
 Text pins: they hold what the header says and that its sums agree with the inputs here, not what GitHub bills; the first
 private batch run's billed minutes are the measurement."""
 import math
@@ -67,23 +82,42 @@ OTHER_JOB_S = {"served-pages": 2951, "shell": 2426, "vendored-tooling": 845, "vs
 SECRET_SCAN_RUN_MIN = 3   # also each push's run in the week to 2026-10-04: 75 billed minutes over its 25 runs
 RATE = 0.006   # dollars a minute, GitHub's posted rate for its Linux 2-core x64 runner (read 2026-10-05)
 BATCH_RUNS = (30, 58)   # a month: the 30 days to 2026-10-04, and the rate since 2026-09-21
-MANUAL_RUNS = 29        # a month, at last month's pace
-# the other workflows at the pace of the week to 2026-10-04 (2026-09-28 to 2026-10-04, the runs API), scaled to 30 days
+MANUAL_RUNS = 2         # a month: the normal pace, one or two, counted at two (2026-10-05). Of the 29 in the 30 days to
+                        # 2026-10-04, 28 came from 2026-09-27 on, on four branches of CI-infrastructure work, and one
+                        # in the 22 days before (the runs API)
+# the other workflows at the pace of the week to 2026-10-04 (runs, pull requests, events and pushes created 2026-09-28 to
+# 2026-10-04), scaled to 30 days; measured on 2026-10-05 and re-derived on 2026-10-06, these supersede the estimate's
+# earlier rates (item 6 of the docstring)
 WEEK_TO_MONTH = 30 / 7
-WEEK_PUSHES = 199 + 13          # ci.yml's pull_request runs on branches other than batch branches, and its runs on pushes
-                                # to main, while main's copy of ci.yml ran on both: a push each, the pushes secret-scan.yml
-                                # runs on beside the batch pushes the batch figure counts
-PR_TIER_WEEK_RUNS = 534         # pr-tier.yml, 1 billed minute each in all 45 runs sampled
-MAIN_PUSH_WEEK_MIN = 13 + 20 + 10   # ledger.yml, pr-orphans.yml and docs.yml: the billed minutes of their 36 runs
-INCLUDED_MIN = 50000            # GitHub's documented allowance for Enterprise Cloud (read 2026-10-05)
+WEEK_PUSHES = 187 + 35 + 3 + 13     # secret-scan.yml: the pushes the activity API lists, branch pushes, branch creations,
+                                    # force-pushes and merges to main; pushes to batch branches (the batch figure counts
+                                    # the copy on those) and branch deletions not counted
+PR_TIER_WEEK_RUNS = 47 + 95 + 10 + 0    # pr-tier.yml at its four trigger events: pull requests opened (the pulls API),
+                                        # labels added and removed, and pull requests reopened (the issue-events API)
+PR_TIER_RUN_MIN = 535 / 534     # pr-tier.yml's billed minutes a run: 535 over all 534 of its runs that week, one of them 2
+MAIN_PUSH_WEEK_MIN = 13 + 20 + 6    # ledger.yml, pr-orphans.yml and docs.yml on pushes to main: the billed minutes of their
+                                    # 13, 13 and 6 runs that week (the jobs API)
+DOCS_PR_WEEK_RUNS = 78          # docs.yml on a pull request touching the site's inputs (on main since 2026-10-05): the
+                                # openings of and pushes to such pull requests that week, each a new head in a run of
+                                # pr-tier.yml, whose copy on main then ran on both; the files read on 2026-10-06
+DOCS_PR_RUN_MIN = 1             # each of docs.yml's 4 pull-request runs that week billed 1 minute
+INCLUDED_MIN = 50000            # GitHub's documented included minutes for Enterprise Cloud (read 2026-10-05)
+OTHER_REPO_MIN_OCT_1_4 = 27993  # one of the owner's other repositories, in its runs created on 1 to 4 October 2026: each
+                                # job on a runner rounded up (the jobs API), a re-run attempt's copied records dropped
+OTHER_REPO_DAYS = 4             # the days that figure spans
 
 # ---- the stated figures, each held to its derivation within its rounding (TheSums) -------------------------------------
 STATED = {
     "batch run minutes": (456, 1), "manual run minutes": (453, 1),
-    "secret-scan pushes": (910, 10), "secret-scan minutes": (2730, 10), "pr-tier minutes": (2290, 10),
-    "main-push minutes": (180, 10), "other minutes": (5200, 100), "other dollars": (31, 1),
-    "ci dollars at 30": (161, 1), "ci dollars at 58": (238, 1), "all dollars at 30": (192, 1), "all dollars at 58": (269, 1),
-    "all minutes at 30": (32000, 100), "all minutes at 58": (44800, 100),
+    "batch dollars at 30": (82, 1), "batch dollars at 58": (159, 1),
+    "secret-scan pushes": (1020, 10), "secret-scan minutes": (3060, 10), "pr-tier minutes": (650, 10),
+    "main-push minutes": (170, 10), "docs pull-request minutes": (330, 10),
+    "other minutes": (4200, 100), "other dollars": (25, 1),
+    "ci minutes at 30": (14600, 100), "ci minutes at 58": (27400, 100), "ci dollars at 30": (88, 1),
+    "ci dollars at 58": (164, 1),
+    "all minutes at 30": (18800, 100), "all minutes at 58": (31600, 100), "all dollars at 30": (113, 1),
+    "all dollars at 58": (189, 1),
+    "other repository minutes on 1 to 4 October": (28000, 1000),
 }
 
 
@@ -94,18 +128,23 @@ def derived():
     manual = SHARD_JOBS_MIN + other_jobs
     pushes = WEEK_PUSHES * WEEK_TO_MONTH
     scan = pushes * SECRET_SCAN_RUN_MIN
-    tier = PR_TIER_WEEK_RUNS * WEEK_TO_MONTH
+    tier = PR_TIER_WEEK_RUNS * PR_TIER_RUN_MIN * WEEK_TO_MONTH
     main = MAIN_PUSH_WEEK_MIN * WEEK_TO_MONTH
-    other = scan + tier + main
+    docs = DOCS_PR_WEEK_RUNS * DOCS_PR_RUN_MIN * WEEK_TO_MONTH
+    other = scan + tier + main + docs
     ci = {n: n * batch + MANUAL_RUNS * manual for n in BATCH_RUNS}
     lo, hi = BATCH_RUNS
     return {
         "batch run minutes": batch, "manual run minutes": manual,
+        "batch dollars at 30": lo * batch * RATE, "batch dollars at 58": hi * batch * RATE,
         "secret-scan pushes": pushes, "secret-scan minutes": scan, "pr-tier minutes": tier,
-        "main-push minutes": main, "other minutes": other, "other dollars": other * RATE,
-        "ci dollars at 30": ci[lo] * RATE, "ci dollars at 58": ci[hi] * RATE,
-        "all dollars at 30": (ci[lo] + other) * RATE, "all dollars at 58": (ci[hi] + other) * RATE,
+        "main-push minutes": main, "docs pull-request minutes": docs,
+        "other minutes": other, "other dollars": other * RATE,
+        "ci minutes at 30": ci[lo], "ci minutes at 58": ci[hi], "ci dollars at 30": ci[lo] * RATE,
+        "ci dollars at 58": ci[hi] * RATE,
         "all minutes at 30": ci[lo] + other, "all minutes at 58": ci[hi] + other,
+        "all dollars at 30": (ci[lo] + other) * RATE, "all dollars at 58": (ci[hi] + other) * RATE,
+        "other repository minutes on 1 to 4 October": OTHER_REPO_MIN_OCT_1_4,
     }
 
 
@@ -201,6 +240,12 @@ class EveryWorkflowIsCounted(unittest.TestCase):
                                 "runs are billed, so the cost estimate prices it or says why it bills nothing" % f)
 
 
+def states(text, phrase):
+    """True when text holds phrase with no further digit of a number after it: "about 25" is not in "about 25,000" or
+    "about 250"."""
+    return re.search(re.escape(phrase) + r"(?![0-9]|,[0-9])", text) is not None
+
+
 class TheSums(unittest.TestCase):
     def setUp(self):
         self.text = header()
@@ -214,32 +259,50 @@ class TheSums(unittest.TestCase):
                                      "the nearest %s" % (name, format(figure, ","), self.d[name], unit))
 
     def test_the_header_states_each_figure(self):
-        # the minutes a month are stated as one range, "about <at 30> to <at 58>"; every other figure as "about <figure>"
-        span = "about %s to %s" % (format(STATED["all minutes at 30"][0], ","), format(STATED["all minutes at 58"][0], ","))
+        # each figure as "about <figure>", with no further digit after it ("about 25" is not stated by "about 25,000")
         for name, (figure, _unit) in sorted(STATED.items()):
-            want = span if name.startswith("all minutes at ") else "about %s" % format(figure, ",")
+            want = "about %s" % format(figure, ",")
             with self.subTest(figure=name):
-                self.assertTrue(want in self.text, "ci.yml's header does not state %s as %r" % (name, want))
+                self.assertTrue(states(self.text, want), "ci.yml's header does not state %s as %r" % (name, want))
 
-    def test_in_all_is_ci_yml_and_the_other_workflows(self):
+    def test_this_workflow_and_in_all_each_state_minutes_and_dollars_at_both_batch_paces(self):
         lo, hi = BATCH_RUNS
-        ci = "about %d dollars a month for this workflow at %d batch runs and about %d at %d" % (
-            STATED["ci dollars at 30"][0], lo, STATED["ci dollars at 58"][0], hi)
-        every = "about %d dollars a month in all at %d batch runs and about %d at %d" % (
-            STATED["all dollars at 30"][0], lo, STATED["all dollars at 58"][0], hi)
-        self.assertTrue(ci in self.text, "the header names ci.yml's own figure as this workflow's (%r)" % ci)
-        self.assertTrue(every in self.text, "the header's total in all counts the other workflows (%r)" % every)
-        self.assertEqual(len(re.findall(r"dollars a month in all", self.text)), 1, "one total in all")
+
+        def pair(kind, n):
+            return "about %s minutes and about %d dollars" % (format(STATED["%s minutes at %d" % (kind, n)][0], ","),
+                                                               STATED["%s dollars at %d" % (kind, n)][0])
+        ci = "%s a month for this workflow at %d batch runs, and %s at %d" % (pair("ci", lo), lo, pair("ci", hi), hi)
+        every = "%s a month in all at %d batch runs, and %s at %d" % (pair("all", lo), lo, pair("all", hi), hi)
+        self.assertTrue(states(self.text, ci), "the header names ci.yml's own figures as this workflow's (%r)" % ci)
+        self.assertTrue(states(self.text, every), "the header's total in all counts the other workflows (%r)" % every)
+        self.assertEqual(len(re.findall(r"a month in all", self.text)), 1, "one total in all")
+        self.assertTrue("one or two a month" in self.text, "the header says manual runs are counted at the normal pace, "
+                        "one or two a month")
 
 
 class TheAllowance(unittest.TestCase):
-    def test_the_header_says_the_dollars_are_the_list_price_ahead_of_the_allowance(self):
+    def test_the_header_says_every_minute_would_be_billed_at_the_list_price(self):
         text = header()
         self.assertTrue("list price" in text, "the header says its dollars are the list price of every minute")
-        self.assertTrue("%s minutes a month" % format(INCLUDED_MIN, ",") in text, "the header states the allowance "
-                        "GitHub documents for the plan, %s minutes a month" % format(INCLUDED_MIN, ","))
-        self.assertTrue("other private repositories" in text, "the header says the owner's other private repositories "
-                        "draw on the same allowance")
+        self.assertTrue("every minute here would be billed at list price" in text, "the header says every minute here "
+                        "would be billed at the list price")
+        self.assertTrue("%s included minutes a month" % format(INCLUDED_MIN, ",") in text, "the header states the "
+                        "included minutes GitHub documents for the plan, %s a month" % format(INCLUDED_MIN, ","))
+        self.assertTrue("the owner's other repositories use them up in about the first week of each month" in text,
+                        "the header says the owner's other repositories use the included minutes up in about the first "
+                        "week of each month")
+        want = "about %s on 1 to 4 October 2026" % format(STATED["other repository minutes on 1 to 4 October"][0], ",")
+        self.assertTrue(want in text, "the header gives the minutes behind that (%r)" % want)
+
+    def test_the_included_minutes_last_the_days_the_header_says_at_that_pace(self):
+        days = INCLUDED_MIN / (OTHER_REPO_MIN_OCT_1_4 / OTHER_REPO_DAYS)
+        words = {5: "five", 6: "six", 7: "seven", 8: "eight"}
+        self.assertIn(round(days), words, "at %s minutes in %d days the %s included minutes last %.1f days, not about "
+                      "the first week the header says" % (format(OTHER_REPO_MIN_OCT_1_4, ","), OTHER_REPO_DAYS,
+                                                          format(INCLUDED_MIN, ","), days))
+        want = "a pace that spends the %s in about %s days" % (format(INCLUDED_MIN, ","), words[round(days)])
+        self.assertTrue(want in header(), "the header states the days the included minutes last at that pace (%r, %.2f "
+                        "days)" % (want, days))
 
 
 class CapsTheFirstPrivateRunConfirms(unittest.TestCase):
@@ -357,6 +420,12 @@ class TheReadersThemselves(unittest.TestCase):
         self.assertEqual(linux_cap(src, "b"), 55)
         with self.assertRaises(LookupError):
             linux_cap(src, "c")
+
+    def test_states_refuses_a_longer_number(self):
+        self.assertTrue(states("about 25 dollars", "about 25"))
+        self.assertTrue(states("about 25. Next", "about 25"))
+        self.assertFalse(states("about 25,000 minutes", "about 25"))
+        self.assertFalse(states("about 250 minutes", "about 25"))
 
     def test_confirming_sentences(self):
         text = "A floor. The first private batch run confirms the Served pages and Shell caps. Another."
