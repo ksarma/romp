@@ -2557,12 +2557,15 @@ def _bell_rule_classes(html):
     names insertRule, deleteRule, replaceSync, adoptedStyleSheets, CSSStyleSheet, styleSheets, cssRules or `.sheet`, and each of their 7
     `.replace(` calls passes two arguments, a string's replace); of the 4 that load a bundle by src, palette-main.js writes two, the
     command palette's and the shortcuts card's, each when it first opens (ui/webview/palette.ts and shortcuts-modal.ts: a style element
-    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write. Both ends
-    of a selector are a third stated limit: served_css strips Python's whitespace there, a wider set than CSS's, before the printable
-    ASCII refusal above reads the selector, so a no-break space, a vertical tab or an em space at either end is dropped unread.
-    `#mtabs #mbell.on` with a no-break space after it reads as naming `on`, a class the scripts set, and passes, where a browser reads
-    a no-break space or an em space as a name character and a vertical tab as an invalid selector, and applies the rule to no bell;
-    with `busy` in place of `on` the census still turns red. served_css is shared with the other censuses, so its strip stays.
+    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write. A third
+    stated limit: the census reads rules as written and does not check that a browser accepts them, so a rule a browser drops can
+    read as live. Each of these reads as naming `on`, a class the scripts set, and passes, where Chromium 151 and WebKit 26.5 apply
+    it to no bell: `#mtabs #mbell.on` with a no-break space, a vertical tab or an em space at either end, which served_css strips (it
+    strips Python's whitespace from a selector's ends, a wider set than CSS's, before the printable ASCII refusal above reads the
+    selector), where a browser drops the rule at a vertical tab and reads a no-break space or an em space as a name character;
+    a misspelled at-rule or pseudo-class (`@mdia all{#mtabs #mbell.on{opacity:.45}}`, `#mtabs #mbell.on:hoverr{opacity:.45}`); and a
+    selector list ending in a comma (`#mtabs #mbell.on,{opacity:.45}`). With `busy` in place of `on`, each still turns the census
+    red. served_css is shared with the other censuses, so its strip stays.
 
     Some refusals read more than a browser does, the safe side; the served CSS trips none of them, and BellRuleReader pins each beside
     what an author writes instead. The escape refusal reads every backslash in a style element, so an escape inside a string
@@ -2771,7 +2774,8 @@ class BellStateClassCensus(unittest.TestCase):
                 self.assertEqual(self._dead(BellRuleReader._read(sel + "{opacity:.45}")), dead)
 
     def test_a_selector_end_python_strips_and_css_keeps_is_read_past(self):
-        # the third stated limit in _bell_rule_classes, a green plant (the check of the url() whitespace pins, 2026-10-06): served_css
+        # one instance of the third stated limit in _bell_rule_classes (the census does not check that a browser accepts a rule, so a
+        # rule a browser drops can read as live), its green plant (the check of the url() whitespace pins, 2026-10-06): served_css
         # strips Python's whitespace from both ends of a selector before the printable ASCII refusal reads it, so a rule that ends or
         # starts with a no-break space, a vertical tab or an em space reads as naming `on` on the bell, a class the scripts set, and
         # passes, where Chromium 151 and WebKit 26.5 apply the rule to no bell (they keep either space in the selector as a name
