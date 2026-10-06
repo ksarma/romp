@@ -25,8 +25,10 @@ with the process.
 
 THE SCOPE IS THE PROCESS. Module-level dicts, nothing on disk. Under pytest-xdist each worker is its own process with its
 own cache: two censuses that land on different workers each parse and derive on their own, so no saving is claimed there.
-The saving is the SERIAL run (CI's Python cells ran pytest serially until 2026-09-25; since then its Linux cells run two
-workers under --dist load and its macOS cells stay serial) and a module's own tests when pytest keeps them in one worker
+The saving is the SERIAL run (CI's Python cells ran pytest serially until 2026-09-25; from then until 2026-10-04 its
+Linux cells ran two workers under --dist load, and since then each Linux cell runs as shard jobs, each job one worker over
+its own shard's modules (tests/conftest.py's CI's shards section), so two censuses save there only when they share a
+shard; its macOS cells stay serial) and a module's own tests when pytest keeps them in one worker
 (--dist loadfile or loadscope); under --dist load a class splits across workers and each derives once, a second
 derivation in another process, which that process's counters do not see and no pin reads as red.
 
@@ -129,10 +131,14 @@ exception propagates as it did), so every consumer of the cache inherits it; a c
 thread-stop census's setUpClass, before its tree derivation. It NEVER removes what it finds: a repair would hide the
 writer. It is order-dependent by nature: red exactly when a writer ran earlier in the same process, a serial run (one
 process, every test module in collection order, as CI's cells were until 2026-09-25 and its macOS cells still are) or
-the same xdist worker, and green for a module run alone. Under the Linux cells' two workers since then a writer and the
-census can land on different workers, so a Linux cell reds on a writer only when a check runs after it in the same
-worker. Its cost per check
-is two small parses (parser_singletons reads the probe text twice and asserts the instances identical across both) and
+the same xdist worker, and green for a module run alone. Under the Linux cells' two workers from then until 2026-10-04 a
+writer and the census could land on different workers, so a Linux cell red on a writer only when a check ran after it in
+the same worker. Since then each Linux cell runs as ci.yml's shard jobs (tests/conftest.py's CI's shards section:
+SHARD_COUNT shards, each module HEAVY_MODULES lists in its listed shard and every other test file by the hash), each
+job's one worker running only its own shard's modules in collection order, so a Linux cell reds on a writer only when a
+check runs after it in the same shard: the thread-stop census, listed for shard 1, runs in shard 1 alone, and a writer in
+another shard is caught only by a check that runs after it there (a first parse or a build through this cache). Its cost
+per check is two small parses (parser_singletons reads the probe text twice and asserts the instances identical across both) and
 a vars() per singleton. The read-only pin over the cached nodes (the contract above) walks the singletons too, each once
 per tree, and says which of its lines name a shared node.
 

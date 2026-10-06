@@ -11443,7 +11443,7 @@ class CiParity(unittest.TestCase):
         named += [("-rfEs",), ("--no-fold-skipped",)]
         for u in named:
             self.assertIn(u, our_units, "a named difference the runner no longer has: %r" % (u,))
-        # the -n count: CI's expression (2 or 0 by runner) against the runner's idle cores
+        # the -n count: CI's expression (1 or 0 by runner) against the runner's idle cores
         self.assertIn(("-n", "<expr>"), ci_units)
         self.assertEqual(sorted(u for u in our_units if u not in named), sorted(ci_units))
 
@@ -11561,13 +11561,18 @@ class CiParity(unittest.TestCase):
 
     def test_the_run_pytest_steps_env_is_the_pytest_legs_but_the_gil_setting(self):
         job, env, _run = self.step("Run pytest")
-        self.assertEqual(sorted(env), ["PYTHON_GIL", "ROMP_SDK_REQUIRE"])
+        self.assertEqual(sorted(env), ["PYTHON_GIL", "ROMP_SDK_REQUIRE", "ROMP_TESTS_SHARD"])
         self.assertEqual(sorted(sweep.LEG_ENV[PYTEST_LEG]), ["ROMP_SDK_REQUIRE"], "the pytest leg's switches are the Run pytest step's")
         self.assertEqual(sweep.LEG_ENV[PYTEST_LEG]["ROMP_SDK_REQUIRE"], env["ROMP_SDK_REQUIRE"])
         # PYTHON_GIL, the named difference: CI's free-threaded cell alone sets it (to 0); the runner runs the one --python
         # and sets nothing, so a free-threaded --python runs with its own default
         self.assertEqual(env["PYTHON_GIL"], "${{ endsWith(matrix.python-version, 't') && '0' || '' }}")
         self.assertNotIn("PYTHON_GIL", sweep.LEG_ENV[PYTEST_LEG])
+        # ROMP_TESTS_SHARD, the second named difference (2026-10-04): CI splits each Linux interpreter's suite across one
+        # job per shard (tests/conftest.py's CI's shards), and the runner's pytest leg runs every file in one leg, so it
+        # sets no shard; tests/test_ci_shards.py holds that the shards together collect every file once
+        self.assertEqual(env["ROMP_TESTS_SHARD"], "${{ matrix.os == 'ubuntu-latest' && matrix.shard || '' }}")
+        self.assertNotIn("ROMP_TESTS_SHARD", sweep.LEG_ENV[PYTEST_LEG])
         self.assertNotIn(sweep.SERVED_LEG, sweep.LEG_ENV, "the served leg's switches are read from ci.yml, never restated")
 
     def pin(self):

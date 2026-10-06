@@ -281,6 +281,16 @@ STUB
     grep -q "workflow run CI" "$GH_LOG"      # it really did dispatch
 }
 
+@test "release: the macOS run is dispatched with the workflow's macos input on, since a dispatch is Linux alone without it" {
+    # ci.yml's macos input (2026-10-05) is off by default: a dispatch without it runs no macOS cell, and the gate would
+    # pass on a Linux-only run. tests/test_ci_macos_input.py ties the name to the input ci.yml declares.
+    _stub_gh
+    run "$REPO/scripts/release.sh" --skip-tests
+    [ "$status" -eq 0 ]
+    [ "$(grep -c "^workflow run " "$GH_LOG")" -eq 1 ]
+    grep -q -- "^workflow run CI --ref main -f macos=true\$" "$GH_LOG"
+}
+
 @test "release: --skip-macos tags without CI, but says so loudly" {
     _stub_gh
     run "$REPO/scripts/release.sh" --skip-macos --skip-tests

@@ -14,7 +14,7 @@
 # cells of CI, which install no bats (warning once per process, since the tenth commit); the shell job's
 # `bats --print-output-on-failure tests/*.bats`
 # (.github/workflows/ci.yml) picks this file up. That job has two cells, ubuntu-latest on every run and macos-latest on a manual
-# dispatch or the weekly schedule, and both install a bats: the Linux cell 1.11.1 from the release tarball (`Install bats (Linux)`),
+# dispatch with its macos input on, and both install a bats: the Linux cell 1.11.1 from the release tarball (`Install bats (Linux)`),
 # the macOS cell Homebrew's bats-core (`Install bats (macOS)`); run_module_tests below skips every test of this file on Darwin, so
 # the Linux cell is where the record is verified and where every negation of the tree is decided. python3 is on the runner image,
 # as that job's header comment says, and the module is stdlib-only; the tests print their tables, and bats shows the output when a
@@ -52,7 +52,7 @@
 # removes: left on PATH, the inner bats ran with BATS_ROOT empty and did not load at all under CI's /usr/local layout, measured
 # with 1.11.1 from a scratch prefix as the outer and the inner bats).
 #
-# macOS, the weekly and dispatch cell of the shell job, skips with the reason: its bash is 3.2.57 (actions/runner-images,
+# macOS, the dispatch cell of the shell job, skips with the reason: its bash is 3.2.57 (actions/runner-images,
 # images/macos/macos-15-Readme.md) and Homebrew's bats-core is 1.14.0; the register's `|&`, `coproc` and `;;&` shapes do not parse
 # under that bash, which also gives no here-document warning under -n (the module reads it to find where a here-document
 # ends), and the record is verified against 1.10.0 and 1.11.1 only. Every test of the module that derives from bash skips
