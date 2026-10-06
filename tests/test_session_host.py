@@ -842,6 +842,31 @@ class ReplayedEchoes(unittest.TestCase):
                 self.assertEqual(self.host.inflight, 1, "a turn row as a fresh host's first row opens one: %s" % name)
                 self.assertEqual(len(self._reopened()), 1, "with one turn-reopened row: %s" % name)
 
+    def test_a_subagent_row_after_a_result_still_reopens_the_count(self):
+        """PINS CURRENT BEHAVIOUR for a stated residual, not a design (the scope ruling of 2026-10-06): a subagent's row, an
+        assistant or user row with parent_tool_use_id set, arriving after a result re-opens the host's count to 1, as it did
+        before the echo rule. A backgrounded subagent keeps streaming after the main turn's result, and its rows hold the
+        count at 1 until the next result. They stay counted because excluding them would let the unattached grace (900 s by
+        default, UNATTACHED_GRACE_DEFAULT_S) end a CLI whose background subagent is still streaming. A later change that
+        excludes them gets its own ruling, with a grace check that knows about background work, and changes this test.
+        The last row is one _cli_echo names (the isReplay key, the tag first), which no CLI version writes with
+        parent_tool_use_id set: it is counted too, so the echo rule changes nothing for a subagent's rows."""
+        task = "toolu_invented_task"
+        rows = (("a subagent's assistant row", dict(_assistant_row("an invented subagent step"), parent_tool_use_id=task), False),
+                ("a subagent's kickoff prompt", _echo_row("an invented subagent prompt", parent_tool_use_id=task), False),
+                ("a subagent's tool result", _echo_row([{"type": "tool_result", "tool_use_id": "toolu_invented_sub",
+                                                         "content": "an invented tool output"}], parent_tool_use_id=task), False),
+                ("a subagent's row shaped like an echo", _echo_row("<local-command-stdout>invented</local-command-stdout>",
+                                                                   parent_tool_use_id=task, isReplay=True), True))
+        for name, rec, echo_shaped in rows:
+            with self.subTest(row=name):
+                self.assertEqual(sh._cli_echo(rec), echo_shaped, "what the echo test says of it: %s" % name)
+                self._feed(self.RESULT)
+                before = len(self._reopened())
+                self._feed(rec)
+                self.assertEqual(self.host.inflight, 1, "a subagent's row after a result re-opens the count: %s" % name)
+                self.assertEqual(len(self._reopened()), before + 1, "with one turn-reopened row: %s" % name)
+
     def test_both_modules_hold_the_same_two_tags(self):
         """The host's test and the kernel's each read their own copy of the pair of local-command tags. Both copies are
         the two tags the CLI writes first, so neither can gain or lose a tag alone. Its own case, so the hand-written parity

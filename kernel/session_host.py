@@ -567,7 +567,8 @@ def _cli_echo(obj: dict) -> bool:
     opened itself, which it writes without the key, so its text decides nothing.
 
     Only user rows: an assistant row is always a turn's, or is followed by a result (a local command's own assistant row).
-    A tool result's content is never read, and isSynthetic is not the mark, because the CLI's in-turn user rows carry it."""
+    A tool result's content is never read, and isSynthetic is not the mark, because the CLI's in-turn user rows carry it.
+    A subagent's row (parent_tool_use_id set) is judged here like any other. _track counts it whatever this says (see there)."""
     if not isinstance(obj, dict) or obj.get("type") != "user":
         return False
     if "isReplay" in obj:
@@ -1137,7 +1138,7 @@ class SessionHost:
         self.inflight = 0               # open turns: a text-bearing user line fed opens one; a result closes ALL of them (the CLI folds
         #                                 queued lines into the running turn and answers with one result); an output row after the result
         #                                 (an assistant or user row: the CLI running a queued line as its own turn) re-opens one, never
-        #                                 a row the CLI echoes for input it is not running (_cli_echo)
+        #                                 a row the CLI echoes for input it is not running (_cli_echo) unless a subagent's
         self.idle_since = self.now()
         self.exit_info = None
         self.ending = None              # (deadline, cause) once `end` was requested
@@ -1521,12 +1522,16 @@ class SessionHost:
             if self._reexec_pending is not None:                  # a kernel asked mid-turn: the turn's end is the event
                 python, launcher = self._reexec_pending
                 asyncio.ensure_future(self._reexec_now(python, launcher))
-        elif mt in ("assistant", "user") and self.inflight == 0 and not _cli_echo(msg):
+        elif mt in ("assistant", "user") and self.inflight == 0 and (msg.get("parent_tool_use_id") or not _cli_echo(msg)):
             # Output arriving with no turn counted: a queued line running as its own turn. NEVER an echo (_cli_echo: a user
             # row the CLI writes for input it is not running, flagged isReplay or opening with a local command's output
             # tag). No result follows a model switch's echo, so counting it left the count at one until the next result
             # (2026-10-06): every attach was told a turn was open, the unattached grace never ended the CLI, and a re-exec
             # waited on that result.
+            # A subagent's row (parent_tool_use_id set) still counts, whatever _cli_echo says, as it did before the echo
+            # rule: a backgrounded subagent streams after the main turn's result, and excluding its rows would let the
+            # unattached grace end a CLI whose subagent is still working. That is a stated residual of the echo change,
+            # left for its own ruling (tests/test_session_host.py ReplayedEchoes pins it as current behaviour).
             self.inflight = 1
             self.log("turn-reopened", offset=off)
         elif mt == "control_request":
