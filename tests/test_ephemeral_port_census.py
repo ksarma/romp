@@ -3425,7 +3425,7 @@ class Plants(unittest.TestCase):
         int(V + 0) and in int(-V), where it gives 40000; V bound to 1.5 and to 30000 in int(V // 1), where it gives
         40001; and V bound to "5", or to b"5", and to 30000 in int(V * 1), where it gives 40005 for each. By the name's
         int alone they read 80000, 70000, 10000, 70000, 70000 and 70000, never in the range, and a census that read such
-        a name so counted none of them; the bytes plant (the owner's call of 2026-10-06 at 07:3xZ) fails under a census
+        a name so counted none of them; the bytes plant (the owner's next call, later that day) fails under a census
         that lets a name bound to bytes into self.fixed. Such a name also counts among the names a value is refused for
         past eight (BOUND), as the refusal's own test pins
         (test_a_refused_value_fails_naming_the_refusal_and_what_to_change). Where the value gives no reading with the
@@ -4980,20 +4980,21 @@ class RandrangeAgainstCPython(unittest.TestCase):
         return out
 
     def _nonint(self):
-        """The calls the owner's call of 2026-10-06 at 07:3xZ added: a start, a stop or a step written with int() of an
-        expression over a name bound to an int and to a value other than an int, every binding recorded, which THE RULE
-        reads both by the name's ints and with it unbounded (BOUND), from a generator seeded apart from the grid's and
-        the seven above so their calls, samples and draws stay as they were. The other value is a float with a
-        fraction, a digit string or bytes; over a float the expression is the name times 1, 2 or 3, plus an int,
-        negated, or floor divided by 2, 3 or 7, and over a string or bytes the name times 1 or 2. Per relation, for the
-        start and for the stop: twice, the interval's lowest value plus int() of the expression % the interval's width,
-        taking the value CPython gives for each of the name's two values, which THE RULE reads with the name unbounded;
-        and once int() of the expression alone, taking the value CPython gives for the int alone, since there the value
-        gives no reading with the name unbounded and THE RULE reads the name by its ints alone (WHAT IT CANNOT SEE).
-        Then, per relation, a step written as int() of the expression, its int drawn so that the expression gives 1, 2
-        or 7 or one of them negated, rounded down to a multiple of the factor where the name is multiplied, taking STEPS
-        and the value CPython gives for each of the name's two values, since at a step such a name reads as unbounded.
-        Each value taken is CPython's own: the text written, evaluated with the name bound to that value."""
+        """The calls added by the owner's call that followed the one of 2026-10-06 at 04:1xZ: a start, a stop or a step
+        written with int() of an expression over a name bound to an int and to a value other than an int, every binding
+        recorded, which THE RULE reads both by the name's ints and with it unbounded (BOUND), from a generator seeded
+        apart from the grid's and the seven above so their calls, samples and draws stay as they were. The other value
+        is a float with a fraction, a digit string or bytes; over a float the expression is the name times 1, 2 or 3,
+        plus an int, negated, or floor divided by 2, 3 or 7, and over a string or bytes the name times 1 or 2. Per
+        relation, for the start and for the stop: twice, the interval's lowest value plus int() of the expression % the
+        interval's width, taking the value CPython gives for each of the name's two values, which THE RULE reads with
+        the name unbounded; and once int() of the expression alone, taking the value CPython gives for the int alone,
+        since there the value gives no reading with the name unbounded and THE RULE reads the name by its ints alone
+        (WHAT IT CANNOT SEE). Then, per relation, a step written as int() of the expression, its int drawn so that the
+        expression gives 1, 2 or 7 or one of them negated, rounded down to a multiple of the factor where the name is
+        multiplied, taking STEPS and the value CPython gives for each of the name's two values, since at a step such a
+        name reads as unbounded. Each value taken is CPython's own: the text written, evaluated with the name bound to
+        that value."""
         rng, out = random.Random(self.SEED + 8), []
 
         def near():
