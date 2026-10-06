@@ -32,6 +32,10 @@ THE RULES.
      the rest of the line read again the same way (_blank_comments). So a call split across lines is still read, a
      call after a block comment that closes on its line is read, and a comment that starts after code on a line is read
      with the code. String literals are read as code, on purpose: a form spelled anywhere outside a comment is refused.
+     A comment on one line (a // comment, or a /* */ comment that closes on its line) is read as white space after the
+     last value a form reads (process or console bound to a name, the fd of an fs write, the second stdio entry) and
+     after the comma that ends the first stdio entry (_GAP), so const { stdout } = process // the stream is read, and so
+     is "inherit" on the line after "pipe", // stdin.
      The forms, each keyed on its spelling (WRITE_FORMS):
        console         a console member other than error, warn, trace and assert (those four write to stderr; log,
                        info, debug, dir, table and the rest write to stdout), or a computed member, white space after
@@ -81,8 +85,11 @@ constants or built from strings at run time (process["std" + "out"]); fd 1 held 
 fs.writeSync(o, s)) or written as 0x1 (fs.writeSync(0x1, s), {fd: 0x1}); an fs writer called by a name of its own
 (const w = fs.writeSync; w(1, s), or const { writeSync: w } = fs); a destructuring of stdout split across lines that
 holds another destructuring (stdout: { write } on a line of its own); a second stdio entry after a first entry
-holding brackets or parens two deep, such as
-[fds[0], "inherit"]; a write in a module the driver imports from outside tests/ or from a module outside the served step
+holding brackets or parens two deep, such as [fds[0], "inherit"]; a comment inside a form other than where W reads one
+(console /* the logger */ .log(out), fs.writeSync(/* stdout */ 1, s), const { stdout } = /* the stream */ process), a
+block comment inside a form that runs past its line, and, since W reads a comment in the first stdio entry as part of
+the entry, one holding a comma or a bracket there (stdio: [ // stdin, stdout, stderr, with the entries on the lines
+below); a write in a module the driver imports from outside tests/ or from a module outside the served step
 (none at this tree: every driver text a served module runs is defined in a served module); a record handed through
 stderr (console.error), which carries the diagnostics every module prints in its failure text; a browser driver
 written inside a function or a container (a tuple, a dict), or composed by any operator but + or any method but
@@ -132,22 +139,27 @@ _PROCESS = r"(?:" + _G + r"process\b|" + _global_key("process") + ")"
 _LOAD = r"(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s+)"
 _FS_WRITERS = (r"(?:writeSync|write|writev|writevSync|writeFile|writeFileSync|appendFile|appendFileSync|writeString|"
                r"writeBuffer|writeBuffers)")
+# what a form reads as white space after the last value it reads, and after the comma that ends the first stdio entry:
+# white space, a // comment (read to its line's end) and a /* */ comment that closes on its line
+_GAP = r"(?:\s|//.*(?!.)|/\*.*?\*/)*"
+# where a value bound to a name ends: ; , ) } ] or the line's end, after _GAP
+_END = _GAP + r"(?:[;,)}\]]|$)"
 
 WRITE_FORMS = (
     ("console", re.compile(r"(?<![\w$.])" + _CONSOLE + r"\s*(?:\??\.\s*(?!(?:error|warn|trace|assert)\b)[A-Za-z_$]"
                            r"|(?:\?\.\s*)?\[)")),
-    ("console-bound", re.compile(r"=\s*" + _CONSOLE + r"\s*(?:[;,)}\]]|$)|" + _LOAD + _Q + r"(?:node:)?console" + _Q,
-                                 re.M)),
+    ("console-bound", re.compile(r"=\s*" + _CONSOLE + _END + "|" + _LOAD + _Q + r"(?:node:)?console" + _Q, re.M)),
     ("process.stdout", re.compile(r"\b" + _PROCESS + r"\s*(?:\??\.\s*stdout\b|(?:\?\.\s*)?\[\s*" + _Q + "stdout)")),
     # a destructuring on one line (nested ones too), or one pair of braces holding stdout and no other brace, across lines
-    ("stdout-bound", re.compile(r"\bstdout\b.*=\s*" + _PROCESS + r"\s*(?:[;,)}\]]|$)|\{[^{}]*\bstdout\b[^{}]*\}\s*=\s*"
-                                + _PROCESS + r"\s*(?:[;,)}\]]|$)|" + _LOAD + _Q + r"(?:node:)?process" + _Q, re.M)),
-    ("fd-1", re.compile(r"(?:\b" + _FS_WRITERS + r"|\[\s*" + _Q + _FS_WRITERS + _Q + r"\s*\])\s*(?:\?\.\s*)?\(\s*1\s*[,)]")),
+    ("stdout-bound", re.compile(r"\bstdout\b.*=\s*" + _PROCESS + _END + r"|\{[^{}]*\bstdout\b[^{}]*\}\s*=\s*" + _PROCESS
+                                + _END + "|" + _LOAD + _Q + r"(?:node:)?process" + _Q, re.M)),
+    ("fd-1", re.compile(r"(?:\b" + _FS_WRITERS + r"|\[\s*" + _Q + _FS_WRITERS + _Q + r"\s*\])\s*(?:\?\.\s*)?\(\s*1"
+                        + _GAP + r"[,)]")),
     ("fd-1-option", re.compile(r"\bfd" + _Q + r"?\s*:\s*1\b")),
     ("stdout-path", re.compile(r"/dev/stdout\b|/dev/fd/1\b|/proc/[^/\s\"'`]+/fd/1\b")),
     # the first stdio entry ends at its first comma outside one level of parens (fs.openSync(f, "r") is one entry)
     ("child-inherits", re.compile(r"\bstdio" + _Q + r"?\s*:\s*(?:" + _Q + "inherit" + _Q + r"|\[\s*(?:[^,\[\]()]|\([^()]*\))*,"
-                                  r"\s*(?:1|" + _Q + "inherit" + _Q + r"|process\b)\s*[,\]])|\bfork\s*\(")),
+                                  + _GAP + r"(?:1|" + _Q + "inherit" + _Q + r"|process\b)" + _GAP + r"[,\]])|\bfork\s*\(")),
     ("writeAll", re.compile(r"\bwriteAll\b")),
 )
 FORM_NAMES = tuple(name for name, _ in WRITE_FORMS)
@@ -646,7 +658,7 @@ FORM_PLANTS = {
                 "globalThis.console.debug(out);", "console. log(JSON.stringify(out));", "console\n  .log(out);",
                 'globalThis["console"].log(out);', "console?.['log'](out);", " * a note that ends here */ console.log(out);"],
     "console-bound": ["const say = console;", 'const { log } = require("console");', 'import { log } from "node:console";',
-                      'const say = globalThis["console"];'],
+                      'const say = globalThis["console"];', "const say = console // the logger"],
     "process.stdout": ["process.stdout.write(JSON.stringify(out));", "fs.writeSync(process.stdout.fd, s);",
                        'process["stdout"].write(s);', "const o = process.stdout;", "process?.stdout.write(s);",
                        'globalThis["process"].stdout.write(s);', 'process?.["stdout"].write(s);'],
@@ -654,11 +666,13 @@ FORM_PLANTS = {
                      'const { stdout: o } = require("process");', 'require("process").stdout.write(JSON.stringify(out));',
                      '(await import("node:process")).stdout.write(s);', 'const p = require("process");',
                      "const {\n  stdout,\n} = process;", "const {\n  argv,\n  stdout: o\n} = globalThis.process;",
-                     "const { stdout: { write } } = process;"],
+                     "const { stdout: { write } } = process;", "const { stdout } = process // the stream",
+                     "const {\n  stdout,\n} = process // the stream", "const { stdout: { write } } = process // the stream",
+                     "const { stdout } = process /* the stream */", "const {\n  stdout,\n} = process /* the stream */"],
     "fd-1": ["fs.writeSync(1, JSON.stringify(out));", "fs.writeSync(\n  1, s);", 'require("fs").writeFileSync(1, s);',
              "fs.write(1, s, () => {});", 'fs["writeSync"](1, JSON.stringify(out));', "fs.writeSync?.(1, s);",
              "/* old road */ fs.writeSync(1, JSON.stringify(out));", "/* a */ /* b */ fs.writeSync(1, s);",
-             "/* by */ * fs.writeSync(1, s);"],
+             "/* by */ * fs.writeSync(1, s);", "fs.writeSync(1 /* stdout */, JSON.stringify(out));"],
     "fd-1-option": ['const w = fs.createWriteStream("", { fd: 1 });', 'const w = fs.createWriteStream("", { "fd": 1 });',
                     "const w = fs.createWriteStream('', { 'fd': 1 });"],
     "stdout-path": ['fs.writeFileSync("/dev/stdout", s);', 'fs.appendFileSync("/proc/self/fd/1", s);',
@@ -667,7 +681,11 @@ FORM_PLANTS = {
                        'spawn("node", [f], { stdio: ["ignore", "inherit", "pipe"] });', 'fork("dump.js");',
                        'spawn("node", [f], { "stdio": "inherit" });', "spawn('node', [f], { 'stdio': ['ignore', 'inherit'] });",
                        'spawn("node", [f], { stdio: [fs.openSync(f, "r"), "inherit", "pipe"] });',
-                       'spawnSync("node", [f], { "stdio": [fs.openSync(f, "r"), 1, 2] });'],
+                       'spawnSync("node", [f], { "stdio": [fs.openSync(f, "r"), 1, 2] });',
+                       'spawn("node", [f], { stdio: ["pipe", // stdin\n  "inherit"] });',
+                       'spawn("node", [f], { stdio: ["pipe", /* stdin */ "inherit"] });',
+                       'spawn("node", [f], { stdio: [\n  "ignore", // stdin\n  "inherit" // stdout\n] });',
+                       'spawn("node", [f], { stdio: ["ignore", "inherit" /* stdout */] });'],
     "writeAll": ["lab.writeAll(1, JSON.stringify(out));", "const w = lab.writeAll;"],
 }
 CLEAN_LINES = [
@@ -697,6 +715,13 @@ CLEAN_LINES = [
     # opens a file as stdin and inherits stderr, the second inherits stdin
     'spawn(cmd, args, { stdio: [fs.openSync(f, "r"), "pipe", "inherit"] });',
     'spawn(cmd, args, { "stdio": ["inherit", "pipe", "pipe"] });',
+    # a comment after process is read as white space, not as the value's end: this destructures process.env
+    "const { stdout: o } = process /* the env */ .env;",
+    # a // comment is read whole, to its line's end and no further: in the first sample below the "inherit" it names is
+    # not the second entry; in the second the second entry is the pipe on the line after the comment (stdin and stderr
+    # inherited, stdout a pipe)
+    'spawn(cmd, args, { stdio: ["pipe", // was "inherit", now a pipe\n  "pipe"] });',
+    'spawn(cmd, args, { stdio: [\n  "inherit", // stdin\n  "pipe", // stdout\n  "inherit", // stderr\n] });',
 ]
 
 
@@ -1036,6 +1061,15 @@ class StatedBounds(unittest.TestCase):
             "a first stdio entry holding brackets or parens two deep":
                 'D = "spawn(c, a, { stdio: [fds[0], \\"inherit\\"] });\\n'
                 'spawn(c, a, { stdio: [fs.openSync(path.join(d, \\"in\\"), \\"r\\"), \\"inherit\\"] });"\n',
+            "a comment inside a form other than where W reads one":
+                'D = "console /* the logger */ .log(out);\\nfs.writeSync(/* stdout */ 1, s);\\n'
+                'const { stdout } = /* the stream */ process;"\n',
+            "a block comment inside a form that runs past its line":
+                'D = "const { stdout } = process /* the stream, which\\n  the helper replaces */\\n'
+                'spawn(c, a, { stdio: [\\"pipe\\", /* stdin, then\\n  stdout */ \\"inherit\\"] });"\n',
+            "a comment holding a comma or a bracket in the first stdio entry":
+                'D = "spawn(c, a, { stdio: [ // stdin, stdout, stderr\\n  \\"pipe\\", \\"inherit\\"] });\\n'
+                'spawn(c, a, { stdio: [\\"pipe\\" /* stdin [fd 0] */, \\"inherit\\"] });"\n',
             "a record on stderr": 'D = "console.error(JSON.stringify(out));"\n',
         }
         for what, mod in bounds.items():
