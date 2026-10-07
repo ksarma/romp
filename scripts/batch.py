@@ -196,6 +196,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 BODY_CAP = 65_536          # GitHub's PR body limit, in characters
 RESOLUTION_LINES = 300     # per conflicted merge, in the "Conflict resolutions" details block
@@ -249,6 +250,9 @@ class Fail(Exception):
     def __init__(self, msg, code=1):
         super().__init__(msg)
         self.code = code
+        # The stop that arrived during the cleanup this Fail ended, when one did (_cleanup_steps), so a caller that reads
+        # it can still exit as stopped (bisect's cleanups, bisect_unfinished); None otherwise.
+        self.stopped = None
 
 
 # ── process helpers ──────────────────────────────────────────────────────────
@@ -641,16 +645,34 @@ def _cleanup_steps(*steps):
     signals ignored (_on_stop ignores every one after the first), and so do the steps after it. Before this, such a
     stop ended the cleanup there: bisect left the batch worktree detached at the base or mid-bisect, and the ledger
     check left its temporary worktree registered, while main said the cleanup ran (the verify pass at the closing check
-    wf_fb19febe-36b's build, its code finding 4). scripts/sweep.py's _finish runs its cleanup the same way."""
+    wf_fb19febe-36b's build, its code finding 4). scripts/sweep.py's _finish runs its cleanup the same way. A step that
+    fails (a Fail) ends the cleanup there, as before, and the Fail is raised carrying the stop that arrived before it,
+    in that step or an earlier one (Fail.stopped): raised without it, it lost that stop, so bisect exited 1 and never
+    named the signal (the closing check of PR 959, its NEW-1)."""
     stopped = []
-    for step in steps:
-        try:
-            step()
-        except Stopped as e:
-            stopped.append(e)
-            step()
+    try:
+        for step in steps:
+            try:
+                step()
+            except Stopped as e:
+                stopped.append(e)
+                step()
+    except Fail as f:
+        if stopped:
+            f.stopped = stopped[0]
+        raise
     if stopped:
         raise stopped[0]
+
+
+def _read_again_on_stop(read):
+    """(read(), the stop that landed during it, or None): `read`, a function of no arguments that changes nothing, runs
+    again from its start when a stop lands during it, as _cleanup_steps runs a step again (the stop signals are ignored
+    by then: _on_stop), so the stop neither ends the read nor is lost (bisect_unfinished)."""
+    try:
+        return read(), None
+    except Stopped as stop:
+        return read(), stop
 
 
 def install_stop_handlers(replaced):
@@ -4215,7 +4237,16 @@ def cmd_bisect(args):
     # command passes at the tip (the verify pass at the build of the 13:24Z ruling, its code finding 1). So when the
     # worktree has no changes to tracked files before these steps, each cleanup puts the branch's tree back in the index
     # and the files, forced, and the one after the steps does so before it ends the bisect. A worktree that had changes
-    # to tracked files gets the unforced two-way merge, so the cleanup discards none of them. The batch worktree is this
+    # to tracked files gets the unforced two-way merge, so the cleanup discards none of them, and none of what such a stop
+    # staged either: with changes to tracked files before these steps, a stop between a setup checkout's write of the
+    # other commit's files and index and its move of HEAD still leaves the worktree on the branch at the tip with that
+    # commit's files staged beside the changes, which stay unstaged, and main says the cleanup ran. The next bisect runs
+    # the command at the tip over those files, so it refuses, saying the command passes at the tip, when the command
+    # passes on them. To recover, save the changes (git diff shows them, unless some were staged before bisect), run git
+    # checkout --force --detach refs/heads/batch/<name> and git symbolic-ref HEAD refs/heads/batch/<name> in the batch
+    # worktree, and apply them again (measured with git 2.43.0 and git 2.55.0 on 2026-10-07; its witness:
+    # tests/test_batch_tool.py, test_with_prior_changes_a_stop_between_a_setup_checkouts_write_and_head_move_stays_staged;
+    # docs/batching.md says so). The batch worktree is this
     # tool's own, and these cleanups run whenever bisect ends, stopped or not: with the worktree clean here, the forced
     # restore discards every change the test command made to tracked files at the base and at each commit the bisect
     # tested (kept, the 21:31Z ruling of 2026-10-02 on PR 926, its item (a); docs/batching.md says so). A change the
@@ -4266,6 +4297,19 @@ def cmd_bisect(args):
     # that fails at the base is such a stop: its Fail is raised inside the try, straight after the command runs, so the
     # cleanup after the run at the base reads it as the reason (the verify pass at round 3's build, its v-1). Raised
     # after the finally, as it was before, it was replaced by the cleanup's Fail the same way.
+    # A stop signal that arrives during either cleanup keeps what bisect had found (the closing check of PR 959, its
+    # NEW-1): the first bad commit's line, or why the run at the base or the steps stopped, is printed first
+    # (bisect_found), and the stop is then raised, so main exits 128 plus the signal's number, saying whether the cleanup
+    # finished. When the cleanup then fails, in the step the stop landed in, run again, or in a later step, the Fail
+    # carries the stop (_cleanup_steps, Fail.stopped) and bisect_unfinished raises the stop with the cleanup's text; a
+    # stop that lands while bisect_cleanup_failed reads, for that text, the state the cleanup left reads it again
+    # (_read_again_on_stop) and is raised the same way. Before, the stop came out of a cleanup that finished in place of
+    # what bisect had found, so batch.py said only that it was stopped and never printed the first bad commit; a Fail
+    # that followed the stop came out of the cleanup in its place, so bisect exited 1 and never named the signal; and a
+    # stop during that read came out in place of the whole message, saying the cleanup ran. The first bad commit's line
+    # is composed inside the try, before the cleanup: composed after it, a stop during its read of the subject of a
+    # commit that is not a member merge came out in place of the cleanup's error the same way, where now it is a stop
+    # during the steps, and the line is not printed.
     force = git("status", "--porcelain", "--untracked-files=no", cwd=wt) == ""
     body = None
     try:
@@ -4280,8 +4324,11 @@ def cmd_bisect(args):
         try:
             _cleanup_steps(lambda: restore_branch_tree(wt, args.name, force),
                            lambda: attach_to_branch(wt, args.name, git("rev-parse", "HEAD", cwd=wt)))
+        except Stopped:
+            bisect_found(body, None)
+            raise
         except Fail as e:
-            if body is None:
+            if body is None and e.stopped is None:
                 raise
             bisect_unfinished(body, wt, args.name, e, bisected=False)
     # The steps `git bisect run` would take are driven here, with its rules for the command's exit (0 good, 125 skip, any
@@ -4301,7 +4348,7 @@ def cmd_bisect(args):
     # refs/tags/HEAD and the rest), where started on the branch it looked up the names of refs/heads/batch/<name>
     # (refs/tags/refs/heads/batch/<name> and the rest) (git 2.43.0, measured on 2026-10-04).
     steps = int(git("rev-list", "--first-parent", "--count", "%s..%s" % (base, tip), cwd=wt)) + 1
-    bad = body = None
+    found = body = None
     try:
         git("update-ref", "--no-deref", "-m", "checkout: moving from %s to %s" % (br, tip), "HEAD", tip, cwd=wt)
         proc = git_proc("bisect", "start", "--no-checkout", "--first-parent", tip, base, cwd=wt)
@@ -4321,7 +4368,10 @@ def cmd_bisect(args):
             m = _FIRST_BAD.search(out)
             if not m and proc.returncode != 0:
                 raise Fail("bisect did not name a first bad commit:\n%s" % out[-2000:])
+        # The line is composed here, before the cleanup, so nothing between the cleanup and its print reads git: a stop
+        # while it reads the subject of a first bad commit that is not a member merge is a stop during the steps.
         bad = m.group(1)
+        found = bad, first_bad_line(state, bad, wt)
     except BaseException as e:
         body = e
         raise
@@ -4333,19 +4383,17 @@ def cmd_bisect(args):
         # When a step fails after the first bad commit was found, that commit is printed and carried in the Fail raised,
         # so the answer is not lost and the run does not report success over a worktree left off the branch (the verify
         # pass at the 22:25Z ruling's build, its F6 and F1's fifth point); when the steps stopped before it was found,
-        # the reason they stopped is carried first (bisect_unfinished).
+        # the reason they stopped is carried first (bisect_unfinished). A stop during the cleanup prints the one or the
+        # other first (bisect_found, bisect_unfinished).
         try:
             _cleanup_steps(lambda: restore_branch_tree(wt, args.name, force), lambda: git("bisect", "reset", cwd=wt),
                            lambda: attach_to_branch(wt, args.name, git("rev-parse", "HEAD", cwd=wt)))
+        except Stopped:
+            bisect_found(body, found)
+            raise
         except Fail as e:
-            if bad is None:
-                if body is None:
-                    raise
-                bisect_unfinished(body, wt, args.name, e, bisected=True)
-            print(first_bad_line(state, bad, wt))
-            raise Fail("bisect named the first bad commit, %s (printed above), but its cleanup did not finish: %s"
-                       % (short(bad), bisect_cleanup_failed(wt, args.name, e))) from None
-    print(first_bad_line(state, bad, wt))
+            bisect_unfinished(body, wt, args.name, e, bisected=True, found=found)
+    print(found[1])
 
 
 def first_bad_line(state, bad, wt):
@@ -4379,23 +4427,59 @@ def bisect_cleanup_failed(wt, name, e, bisected=True):
             % (str(e).rstrip(), wt, left, branch_of(name), ", ".join(steps), wt, bref))
 
 
-def bisect_unfinished(body, wt, name, e, bisected):
-    """Raise for bisect when the run at the base (`bisected` False) or the steps stopped on `body`, before a first bad
-    commit was found, and the cleanup after them then stopped at `e`, a Fail (round 3 of PR 959, correctness-2): the
-    reason first, then the cleanup's error, the state it left and the remedy (bisect_cleanup_failed). A Fail (a command
-    that failed at the base; one that exited 128 or more at a step, or was ended by a signal there; a git step that
-    failed) is raised again with that text after its own, its exit kept. A stop (Stopped) is raised again carrying the
-    text (Stopped.cleanup_failed), so main exits 128 plus the signal's number and says the cleanup did not finish,
-    where it says the cleanup ran when it did. Anything else is raised as it is, the text printed before it."""
-    unfinished = bisect_cleanup_failed(wt, name, e, bisected)
+def bisect_unfinished(body, wt, name, e, bisected, found=None):
+    """Raise for bisect when the cleanup after the run at the base (`bisected` False) or after the steps stopped at `e`,
+    a Fail, and something comes before that: why the run or the steps stopped, `body`, before a first bad commit was
+    found (round 3 of PR 959, correctness-2); the first bad commit they found, `found`, (its id, its line), with body
+    None; or a stop that arrived during the cleanup (the closing check of PR 959, its NEW-1), which the Fail carries
+    (Fail.stopped), or one that arrives while the state the cleanup left is read for the message (that read then runs
+    again: _read_again_on_stop). What follows "its cleanup did not finish:" is bisect_cleanup_failed's: the cleanup's
+    error, the state it left and the remedy.
+    - A stop that arrived during the cleanup: what came before it is printed first, as it would have been (bisect_found),
+      and the stop is then raised as a stop that ended the run or the steps is, the next item. Before, the Fail came out
+      of the cleanup in its place and bisect exited 1 without naming the signal, or the stop came out of the read in
+      place of the whole message, saying the cleanup ran.
+    - A stop (Stopped) that ended the run or the steps is raised again carrying the text (Stopped.cleanup_failed), so
+      main exits 128 plus the signal's number and says the cleanup did not finish, where it says the cleanup ran when it
+      did.
+    - The first bad commit: its line is printed and a Fail is raised naming it, then the text, so the answer is not lost
+      and the run does not report success over a worktree left off the branch (exit 1).
+    - A Fail (a command that failed at the base; one that exited 128 or more at a step, or was ended by a signal there;
+      a git step that failed) is raised again with the text after its own, its exit kept.
+    - Anything else is raised as it is, the text printed before it."""
+    unfinished, late = _read_again_on_stop(lambda: bisect_cleanup_failed(wt, name, e, bisected))
+    stop = e.stopped if e.stopped is not None else late
+    if stop is not None:
+        bisect_found(body, found)
+        body = stop
     if isinstance(body, Stopped):
         body.cleanup_failed = unfinished
         raise body
+    if found is not None:
+        print(found[1])
+        raise Fail("bisect named the first bad commit, %s (printed above), but its cleanup did not finish: %s"
+                   % (short(found[0]), unfinished)) from None
     if isinstance(body, Fail):
         raise Fail("%s\nThen bisect's cleanup did not finish: %s" % (str(body).rstrip(), unfinished),
                    code=body.code) from None
     print("batch: bisect's cleanup did not finish: %s" % unfinished, file=sys.stderr)
     raise body
+
+
+def bisect_found(body, found):
+    """Print what bisect had found when a stop arrives during its cleanup, before the stop is raised (the closing check
+    of PR 959, its NEW-1): the first bad commit's line, `found`'s, as bisect prints it when it ends; else why the run at
+    the base or the steps stopped, `body`, as main would have printed it: a Fail's message, or Python's traceback for
+    anything else (starting the command raised OSError, say: a command the run at the tip removed). A stop that ended
+    them (Stopped) prints nothing, and none can arrive during the cleanup after one: the first stop wins (_on_stop).
+    Before, the stop came out of the cleanup in place of what bisect had found, and batch.py said only that it was
+    stopped."""
+    if found is not None:
+        print(found[1])
+    elif isinstance(body, Fail):
+        print("batch: %s" % body, file=sys.stderr)
+    elif body is not None and not isinstance(body, Stopped):
+        traceback.print_exception(body)
 
 
 # ── entry point ──────────────────────────────────────────────────────────────

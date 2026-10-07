@@ -688,14 +688,26 @@ subject; `verify` refuses the branch otherwise.
    branch; in `verify`, the removal of the ledger check's temporary worktree)
    runs to its end: a
    SIGTERM, SIGHUP or Ctrl-C that lands inside one runs it again from its start, with later ones
-   ignored. The cleanup also runs for a stop during a step it undoes: one while `bisect` checks
+   ignored. When a stop lands during one of `bisect`'s cleanups, `bisect` still prints what it had
+   found first, the first bad commit's line or what stopped it, whether or not that cleanup then
+   finishes, and the tool exits 128 plus the signal's number. The cleanup
+   also runs for a stop during a step it undoes: one while `bisect` checks
    out the base or a commit it tests, or while its `git bisect start` runs, leaves the worktree on
    the batch branch with no bisect in progress. When the worktree had no changes to tracked files before those steps, the
    cleanup's restore of the branch's tree is forced (and in `bisect`'s cleanup after its steps it
    runs before the `git bisect reset`), so the branch's tree is back even when the stop ended a
    checkout after it had written the other commit's files and index and before it moved HEAD; a
    worktree that had changes to tracked files gets the unforced restore, the two-way merge
-   `git checkout` makes, which keeps them. The batch
+   `git checkout` makes, which keeps them. That merge also keeps what such a stop staged. With
+   changes to tracked files before those steps, a stop that ends one of those checkouts after it has
+   written the other commit's files and index, and before it has moved HEAD, leaves the worktree on
+   the batch branch at its tip with that commit's files staged beside your changes, which stay
+   unstaged, and the tool says its cleanup ran. The next `bisect` runs the command at the tip over
+   those files, so it refuses, saying the command passes at the tip, whenever the command passes on
+   them. To recover, save your changes (`git diff` shows them, unless you had staged some yourself),
+   run `git checkout --force --detach refs/heads/batch/<name>` and then
+   `git symbolic-ref HEAD refs/heads/batch/<name>` in the batch worktree, and apply your changes
+   again. The batch
    worktree is `scripts/batch.py`'s own, and that cleanup runs whenever `bisect` ends, stopped or
    not: when the worktree had no changes to tracked files before those steps, the forced restore
    discards every change the test command made to tracked files there, at the base and at each
