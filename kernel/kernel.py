@@ -80084,9 +80084,15 @@ def _landing():
             "#rerr-x{background:none;border:none;color:#9aa0a6;font-size:16px;line-height:1;cursor:pointer;padding:0 2px}"
             "#rerr-x:hover{color:#fff}"
             "#rerr-list{overflow-y:auto;padding:4px 0;flex:1 1 auto}"
-            # grid rows (the user 2026-07-28): a fixed 96px chip column — wider than the widest chip
-            # ("follow-up failed") — so every message starts at the SAME x, left-aligned past the chips.
-            ".rerr-row{display:grid;grid-template-columns:96px 1fr auto auto;align-items:baseline;"
+            # The chip column's width, declared once for two rules (2026-10-04): the entry rows' chip column just below and the
+            # floor of the filter grid's columns (#rerr-fgrid). Both sit inside the panel, and both read this one property, so a
+            # chip label too wide for it is fixed here once and the two widths cannot drift apart. 96px holds the widest chip,
+            # "follow-up failed", in Inter, the panel's font (the #rerr-fgrid comment below gives the fallback font's width).
+            # tests/test_error_center.py pins that both rules read it and that nothing else declares it.
+            "#rerr-panel{--rerr-chip-col:96px}"
+            # grid rows (the user 2026-07-28): a fixed chip column, wider than the widest chip ("follow-up failed"), so every
+            # message starts at the SAME x, left-aligned past the chips.
+            ".rerr-row{display:grid;grid-template-columns:var(--rerr-chip-col) 1fr auto auto;align-items:baseline;"
             "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11px;line-height:1.45}"
             ".rerr-row .rerr-chip{justify-self:start}"
             ".rerr-row.link{cursor:pointer}"
@@ -80098,13 +80104,26 @@ def _landing():
             ".rerr-del:hover{opacity:1}"
             ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11px}"
             # The per-kind filter bar (the user 2026-07-28): a vertical white "show" label on the left, then
-            # the toggles in an even GRID — 8 kinds over the minimum 2 rows x 4 equal columns, every chip the
-            # same cell width, instead of one ragged wrapping row. The toggles ARE the chips — lit means
-            # shown, dimmed (with a dashed edge, a second cue beyond opacity) means muted.
+            # the toggles in an even GRID (the #rerr-fgrid rule below sets the columns), every chip the same
+            # cell width, instead of one ragged wrapping row. The toggles ARE the chips: lit means shown,
+            # dimmed (with a dashed edge, a second cue beyond opacity) means muted.
             "#rerr-filters{display:flex;align-items:stretch;gap:9px;padding:8px 12px;border-bottom:1px solid #2a2a2a;flex:0 0 auto}"
             ".rerr-flabel{writing-mode:vertical-rl;transform:rotate(180deg);text-align:center;color:#e8eaed;"
             "font-size:9px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;user-select:none}"
-            "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(5,1fr);gap:5px}"   # 9 kinds -> 2 rows (5+4), the minimum
+            # As many equal columns as fit at 96px or more each, never more than five (2026-10-04). The 96px is --rerr-chip-col,
+            # the entry rows' chip column above, sized to hold the widest chip ("follow-up failed", 89 to 95px in the engines the
+            # served test runs), and read here from that one declaration. The other term, 20% - 5px, is a fifth of the grid less
+            # one 5px gap: five such tracks and their four gaps always fit and a sixth never does, so the desktop's 700px panel
+            # keeps exactly the five equal columns it had. Those were repeat(5,1fr), which could not narrow: a 1fr track's minimum
+            # is its chips' min-content width and the chips never wrap, so five columns stayed about 340 to 360px wide. On a
+            # phone, in WebKit and Firefox, they ran past the filter bar's content edge below 414px of viewport, past the panel
+            # below 401px and off the screen below 388 to 389px; in Chromium below 435, 422 and 409px. A phone now gets three
+            # columns from about 370px and two below it (tests/test_log_filter_grid_served.py measures them, and that every chip
+            # still holds its label). The 96px holds the widest chip in Inter, the panel's font. In the system fallback font
+            # (before Inter loads, or where web fonts are blocked) "follow-up failed" needs about 99px: the label still stays
+            # inside its pill and its cell, and eats up to about 3px of the right padding. Raising the two widths to fit it would
+            # move the phone's step from two columns to three from about 370px to about 382px, so they stay at 96px.
+            "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(max(var(--rerr-chip-col),20% - 5px),1fr));gap:5px}"
             ".rerr-fbtn{cursor:pointer;user-select:none;text-align:center}"
             ".rerr-fbtn.off{opacity:0.35;border-style:dashed}"
             ".rerr-fbtn:hover{opacity:1}"

@@ -16,6 +16,7 @@ Synthetic only — no network, no real DOM.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -421,16 +422,20 @@ class ErrorCenterWiring(unittest.TestCase):
         # 'not sent' shares the follow-up-failed red: both mean a message of yours didn't land
         self.assertIn(".rerr-chip.k-nudge,.rerr-chip.k-undelivered{color:#ff6a6a", html)
         # the per-kind filter bar sits between header and list, chips doubling as the toggles: a
-        # vertical white "show" label, then an even 4-column grid (8 kinds -> the minimum 2 rows,
-        # every chip the same cell width) instead of one ragged wrapping row (the user 2026-07-28)
+        # vertical white "show" label, then an even grid, every chip the same cell width, instead of
+        # one ragged wrapping row (the user 2026-07-28)
         self.assertIn("<div id=rerr-filters><span class=rerr-flabel>show</span><div id=rerr-fgrid></div></div>", html)
         self.assertIn("writing-mode:vertical-rl", html)
-        self.assertIn("#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(5,1fr);gap:5px}", html)
+        # ...in as many equal columns as fit at the chip column's width (96px) or more each, five at most, so a phone's
+        # narrower panel takes fewer columns instead of overflowing (2026-10-04); the layout itself is measured in real
+        # engines by tests/test_log_filter_grid_served.py, this pin only guards the rule's text, and
+        # test_the_grid_floor_and_the_entry_rows_chip_column_read_one_property below that the width is declared once
+        self.assertIn("#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(max(var(--rerr-chip-col),20% - 5px),1fr));gap:5px}", html)
         self.assertIn(".rerr-fbtn.off{opacity:0.35;border-style:dashed}", html)
         # the panel is 60% wider, and entry rows are a grid with a fixed chip column so every message
         # left-aligns past the widest chip
         self.assertIn("width:min(700px,94vw)", html)
-        self.assertIn("grid-template-columns:96px 1fr auto auto", html)
+        self.assertIn("grid-template-columns:var(--rerr-chip-col) 1fr auto auto", html)
         # every kind's toggle AND entry chip explains itself (not just show/hide)
         self.assertIn("var DESC={conn:", html)
         self.assertIn("b.title='Show or hide these entries. '+KINDLBL[k]+': '+DESC[k]", html)
@@ -469,6 +474,36 @@ class ErrorCenterWiring(unittest.TestCase):
         self.assertIn("window.__rompNotify=function", html)
         # the mobile bar routes its bell to the same popover
         self.assertIn("errs:function(){try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}", html)
+
+    def test_the_grid_floor_and_the_entry_rows_chip_column_read_one_property(self):
+        """The filter grid's column floor and the entry rows' chip column are one width, declared once as --rerr-chip-col,
+        so a chip label too wide for it is fixed in one place and the two widths cannot drift apart (2026-10-04).
+
+        Reads the served sheet's PARSED rules (served_css.rules, comments stripped), so no comment can satisfy it. It checks:
+        the property is declared once in the whole sheet, on #rerr-panel, the element that holds both the filter bar and the
+        list, at 96px, wider than the widest chip (keyed on the declaring selector's spelling); every declaration that can
+        set a grid's columns (grid-template-columns, and the grid-template and grid shorthands) in a rule whose subject
+        compound carries #rerr-fgrid or .rerr-row is one of exactly two, the rows' and the grid's (keyed on the subject's
+        simple selectors and the property names); and each of the two reads the property through var() and spells no length
+        equal to its value, so a rule that went back to a literal width, or kept one beside the property, fails here by
+        name. The layout the two rules give is measured in real engines by tests/test_log_filter_grid_served.py."""
+        rules = served_css.rules(km._landing())
+        prop = "--rerr-chip-col"
+        declared = [(r.selector, v) for r in rules for p, v in r.decls if p == prop]
+        self.assertEqual(declared, [("#rerr-panel", "96px")],
+                         "the chip column's width is declared once, on the panel that holds the filter bar and the list, "
+                         "at 96px, wider than the widest chip: %r" % (declared,))
+        width = declared[0][1]
+        subjects = ("#rerr-fgrid", ".rerr-row")
+        cols = [(r.selector, p, v) for r in rules
+                if any((served_css.parts(s) or set()) & set(subjects) for s in served_css.subjects(r.selector))
+                for p, v in r.decls if p in ("grid-template-columns", "grid-template", "grid")]
+        self.assertEqual([(sel, p) for sel, p, _ in cols], [(".rerr-row", "grid-template-columns"), ("#rerr-fgrid", "grid-template-columns")],
+                         "exactly two rules set the columns of the entry rows and of the filter grid: %r" % (cols,))
+        for sel, p, v in cols:
+            self.assertIn(prop, served_css.var_names(v), "%s reads its chip width from %s: %s:%s" % (sel, prop, p, v))
+            lengths = re.findall(r"(?<![\w.-])\d*\.?\d+[a-zA-Z%]*", v)
+            self.assertNotIn(width, lengths, "%s spells the chip width %s as a literal beside the property: %s:%s" % (sel, width, p, v))
 
     def test_the_old_top_banners_are_gone(self):
         html = km._landing()
