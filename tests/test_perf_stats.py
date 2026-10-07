@@ -3354,7 +3354,7 @@ class ProcessStatsFallback(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "darwin", "the real Mach reader answers on a Mac only")
     def test_on_a_real_mac_the_task_info_reader_answers_with_a_plausible_current_size(self):
-        # the one case that meets the REAL reader, with no patches (the weekly macOS cell, or a dispatch); setUp
+        # the one case that meets the REAL reader, with no patches (a macOS cell, on a dispatch with its macos input on); setUp
         # cleared the cached handle so the setup runs here too. Every other assertion in this module accepts ps or
         # unavailable and rss_kb >= 0, so a ctypes path failing silently, or a wrong struct layout answering a
         # garbage figure, passed the Mac cell before this (review round 1). The peak is read AFTER the call, so a

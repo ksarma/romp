@@ -238,16 +238,18 @@ so there is no list to write. **gitleaks** covers them, in two places:
   clean report could be false; the remedy is `git replace -d <object>`, or a
   push from a clone that carries none. This is the same hook as the identifier
   scan and both report before it refuses, so one push tells you about both.
-- **CI's secret scan** runs on a push to the fork, of a branch or a tag, whose
-  commit carries `.github/workflows/secret-scan.yml`, and on a push to an open
-  pull request's branch: that workflow runs it on each such push and when a pull
-  request opens or reopens, with no run cancelled by a later one (2026-09-30),
-  and `ci.yml`'s `Secret scan (gitleaks)` job runs the same job on a batch push,
-  the weekly schedule and a manual run (`tests/test_ci_secret_scan.py` holds the
-  two copies equal but for the job's name). Each run scans all of history
-  from a pinned, checksummed binary: the commit its push put on its ref, or for
-  a pull request the merge commit GitHub makes of its head and its base, and
-  every branch and tag the checkout brings. When a push's ref has moved on or
+- **CI's secret scan** runs on every push to the fork, of a branch or a tag,
+  whose commit carries `.github/workflows/secret-scan.yml`: that workflow's push
+  trigger has no branch filter, so every branch push is scanned, once, with no
+  run cancelled by a later one (2026-09-30), and it has no `pull_request`
+  trigger (dropped 2026-10-04, since the private runner bills every run).
+  `ci.yml`'s `Secret scan (gitleaks)` job runs the same job on a batch push, a
+  manual run, and, under `ci.yml`'s smaller shape alone, its weekly schedule
+  (THE SHAPE SWITCH in `ci.yml`'s header), and
+  `tests/test_ci_secret_scan.py` holds the two copies equal but for the job's
+  name. Each run scans all of history from a pinned, checksummed binary: the
+  commit its push put on its ref, and every branch and tag the checkout
+  brings. When a push's ref has moved on or
   been deleted before the run, the checkout fetches that commit by its sha, so
   a commit force-pushed over is still scanned. It needs `fetch-depth: 0`: a
   default checkout scans one commit and reports clean. Its history scan
@@ -257,33 +259,25 @@ so there is no list to write. **gitleaks** covers them, in two places:
   road was verified 2026-09-21 on the pinned scanner and closed by the fork's
   PR 890; the tree's one `.gitattributes` sets `-text`, not `-diff`, so no
   commit here was hidden). GitHub reads a push's workflows from the commit the
-  push puts on its ref, and a pull request's from that merge commit, which
-  carries the base's copy of the file unless the branch edited or deleted it.
-  So a push to an open pull request's branch is scanned twice, once by each
-  trigger, when the branch carries the file, and once when only the base does
-  because the branch never had it (a branch cut from `main` before the file
-  landed, or cut from the project). A pull request from another repository is
-  scanned once for each push, by a `pull_request` run, since its pushes go to
-  that repository, whatever its head carries unless the head deletes the file.
+  push puts on its ref. So a push to an open pull request's branch is scanned
+  once when the branch carries the file, and not by this workflow when the
+  branch never had it (a branch cut from `main` before the file landed, or cut
+  from the project), until the branch merges `main`. A pull request from
+  another repository is not scanned by this workflow, since its pushes go to
+  that repository; its commits are scanned by the next run here whose checkout
+  reaches them, such as a batch push that merges them.
   When a pull request's branch and its base both lack the file, its merge
   commit carries an older `ci.yml`, whose `Secret scan (gitleaks)` job runs on
   pull requests (`main`'s copy before the file landed runs it, and so does the
   project's), though that copy cancels a pull request's run in progress when a
   newer push to it arrives. Three kinds of push start no run: a push to a
-  branch cut before the file landed that has no open pull request, until it
-  merges `main`; a tag on such a commit; and a push whose commit lacks the
-  file because it or an earlier commit on its branch deleted it, since a pull
-  request's merge commit then lacks it as well. A push that edits the file
-  runs its edited copy. The `pull_request` trigger has three limits of
-  GitHub's own: no run while a pull request conflicts with its base (GitHub
-  makes no merge commit until the conflict is resolved); a first-time
-  contributor's pull request from another repository may wait for a maintainer
-  to approve its run; and on a private repository a pull request from another
-  repository runs no workflow unless the repository's setting for fork pull
-  requests allows it. Nor does GitHub start a run for a push or a pull request
-  whose head commit's message carries a skip instruction (`[skip ci]` and the
-  like), for the tags of a push of more than three tags at once, or for a push
-  of more than 5,000 branches at once. A commit only such a push carries is
+  branch cut before the file landed, until it merges `main`, whether or not it
+  has an open pull request; a tag on such a commit; and a push whose commit
+  lacks the file because it or an earlier commit on its branch deleted it. A
+  push that edits the file runs its edited copy. Nor does GitHub start a run
+  for a push whose head commit's message carries a skip instruction (`[skip
+  ci]` and the like), for the tags of a push of more than three tags at once,
+  or for a push of more than 5,000 branches at once. A commit only such a push carries is
   scanned by the next run whose checkout reaches it, and by none if it leaves
   every branch and tag first. The hook does not scan six kinds of push or
   commit, and CI scans each in the run of the push when the push starts one: a
@@ -394,10 +388,14 @@ broad `git add` will sweep up your work). Conventions:
      user's word; `scripts/land.sh` runs `scripts/batch.py land`. Opening a PR against the upstream
      project is a separate decision only the user makes.
   A fork PR runs no `ci.yml` of its own (2026-09-27): its Checks tab shows the secret scan's
-  runs of each push, one for the push when its commit carries `secret-scan.yml` and one for the
-  pull request (2026-09-30; the credentials section above says which pushes start none), the
-  tier-label check (next bullet) after the PR opens or reopens or its labels change, and Tier
-  policy's skipped rows, which evaluate nothing on the fork. GitHub's CI (`ci.yml`) runs once
+  run of each push whose commit carries `secret-scan.yml` (that workflow's push trigger has no
+  branch filter, and it has had no pull request trigger since 2026-10-04; the credentials section
+  above says which pushes start none), the tier-label check (next bullet) after the PR opens or
+  reopens or its labels change, Tier policy's skipped rows, which evaluate nothing on the fork, and,
+  on a PR that touches the site's inputs (`docs/`, `mkdocs.yml`, `overrides/` or `docs.yml` itself),
+  `docs.yml`'s `build` check (a strict `mkdocs build`) and its `deploy` row, which always skips on a
+  pull request.
+  GitHub's CI (`ci.yml`) runs once
   per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
   gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
   sha `scripts/batch.py verify` and `land` read. `land` also requires that batch push's CI

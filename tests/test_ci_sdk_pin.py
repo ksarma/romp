@@ -204,14 +204,22 @@ This module holds five things, and it never skips: a pin that skips reports gree
    tests/test_served_tests_require.py). As read on 2026-09-24: none of these is on ci.yml's Run pytest line (no path,
    no -k, no --ignore) or in its env (no PYTEST_ADDOPTS), and those two are held since round 5's ruling C:
    run_pytest_status (item 1) refuses a word on that line outside RUN_PYTEST_OPTIONS and a key of its merged env
-   outside RUN_PYTEST_ENV; no conftest in the tree sets collect_ignore or collect_ignore_glob or defines a collection
-   hook (tests/conftest.py, the only one, implements two reporting hooks, pytest_make_collect_report and
-   pytest_collectreport, which drop nothing); and the repo has no pytest.ini, .pytest.ini, pytest.toml, .pytest.toml,
+   outside RUN_PYTEST_ENV; no conftest in the tree sets collect_ignore or collect_ignore_glob; and the repo has no
+   pytest.ini, .pytest.ini, pytest.toml, .pytest.toml,
    pyproject.toml, setup.cfg or tox.ini. Of the rest of that read, tests/test_thread_stop_census.py's
    test_the_population_is_what_pytest_collects_under_tests holds pytest.ini, setup.cfg, tox.ini and pyproject.toml
    absent at the repository root and in tests/ itself; nothing pins the conftest read, .pytest.ini, pytest.toml or
-   .pytest.toml, or any of the seven in a directory below those two. The belt's subject is checked against the tree as
-   well (2026-09-21): NeverSkips asserts this file's own basename is in _NEVER_SKIP_FILES as written in
+   .pytest.toml, or any of the seven in a directory below those two.
+   One collection hook does change what a run collects, on purpose (2026-10-04): tests/conftest.py's
+   pytest_ignore_collect, which, when the run's environment names a shard (ROMP_TESTS_SHARD, an entry of
+   RUN_PYTEST_ENV, set by the Run pytest step on the ubuntu-latest cells), skips the test files its rule
+   assigns to the other shards, whole files and nothing within one. So this module runs in one shard of each
+   ubuntu-latest interpreter, and in every macOS cell, which names no shard; tests/test_ci_shards.py holds the
+   shards to a partition of the collected test files, each in one shard, none in two, none left out, which is what
+   keeps InstalledVersion in a run of every interpreter. The conftest's other collection hooks are the two
+   reporting hooks, pytest_make_collect_report and pytest_collectreport, which drop nothing. The belt's subject
+   is checked against the tree as well (2026-09-21): NeverSkips asserts this file's own basename is in
+   _NEVER_SKIP_FILES as written in
    tests/conftest.py (never_skip_files_as_written there: ast.literal_eval over the text, so a tuple spelled any other
    way is reported as such rather than raising), and tests/test_served_tests_require.py, outside this module, asserts
    every entry names a file under tests/, so a rename of this file reds in both and a deletion reds there; before those
@@ -304,7 +312,7 @@ This module holds five things, and it never skips: a pin that skips reports gree
    outside RUN_PYTEST_OPTIONS or keys outside RUN_PYTEST_ENV, and nothing here reads them elsewhere): anyio's plugin is
    absent from that process's plugin set as it is from the box's default run's. pytest-xdist's two plugins, which the
    box's default run loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
-   the command's arguments, so the flag reaches the Linux cells' two workers and the workers of a child run with -n
+   the command's arguments, so the flag reaches the Linux cells' worker and the workers of a child run with -n
    (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag both did); the
    tests gated on pytest-xdist alone, among them tests/test_tempdir_hygiene.py's two that start a pytest child under -n
    2, run in every cell since then. Verified by execution
@@ -2305,10 +2313,11 @@ SERVED_STEP = ("served-pages", "Browser-backed served-page tests (pytest)")
 # every key of its job an entry of the third (RUN_PYTEST_JOB_KEYS, below); every exception lives in one of the three
 RUN_PYTEST_OPTIONS = {
     "-q": "quieter output: it changes what pytest prints, not what it runs or its exit status",
-    # batch 917's worker count, read per cell from its matrix.os expression (matrix_os_texts): 2 on ubuntu-latest, 0 on
-    # every other label; each count is its own entry, keyed on both words, since another count is another run shape
-    "-n 2": ("two pytest-xdist workers (the ubuntu-latest cells, batch 917): the collected tests are split between them, a "
-             "worker that dies fails its test by name, and the exit status is the whole run's"),
+    # the worker count, read per cell from its matrix.os expression (matrix_os_texts): 1 on ubuntu-latest (2 from batch
+    # 917 until the private runner's shape, 2026-10-04), 0 on every other label; each count is its own entry, keyed on both
+    # words, since another count is another run shape
+    "-n 1": ("one pytest-xdist worker (the ubuntu-latest cells, sized for the private runner, 2026-10-04): the collected "
+             "tests run in it, a worker that dies fails its test by name, and the exit status is the whole run's"),
     "-n 0": ("xdist's in-process run (every other cell, batch 917): no workers, the suite runs in pytest's own process as a "
              "serial run does, and the exit status is the run's"),
     "-p no:anyio": ("the flag (FLAG_SPELLING), which blocks anyio's plugin; keyed on both words, since -p with another value "
@@ -2324,6 +2333,11 @@ RUN_PYTEST_ENV = {
              "failure and discards none"),
     "PYTHON_GIL": ("the free-threaded cell's GIL setting (0 there, empty on every other cell): it changes how the interpreter "
                    "runs threads, not what pytest runs or its exit status"),
+    "ROMP_TESTS_SHARD": ("the cell's shard (the matrix's shard value on the ubuntu-latest cells, empty on every other cell; "
+                         "2026-10-04): tests/conftest.py skips the test files its rule assigns to the other shards, "
+                         "so it narrows what one cell runs, whole files only, and the shard cells of an interpreter together "
+                         "run every collected file once (tests/test_ci_shards.py's census holds the partition); a value "
+                         "that names no shard is a usage error, a red cell, and a shard that collected nothing would exit 5"),
 }
 RUN_PYTEST_WRITE_NAMES = ("GITHUB_ENV", "GITHUB_PATH", "BASH_ENV")
 _STATUS_KEY_WHY = {
@@ -2409,7 +2423,7 @@ def run_pytest_status(src):
        spelling, each entry with its reason; any other word is refused: among them flags that run no tests (--collect-only,
        --co, --setup-plan), a path, a -k, -m or --deselect that narrows what runs, and a redirection.
        Parts 2 and 3 read the run text as each cell's shell reads it when its expressions are the shape batch 917's
-       evaluator reads (matrix_os_texts, over command_on in tests/test_ci_pytest_workers.py: the worker count, -n 2 on
+       evaluator reads (matrix_os_texts, over command_on in tests/test_ci_pytest_workers.py: the worker count, -n 1 on
        ubuntu-latest and -n 0 on every other label, each an entry of RUN_PYTEST_OPTIONS); a refusal every cell makes is
        reported once, and one only some cells make names each of them (os_phrase). A run text holding any other
        expression is refused at its line, since the text as written is not the text the shell runs (the landing merge
@@ -3457,11 +3471,11 @@ class PopulationCheckReds(unittest.TestCase):
         # expressions name and once for every other label, each cell's text as its shell reads it
         runs = [l for l in self.src.splitlines() if l.startswith("        run: python -m pytest -q -n ${{ ")]
         self.assertEqual(len(runs), 1, "the Run pytest line moved: re-anchor this case: %r" % runs)
-        live_expr = "${{ matrix.os == 'ubuntu-latest' && '2' || '0' }}"
+        live_expr = "${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}"
         self.assertIn(live_expr, runs[0], "the worker count's expression moved: re-anchor this case")
         rows = [i for i in self.found_live() if (i["job"], i["step"]) == MATRIX_STEP]
         self.assertEqual([(i["os"], shlex.split(i["args"])[:3]) for i in rows],
-                         [("ubuntu-latest", ["-q", "-n", "2"]), (OTHER_OS, ["-q", "-n", "0"])])
+                         [("ubuntu-latest", ["-q", "-n", "1"]), (OTHER_OS, ["-q", "-n", "0"])])
         self.assertEqual(run_pytest_status(self.src)[1], [])
 
         def with_expr(expr):
@@ -3477,22 +3491,25 @@ class PopulationCheckReds(unittest.TestCase):
         for label, expr, want in (
                 ("ubuntu-latest's value starts a comment", "${{ matrix.os == 'ubuntu-latest' && '#' || '0' }}",
                  [("ubuntu-latest", "unlisted"), (OTHER_OS, "ok")]),
-                ("every other label's value starts a comment", "${{ matrix.os == 'ubuntu-latest' && '2' || '#' }}",
+                ("every other label's value starts a comment", "${{ matrix.os == 'ubuntu-latest' && '1' || '#' }}",
                  [("ubuntu-latest", "ok"), (OTHER_OS, "unlisted")]),
                 # the label compared is read whatever it is: macos-latest named, every other label the other value
-                ("another label compared", "${{ matrix.os == 'macos-latest' && '0' || '2' }}",
+                ("another label compared", "${{ matrix.os == 'macos-latest' && '0' || '1' }}",
                  [("macos-latest", "ok"), (OTHER_OS, "ok")])):
             with self.subTest(form=label):
                 src, line = with_expr(expr)
                 self.assertEqual(cells(src), want, [_describe(i) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP])
                 self.assertEqual(yaml_line_forms(src)[1], [], "%s: in the forms the scan accepts" % label)
-        src, line = with_expr("${{ matrix.os == 'macos-latest' && '0' || '2' }}")
+        src, line = with_expr("${{ matrix.os == 'macos-latest' && '0' || '1' }}")
         self.assertEqual(run_pytest_status(src)[1], [], "each count read is an entry of RUN_PYTEST_OPTIONS")
         # run_pytest_status reads each cell's command: a count with no entry, or an operator in a value, is refused on the
         # cell whose text holds it, naming that cell
         for label, expr, whys in (
                 ("a count with no entry on ubuntu-latest", "${{ matrix.os == 'ubuntu-latest' && '3' || '0' }}",
                  ["the argument '-n' on the Run pytest command", "the argument '3' on the Run pytest command"]),
+                # the two workers of 2026-09-25 to 2026-10-04 left the allowlist with the private runner's shape
+                ("the two-worker count on ubuntu-latest", "${{ matrix.os == 'ubuntu-latest' && '2' || '0' }}",
+                 ["the argument '-n' on the Run pytest command", "the argument '2' on the Run pytest command"]),
                 ("an operator in ubuntu-latest's value", "${{ matrix.os == 'ubuntu-latest' && '2 || true' || '0' }}",
                  ["more than its one shell command"])):
             with self.subTest(form=label):
@@ -3562,7 +3579,8 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual(len(runs), 1, "the Run pytest command line moved: re-anchor this case: %r" % runs)
         run = runs[0]
         name, switch = "      - name: Run pytest\n", '          %s: "1"\n' % SWITCH
-        job = "  python:\n    name: Python ${{ matrix.python-version }} (${{ matrix.os }})\n"
+        job = ("  python:\n    name: Python ${{ matrix.python-version }} (${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && "
+               "format(', shard {0}', matrix.shard) || '' }})\n")
 
         def splice(old, new, k=0):
             # `old` replaced by `new` in the live text; the file line of `new`'s k-th line
