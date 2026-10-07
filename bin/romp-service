@@ -282,7 +282,8 @@ _node_runs() {   # $1 a node binary: exit 0 when it can run an empty program fro
     # assignment, the wait included, finds the pid. Before this, the trap expanded an unset n, which under set -u ended the
     # wrapper with the node still running, and a copy that hung in that window outlived the install. n starts empty, so a
     # value from the environment is never taken for the pid; the flag is halt, not the watchdog's stop, so the two checks
-    # differ in text, which the tests match to stop each subshell at its own check.
+    # differ in text: the tests stop the wrapper at its check by matching that text, and the match never fires inside the
+    # watchdog.
     ( n=; halt=
       trap 'halt=1; [[ -z "$n" ]] || { _kill_tree "$n"; wait "$n" 2>/dev/null; exit 143; }' TERM
       "$1" -e '' </dev/null >/dev/null 2>&1 & n=$!

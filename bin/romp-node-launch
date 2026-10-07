@@ -168,8 +168,8 @@ _probe_node() {
     # set ends the wrapper (TERM's default action) before it forks the node. Before this, the trap expanded an unset _n,
     # which under set -u ended the wrapper with the node still running: a copy that hung in that window outlived the
     # launcher, which ran the manager on the system node. _n starts empty, so a value from the environment is never taken
-    # for the pid. The flag is _halt, not the watchdog's _stop, so the two checks differ in text: the tests stop each
-    # subshell at its own check by matching that text.
+    # for the pid. The flag is _halt, not the watchdog's _stop, so the two checks differ in text: the tests stop the
+    # wrapper at its check by matching that text, and the match never fires inside the watchdog.
     ( _n=; _halt=
       trap '_halt=1; [ -z "$_n" ] || { _kill_tree "$_n"; wait "$_n" 2>/dev/null; exit 143; }' TERM
       "$1" -e '' </dev/null >/dev/null 2>&1 & _n=$!
