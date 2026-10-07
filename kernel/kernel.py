@@ -37400,21 +37400,43 @@ def _read_task_output(of):
     return data
 
 
-def _task_outputs_for(reminders, path):
+def _task_outputs_for(reminders, path, index=None):
     """For each task-notification reminder carried by a user turn, the {tool_use_id: {command, output}} its
     chat card expands into: the shell command from the launch record (the mtime-cached bg scan) plus the
     output file's tail. The webview can't read the output file, so the kernel joins it here from the
     AUTHORITATIVE launch↔notification pairing (the user 2026-07-23, who wanted the background-command card to
     open to real detail instead of re-printing its one-line summary). {} when no reminder is a
     task-notification, or nothing readable was found. `reminders` are the INNER XML (outer wrapper already
-    peeled by _split_reminders), so re-wrap before parsing."""
+    peeled by _split_reminders), so re-wrap before parsing.
+
+    `index` is the build's id -> command map. build_session hands one dict to every call it makes, and the
+    first scan that answers with rows fills it, so a build reads the every-task scan once where it read it
+    once per task notification (each notification is its own user turn; one build of a large session read it
+    2,149 times, measured 2026-10-06). It answers what the search over a fresh scan answered: the first row
+    with an id wins (setdefault, as next() took the first match), and a missing id or a row without a command
+    reads ''. An empty answer is not kept, so the next reminder reads again, as the search did: a failed read
+    folds to an empty answer (fold_records keeps nothing then), and so does a transcript with no task rows.
+    The index holds commands, never rows, and lives only as long as the build. The difference from the
+    search: an answer that changes after the index is taken reached the build's later reminders under the
+    search, and here waits for the next build. That takes a change during the build: a record appended that a
+    later reminder needs (a live-tail notification whose launch reaches the transcript mid-build), the
+    transcript rewritten or its fold state replaced, or a later read failing (the search then read no
+    command). None (a direct caller) runs the search per reminder."""
     out = {}
     for r in reminders:
         note = _parse_task_notification("<task-notification>%s</task-notification>" % r)
         tid = (note or {}).get("tool_use_id")
         if not tid:
             continue
-        cmd = next((tk.get("command") or "" for tk in _bg_scan_all_cached(path) if tk.get("id") == tid), "")
+        if index is None:
+            cmd = next((tk.get("command") or "" for tk in _bg_scan_all_cached(path) if tk.get("id") == tid), "")
+        else:
+            if not index:
+                cmds = {}
+                for tk in _bg_scan_all_cached(path):
+                    cmds.setdefault(tk.get("id"), tk.get("command") or "")
+                index.update(cmds)
+            cmd = index.get(tid, "")
         tail = _read_task_output(note.get("output_file"))
         if cmd or tail:
             out[tid] = {"command": cmd, "output": tail}
@@ -47316,6 +47338,7 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
     # rollback was consumed (the user 2026-08-03).
     _landed_uuids = set(parsed.get("landedTextUuids") or ())
     _pl_memo = {}   # per-BUILD-pass cache for _path_links: one repo listing serves every message here
+    _task_cmds = {}  # per-BUILD id -> command index for _task_outputs_for: one every-task scan serves every notification
     # ── THE FOLD DECISION (issue 903; see _chat_fold at module level) ──────────────────────────
     # `_fk` is the first turn this build reshapes; turns before it come from the cached prefix. The
     # last turn is never cached (live atoms, overlays). Every gate names the exact input whose change
@@ -47761,7 +47784,7 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
                             if pp:
                                 ev["pathPins"] = pp     # mention-time snapshots: this message's embeds keep these bytes
                             if reminders:                # join each task-notification to its command + output tail
-                                to = _task_outputs_for(reminders, sess["path"])
+                                to = _task_outputs_for(reminders, sess["path"], _task_cmds)
                                 if to:
                                     ev["taskOutputs"] = to
                             # The CLI's own stop record ("[Request interrupted by user]" / "… for tool use]")

@@ -822,6 +822,143 @@ class TaskOutputs(_Fold):
         self.equiv("output vanished")
 
 
+def bgline(t, uuid, parent, tid, cmd=None, desc="run the notes-api checks"):
+    """An assistant record launching a background Bash command; no `command` key when cmd is None."""
+    inp = {"run_in_background": True, "description": desc}
+    if cmd is not None:
+        inp["command"] = cmd
+    return {"type": "assistant", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "model": "claude-sonnet-4", "stop_reason": "tool_use",
+                        "content": [{"type": "tool_use", "id": tid, "name": "Bash", "input": inp}]},
+            "cwd": "/tmp/notes-api", "version": "2.1.0", "gitBranch": "main"}
+
+
+def task_note(tid, outfile=""):
+    return ("<task-notification>\n<tool-use-id>%s</tool-use-id>\n<output-file>%s</output-file>\n"
+            "<status>completed</status>\n<summary>Background command finished</summary>\n</task-notification>"
+            % (tid, outfile))
+
+
+class TaskOutputsOneScanPerBuild(_Fold):
+    """build_session joins each task notification to its launch command through ONE id -> command index per
+    build, taken from the every-task scan at the build's first notification, where main ran that scan once per
+    notification (each notification is its own user turn; one build of a large session read it 2,149 times).
+    The payload must be what main's per-reminder search built: `build(main_path=True)` drops the build's index
+    so every reminder takes that search, and the two whole payloads are compared, beside expected outputs
+    written out from the fixture. Two scan counts per build: the every-task scans made inside
+    _task_outputs_for (one per build: the index is taken there, at the first notification), and the build's
+    total over every caller, which must fall by exactly the scans saved inside, since the two builds differ
+    only in what _task_outputs_for is handed."""
+
+    A, B, C, D = "toolu_bgx_a", "toolu_bgx_b", "toolu_bgx_c", "toolu_bgx_d"
+
+    def launch_turn(self, launches):
+        s = self.s
+        u = s.uid(); recs = [uline(s.tick(), "start the background checks for notes-api", u, s.last)]
+        prev = u
+        for tid, cmd in launches:
+            a = s.uid(); recs.append(bgline(s.tick(), a, prev, tid, cmd))
+            r = s.uid(); recs.append(trline(s.tick(), tid, r, a, content="Command running in background"))
+            prev = r
+        b = s.uid(); recs.append(aline(s.tick(), "Started.", b, prev)); s.last = b
+        s.append(recs)
+
+    def note_turn(self, *notes):
+        s = self.s
+        u = s.uid(); a = s.uid()
+        s.append([uline(s.tick(), "\n".join(notes), u, s.last), aline(s.tick(), "Noted.", a, u)])
+        s.last = a
+
+    def outfile(self, key):
+        p = self.s.cdir / (key + ".out")
+        p.write_text("%s output\n" % key)
+        return p
+
+    @staticmethod
+    def outputs(m):
+        return [e["taskOutputs"] for e in m["events"] if e.get("taskOutputs")]
+
+    def build(self, main_path=False, fold=False):
+        """One build, returned with (scans inside _task_outputs_for, scans over the whole build): a full build
+        (the fold cleared) unless `fold`. main_path drops the build's index, so every reminder runs main's
+        search."""
+        inside, scans, total = [0], [0], [0]
+        orig_to, orig_scan = km._task_outputs_for, km._bg_scan_all_cached
+        def to(reminders, path, *rest, **kw):
+            inside[0] += 1
+            try:
+                return orig_to(reminders, path) if main_path else orig_to(reminders, path, *rest, **kw)
+            finally:
+                inside[0] -= 1
+        def scan(path):
+            total[0] += 1
+            scans[0] += 1 if inside[0] else 0
+            return orig_scan(path)
+        km._task_outputs_for, km._bg_scan_all_cached = to, scan
+        try:
+            if not fold:
+                km._chat_fold.clear()
+            m = self.s.build()
+        finally:
+            km._task_outputs_for, km._bg_scan_all_cached = orig_to, orig_scan
+        return m, (scans[0], total[0])
+
+    def test_one_scan_per_build_and_the_payload_main_built(self):
+        A, B, C = self.A, self.B, self.C
+        oa, ob, oc, ou = (self.outfile(k) for k in ("a", "b", "c", "u"))
+        self.launch_turn([(A, "uv run pytest -q tests/test_search.py"), (B, "npm run build"), (C, None)])
+        self.launch_turn([(A, "uv run pytest -q --lf")])      # A's id launched again: the scan keeps the first row
+        self.note_turn(task_note(A, oa))
+        self.note_turn(task_note(B, ob))
+        self.note_turn(task_note(C, oc), task_note("toolu_bgx_unknown", ou))   # two notifications in one record
+        self.note_turn(task_note(A, oa))                       # A's id notified a second time
+        self.note_turn(task_note("toolu_bgx_silent"))          # an unknown id with no output file: no entry
+        self.s.append(self.s.turn(9))
+        m, scans = self.build()
+        self.assertEqual(self.outputs(m), [
+            {A: {"command": "uv run pytest -q tests/test_search.py", "output": "a output"}},
+            {B: {"command": "npm run build", "output": "b output"}},
+            {C: {"command": "", "output": "c output"}, "toolu_bgx_unknown": {"command": "", "output": "u output"}},
+            {A: {"command": "uv run pytest -q tests/test_search.py", "output": "a output"}}])
+        self.assertEqual(scans[0], 1, "six task notifications in one build read the every-task scan once")
+        m0, scans0 = self.build(main_path=True)
+        self.assertEqual(scans0[0], 6, "main's search scans once per task notification")
+        self.assertEqual(scans0[1] - scans[1], 5, "the build's total falls by the five scans saved, and no more")
+        self.assertEqual(_dump(m), _dump(m0), "the build's payload is the one main's per-reminder search built")
+
+    def test_no_task_notification_reads_no_scan(self):
+        s = self.s
+        self.grow(2)
+        u = s.uid(); a = s.uid()
+        s.append([uline(s.tick(), "<system-reminder>notes-api uses uv</system-reminder>\ncheck the search route",
+                        u, s.last), aline(s.tick(), "Checked.", a, u)]); s.last = a
+        m, scans = self.build()
+        m0, scans0 = self.build(main_path=True)
+        self.assertEqual((self.outputs(m), scans[0], scans0[0]), ([], 0, 0))
+        self.assertEqual(scans[1], scans0[1], "with no task notification the build's scans are main's, one for one")
+        self.assertEqual(_dump(m), _dump(m0))
+
+    def test_a_task_added_between_two_builds_is_seen_by_the_second(self):
+        A, D = self.A, self.D
+        oa, od = self.outfile("a"), self.outfile("d")
+        self.launch_turn([(A, "uv run pytest -q")])
+        self.note_turn(task_note(A, oa))
+        self.s.append(self.s.turn(1))
+        m1, _ = self.build(fold=True)
+        self.assertEqual(self.outputs(m1), [{A: {"command": "uv run pytest -q", "output": "a output"}}])
+        self.launch_turn([(D, "npm run lint")])
+        self.note_turn(task_note(D, od))
+        self.s.append(self.s.turn(2))
+        m2, scans = self.build(fold=True)                      # the live path: the sealed prefix folds
+        want = [{A: {"command": "uv run pytest -q", "output": "a output"}},
+                {D: {"command": "npm run lint", "output": "d output"}}]
+        self.assertEqual(self.outputs(m2), want, "the index is the build's own: a task launched since the last "
+                                                 "build is in the next build's index")
+        self.assertEqual(scans[0], 1, "the second build reshapes D's notification turn and reads the scan once")
+        m0, _ = self.build(main_path=True)
+        self.assertEqual(self.outputs(m0), want)
+
+
 class DeepReplay(_Fold):
     def test_record_by_record_fold_on_fold_equals_a_full_build_at_every_step(self):
         # the folding kernel is never reset (fold on fold, deep chains); the reference kernel clears its

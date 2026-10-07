@@ -764,5 +764,126 @@ class TaskOutputsForCard(unittest.TestCase):
         self.assertIn("second, longer content", b, "a changed file re-reads, never a stale cache hit")
 
 
+class TaskOutputsIndexPerBuild(unittest.TestCase):
+    """build_session hands ONE dict to every _task_outputs_for call of a build (each task notification is its
+    own user turn, so an index per call would save nothing), and the first scan of the build that answers with
+    rows fills it with id -> command. It must answer what the linear search over a fresh scan answered: the
+    FIRST row with an id wins, a missing id reads '', a row with no command reads '', and a caller passing no
+    index scans per reminder as before. The scan is stubbed with a scripted answer per call, so each test
+    states exactly what every read returned. Synthetic ids and commands only."""
+
+    A, B, C = "toolu_idx_a", "toolu_idx_b", "toolu_idx_c"
+
+    def _script(self, answers):
+        """Stub the every-task scan: call k returns a fresh copy of answers[k] (the last answer repeats)."""
+        calls = []
+        orig = km._bg_scan_all_cached
+        def scan(path):
+            calls.append(path)
+            return [dict(r) for r in answers[min(len(calls), len(answers)) - 1]]
+        km._bg_scan_all_cached = scan
+        self.addCleanup(setattr, km, "_bg_scan_all_cached", orig)
+        return calls
+
+    def _rem(self, tid, outfile=""):
+        # the INNER notification XML, as _split_reminders hands it to build_session
+        return ("<tool-use-id>%s</tool-use-id>\n<output-file>%s</output-file>\n<status>completed</status>\n"
+                "<summary>done</summary>" % (tid, outfile))
+
+    def _outfile(self, text):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        p = os.path.join(td.name, "task.output")
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def test_one_scan_answers_every_reminder_of_the_build(self):
+        rows = [{"id": self.A, "command": "uv run pytest -q"}, {"id": self.B, "command": "npm run build"},
+                {"id": self.C, "command": "make lint"}]
+        calls = self._script([rows])
+        idx = {}
+        got = [km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx),
+               km._task_outputs_for([self._rem(self.B), self._rem(self.C)], "/t.jsonl", idx),
+               km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx)]
+        self.assertEqual(len(calls), 1, "three calls sharing one index read the scan once, at the first reminder")
+        del calls[:]
+        want = [km._task_outputs_for([self._rem(self.A)], "/t.jsonl"),
+                km._task_outputs_for([self._rem(self.B), self._rem(self.C)], "/t.jsonl"),
+                km._task_outputs_for([self._rem(self.A)], "/t.jsonl")]
+        self.assertEqual(len(calls), 4, "a caller passing no index scans once per reminder, as before")
+        self.assertEqual(got, want, "the index answers every reminder as the per-reminder search did")
+        self.assertEqual(got[1], {self.B: {"command": "npm run build", "output": ""},
+                                  self.C: {"command": "make lint", "output": ""}})
+
+    def test_the_first_row_with_an_id_wins_as_the_search_did(self):
+        self._script([[{"id": self.A, "command": "first launch"}, {"id": self.A, "command": "replayed launch"}]])
+        self.assertEqual(km._task_outputs_for([self._rem(self.A)], "/t.jsonl", {}),
+                         {self.A: {"command": "first launch", "output": ""}})
+        self.assertEqual(km._task_outputs_for([self._rem(self.A)], "/t.jsonl"),
+                         {self.A: {"command": "first launch", "output": ""}}, "next() took the first match too")
+
+    def test_a_missing_id_and_a_row_without_a_command_read_empty(self):
+        out = self._outfile("tail line\n")
+        self._script([[{"id": self.A}, {"id": self.B, "command": None}, {"id": self.C, "command": "make lint"}]])
+        rems = [self._rem(self.A, out), self._rem(self.B, out), self._rem("toolu_idx_unknown", out),
+                self._rem("toolu_idx_unknown_no_tail")]
+        want = {self.A: {"command": "", "output": "tail line"}, self.B: {"command": "", "output": "tail line"},
+                "toolu_idx_unknown": {"command": "", "output": "tail line"}}
+        self.assertEqual(km._task_outputs_for(rems, "/t.jsonl", {}), want,
+                         "no command and no row both read '', and a reminder with neither a command nor a tail adds nothing")
+        self.assertEqual(km._task_outputs_for(rems, "/t.jsonl"), want)
+
+    def test_no_task_notification_reads_no_scan(self):
+        calls = self._script([[{"id": self.A, "command": "uv run pytest -q"}]])
+        idx = {}
+        self.assertEqual(km._task_outputs_for(["Your context is getting full.", "<tool-use-id></tool-use-id>"],
+                                              "/t.jsonl", idx), {})
+        self.assertEqual((calls, idx), ([], {}), "the index is taken at the first task notification, never earlier")
+
+    def test_an_empty_answer_is_not_kept_so_the_next_reminder_reads_again(self):
+        # a read that fails folds to an empty answer (fold_records' "fail" path keeps nothing), and so does a
+        # transcript with no task rows; main read again at the next reminder, and so does the index
+        rows = [{"id": self.A, "command": "uv run pytest -q"}]
+        calls = self._script([[], rows])
+        idx = {}
+        got = [km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx),
+               km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx),
+               km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx)]
+        self.assertEqual(len(calls), 2, "the empty first answer is read again at the second reminder, then kept")
+        self.assertEqual(got, [{}, {self.A: {"command": "uv run pytest -q", "output": ""}},
+                               {self.A: {"command": "uv run pytest -q", "output": ""}}])
+        self._script([[], rows])
+        self.assertEqual([km._task_outputs_for([self._rem(self.A)], "/t.jsonl") for _ in range(3)], got,
+                         "the same reads through the per-reminder search answer the same")
+
+    def test_the_index_is_the_builds_first_answer_with_rows_and_the_next_build_reads_again(self):
+        # the residual, pinned: main re-read the scan at every reminder, so an answer that changed mid-build
+        # (the transcript rewritten, or a later read failing) reached the later reminders; the index serves the
+        # build's first answer with rows to all of them, and the next build's index reads afresh
+        v1 = [{"id": self.A, "command": "first answer"}]
+        v2 = [{"id": self.A, "command": "second answer"}]
+        self._script([v1, v2])
+        idx = {}
+        self.assertEqual([km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx)[self.A]["command"]
+                          for _ in range(2)], ["first answer", "first answer"])
+        self.assertEqual(km._task_outputs_for([self._rem(self.A)], "/t.jsonl", {})[self.A]["command"],
+                         "second answer", "a fresh index (the next build) reads the scan again")
+        self._script([v1, v2])
+        self.assertEqual([km._task_outputs_for([self._rem(self.A)], "/t.jsonl")[self.A]["command"]
+                          for _ in range(2)], ["first answer", "second answer"], "main's per-reminder reads")
+
+    def test_the_index_holds_commands_not_rows_and_each_call_answers_fresh_dicts(self):
+        self._script([[{"id": self.A, "command": "uv run pytest -q", "status": "completed"}]])
+        idx = {}
+        a = km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx)
+        b = km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx)
+        self.assertEqual(idx, {self.A: "uv run pytest -q"}, "id -> command only: no scan row is shared across reminders")
+        a[self.A]["command"] = "scribbled by a caller"
+        self.assertEqual(b[self.A]["command"], "uv run pytest -q", "one reminder's answer never reaches another's")
+        self.assertEqual(km._task_outputs_for([self._rem(self.A)], "/t.jsonl", idx)[self.A]["command"],
+                         "uv run pytest -q")
+
+
 if __name__ == "__main__":
     unittest.main()
