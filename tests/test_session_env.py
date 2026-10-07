@@ -300,7 +300,9 @@ ROWS = [
 # 126 to 128; neither env-tainted, so content rows stay 13), and the slice's upstream side added 53 kernel/kernel.py
 # functions, named on the functions entry: doors 476 to 478, functions 3409 to 3462, and no other entry moved; re-derived
 # at fold 4 slice 2's merge of slice 1's merged head 2ce23298b, whose side brought fork PR 947's kernel instance lock and
-# its 16 kernel/kernel.py functions, named on the functions entry: functions 3462 to 3478, and no other entry moved). Until
+# its 16 kernel/kernel.py functions, named on the functions entry: functions 3462 to 3478, and no other entry moved;
+# re-derived on the gc threshold boot step's branch at its merge of fork main, whose side added four kernel/kernel.py
+# functions, named on the functions entry: functions 3478 to 3482, and no other entry moved). Until
 # round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
@@ -335,7 +337,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3478,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3482,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -414,7 +416,11 @@ COUNTS = {
     #                                df34f7f25, batch 2026-10-03a) as 3478, both sides' functions kept (the slice's 53 over 3409,
     #                                and the lock's 16 named above; kernel/kernel.py 2670 to 2686), the census's own derivation on
     #                                the merged tree; sdk_backend.py (764) and credentials.py did not move, and no other entry
-    #                                moved
+    #                                moved; then on the gc threshold boot step's branch at its merge of fork main as 3482, over
+    #                                main's 3478: the step adds _gc_threshold_say, _gc_gen2_threshold_reason,
+    #                                _gc_gen2_threshold_knob and _raise_gc_gen2_threshold to kernel/kernel.py (2686 to 2690), the
+    #                                census's own derivation on the merged tree; sdk_backend.py (764) and credentials.py did not
+    #                                move, no lambda, and no other entry moved
 }
 CALLS_BY_KIND = {"self": 210, "typed": 128, "bound-self": 7, "param": 36, "alias": 5}   # the 386's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
