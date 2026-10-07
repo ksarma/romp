@@ -173,12 +173,13 @@ def _seen_popen():
 # raised, inside the test's own process. argv: the credentials.py to load, the road, the command, the bound, the file
 # the helper's processes write 'role pid' lines to, and how many lines mean the helper is up. The road says what the
 # child injects: an exception raised from the run's communicate (during the wait, once the helper is up, or during the
-# drain), a SIGINT to its own main thread (once the helper is up, once the shell has exited, or 0.3 s into the drain,
-# from a timer the os.killpg spy starts), a KeyboardInterrupt raised from the os.killpg spy (before the signal, or
+# drain), a SIGINT to its own main thread (once the helper is up, or once the shell has exited, and in either case once
+# the main thread waits in the run's communicate, at its selector's first select; or 0.3 s into the drain, from a timer
+# the os.killpg spy starts), a KeyboardInterrupt raised from the os.killpg spy (before the signal, or
 # just after it), from the fallback p.kill(), from Popen.__enter__ (once the helper is up) or from Popen.__exit__'s
 # wait, or, from the os.killpg spy before the signal, a BaseException of the test's own or a PermissionError (with the
-# fallback's os.kill of the shell refused as well). A road named sigint-then-... sends the SIGINT once the helper is up
-# and then raises a second KeyboardInterrupt from the os.killpg spy. It keeps the run's Popen and prints what it saw
+# fallback's os.kill of the shell refused as well). A road named sigint-then-... sends the SIGINT as sigint-wait-running
+# does and then raises a second KeyboardInterrupt from the os.killpg spy. It keeps the run's Popen and prints what it saw
 # as JSON, with the shell's /proc state read right after the call: the child is the shell's parent, so a shell the
 # call did not reap is still there, a zombie or running, and one it reaped is gone.
 _EXIT_ROAD_CHILD = r'''
@@ -191,11 +192,26 @@ spec = importlib.util.spec_from_file_location("romp_credentials_exit_road_child"
 cred = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cred)
 road, cmd, bound, pids, up = sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], int(sys.argv[6])
-seen, started, killpg_calls, sent, refused = [], threading.Event(), [], [], []
+seen, started, in_select, killpg_calls, sent, refused = [], threading.Event(), threading.Event(), [], [], []
 
 
 class Cut(BaseException):
     pass
+
+
+class KeyedSelector(subprocess._PopenSelector):
+    # The event each SIGINT meant for the run's wait keys on: the main thread inside communicate, at its selector's
+    # select. The event is set before the select is made, so a SIGINT sent once it is set lands inside communicate's
+    # try, and communicate's own KeyboardInterrupt handler meets it. Keyed on the pids the helper wrote, a SIGINT could
+    # land inside Popen() before the block under CPU contention; keyed on an event set when communicate is called, in
+    # communicate before its try.
+    def select(self, timeout=None):
+        if threading.current_thread() is threading.main_thread():
+            in_select.set()
+        return super().select(timeout)
+
+
+subprocess._PopenSelector = KeyedSelector
 
 
 def helper_up():
@@ -282,26 +298,26 @@ os.killpg = killpg
 os.kill = kill
 
 
-def interrupt_once_up():
-    if helper_up():
+def interrupt_once_up_and_in_the_wait():
+    if helper_up() and in_select.wait(10):
         interrupt()
 
 
-def interrupt_once_the_shell_has_exited():
+def interrupt_once_the_shell_has_exited_and_in_the_wait():
     if not started.wait(10):
         return
     fd = os.pidfd_open(seen[0].pid)
     try:
-        if select.select([fd], [], [], 10)[0]:
+        if select.select([fd], [], [], 10)[0] and in_select.wait(10):
             interrupt()
     finally:
         os.close(fd)
 
 
 if road in ("sigint-wait-running", "sigint-then-ki-after-kill", "sigint-then-ki-at-kill"):
-    threading.Thread(target=interrupt_once_up, daemon=True).start()
+    threading.Thread(target=interrupt_once_up_and_in_the_wait, daemon=True).start()
 elif road == "sigint-wait-exited":
-    threading.Thread(target=interrupt_once_the_shell_has_exited, daemon=True).start()
+    threading.Thread(target=interrupt_once_the_shell_has_exited_and_in_the_wait, daemon=True).start()
 t0 = time.monotonic()
 try:
     outcome = "returned: " + cred.run_helper(cmd, timeout_s=bound)
