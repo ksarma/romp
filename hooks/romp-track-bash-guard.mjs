@@ -5297,6 +5297,32 @@ const ruleHasRedir = (seg) => (seg.redirects && seg.redirects.length) || (seg.st
 // a word's quote-removed literal head text, or null: literal and built only from the command's own text (no expansion mark x, no home mark h), so a quoted or
 // escaped spelling of a builtin head reads as the name the shell still runs it under (clause (c) of RULE S)
 const ruleLiteralHead = (w) => (w && w.literal && w.text && !w.text.includes('\0') && (!w.marks || !/[xh]/.test(w.marks))) ? w.text : null;
+// Clause (c) of RULE S (fork PR 975's round 2, R1; the safe side BY CONSTRUCTION): a command passes clause (c) only when its resolved command head,
+// after peeling the wrappers the walk recognizes, is a word the guard can READ as a literal and THE NAME-RUN AXIS calls not-a-changer. commandOf is
+// the peel the walk uses, and it reads a head by its QUOTE-REMOVED text, so a quoted or escaped wrapper (`\builtin`, `'builtin'`) peels as `builtin`
+// does, and the head behind it is reached. Three shapes FAIL, each giving the whole command fork main's reading for its mentions:
+//  - a head the guard cannot read (a variable, any expansion, a substitution, the home): `$x -fu g`, `${x}set -fu g`, `builtin $x -fu g`, and the
+//    opaque source head `c=.; "$c" file` (ruleLiteralHead null);
+//  - a head THE NAME-RUN AXIS classifies as a changer (`typeset`/`declare`/`readonly -fu`, `autoload`, `enable`, `alias`, `unalias`, ... ): plain,
+//    quoted, escaped, or behind a peelable wrapper (`builtin typeset -fu g`, `command typeset ...`, `'builtin' typeset ...`);
+//  - a head run by a word that runs a FOLLOWING command in this shell but is no peelable wrapper (zsh's `repeat <count> cmd`), whose inner command
+//    is vetted the same way (RULE_C_INNER_HEADS).
+// A wrapper's unread option, an opaque split (env -S, sudo -e) and a shell string (flock -c) run a CHILD, which cannot change this shell's name-runs,
+// so commandOf's {unknown}/{opaque}/{script} returns (no `.name`) need no clause-(c) vet. A command substitution, a process substitution and a
+// subshell are judged by ruleSafeOf's own recursion; they too cannot change this shell's names.
+const RULE_C_INNER_HEADS = new Set(['repeat']);   // a word that, in command position, runs a following command in THIS shell within the one segment and is no peelable wrapper; its inner head is vetted (coproc runs in a coprocess subshell, which cannot change this shell's name-runs, so it is not here)
+function ruleHeadWordsUnsafe(words) {
+  const cmd = commandOf(words);
+  if (!cmd) return false;   // no head
+  if (cmd.unknown) { const spec = WRAPPER_OPT[cmd.unknown.wrapper]; return !spec || !spec.external; }   // a wrapper carrying an option or a filled word the guard cannot read: unsafe when the wrapper runs the command in THIS shell (command/builtin/exec/time, zsh's modifiers), safe when it runs a child (nohup, setsid and the external wrappers: item 3's filled-word launch keeps fork main's reading)
+  if (!cmd.name) return false;   // {opaque} (env -S, sudo -e) and {script} (flock -c) run a child shell; a bare wrapper with nothing after it
+  const headWord = words[words.length - cmd.args.length - 1];
+  if (!ruleLiteralHead(headWord)) return true;   // a head the guard cannot read
+  if (NAME_RUN_CHANGERS.has(cmd.name)) return true;   // a head THE NAME-RUN AXIS calls a changer
+  if (RULE_C_INNER_HEADS.has(cmd.name)) return ruleHeadWordsUnsafe(words.slice(words.length - cmd.args.length + 1));   // `repeat <count> cmd`: past the count word, vet the inner command
+  return false;
+}
+const ruleHeadUnsafe = (seg) => ruleHeadWordsUnsafe(seg.words);
 // clause (b) and the SECOND CENSUS AXIS applied to a segment's words and head
 function ruleSegUnsafe(seg) {
   if (seg.paren) return false;   // a `(` or `)` subshell marker: safe; its body segments are judged on their own
@@ -5305,10 +5331,7 @@ function ruleSegUnsafe(seg) {
   if (seg.op === '(' && seg.words.length) return true;   // (a) an unquoted `(` glued to a word: function definition, array assignment, extglob or glob qualifier
   if (compoundHeadOf(seg.words) === 'function') return true;   // (a) a `function` keyword definition
   if (ruleHasRedir(seg) && seg.words.some((w) => RULE_S_BRACEVAR.test(w.text))) return true;   // (a) a {NAME} descriptor redirection
-  // (c) a head that may change what a name runs, read by its QUOTE-REMOVED literal text at the peel position and as spelled: quoting or escaping a builtin's
-  // name (`'typeset' -fu g`, `"declare" -fu g`, `\typeset -fu g`) removes the quotes and still runs the builtin (quoting suppresses alias and reserved-word
-  // recognition, not builtin lookup), so plainWord alone (unquoted) let these through; a word built from an expansion (mark x) or the home (mark h) is no literal head
-  if ([seg.words[peelIndex(seg.words)], seg.words[rawHeadIndexOf(seg.words)]].some((w) => ruleLiteralHead(w) && NAME_RUN_CHANGERS.has(ruleLiteralHead(w)))) return true;
+  if (ruleHeadUnsafe(seg)) return true;   // (c) the resolved command head is one the guard cannot read, a changer, or a word that runs a hidden inner command in this shell (ruleHeadUnsafe)
   const words = [...(seg.words || []), ...((seg.redirects || []).map((r) => r.target).filter(Boolean)), ...((seg.stdin || []).filter(Boolean)), ...((seg.fedWords || []))];
   for (const w of words) {
     if (!ruleWordSafe(w)) return true;   // (a) an unsafe expansion in a word

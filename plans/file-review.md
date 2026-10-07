@@ -5224,14 +5224,26 @@ document stands on its own, each with the reasoning it was given.
     checked BOTH ways by THE COMMAND TABLES' census (fork PR 975's round 2, R1 as ruled): bash's associative arrays that
     map names to commands (BASH_ALIASES, BASH_CMDS), and zsh's command-table parameters from zsh/parameter kept to the
     writable associations (functions, aliases, galiases, saliases, commands and their dis_ twins; reswords and builtins are
-    read-only). Clause (c) THE NAME-RUN AXIS: no head a second census axis classifies as may-change-what-a-name-runs,
-    OPTION-INSENSITIVE, in two families. The DEFINE/CHANGE family, whose own option forms act on a function, alias, builtin
-    or hash entry (autoload, functions, typeset, declare, readonly, enable, disable, alias, unalias, hash, rehash, unhash,
-    unfunction, zmodload; NAME_RUN_DEFINE). And the RUN-TEXT family, which runs a text, a command or a function in this
-    shell that may itself define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle,
-    zstyle; NAME_RUN_TEXT) -- exactly the set THE ASSIGNING HEAD's function clause carries as FUNCTION_SOURCES, so a LITERAL
-    head of one now gives the whole command fork main's reading here (NAME_RUN_AXIS, NAME_RUN_CHANGERS). It closes the
-    autoload, typeset -fu, declare -fu and functions -u roads and the literal eval/source/`.`/trap roads too. THE CENSUS
+    read-only). Clause (c) THE NAME-RUN AXIS, built BY CONSTRUCTION (fork PR 975's round 2, R1
+    as closed, 2026-10-07; ruleHeadUnsafe): a command is positively safe only when its RESOLVED command head, after the
+    wrappers the walk peels (commandOf, which reads a head by its quote-removed text, so a quoted or escaped wrapper peels as
+    a bare one does), is a head the guard READS as a literal that a second census axis calls not-a-changer. Three shapes give
+    the whole command fork main's reading. A head the guard cannot read, a variable, an expansion or a substitution
+    (ruleLiteralHead null): `$x -fu g`, `${x}set -fu g`, a variable head behind an in-shell wrapper `builtin $x -fu g`, and
+    the opaque source or eval head `c=.; "$c" file`. A head the axis classifies as a changer, OPTION-INSENSITIVE, in two
+    families: the DEFINE/CHANGE family, whose own option forms act on a function, alias, builtin or hash entry (autoload,
+    functions, typeset, declare, readonly, enable, disable, alias, unalias, hash, rehash, unhash, unfunction, zmodload;
+    NAME_RUN_DEFINE); and the RUN-TEXT family, which runs a text, a command or a function in this shell that may itself
+    define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle, zstyle; NAME_RUN_TEXT), a
+    set THE ASSIGNING HEAD's function clause carries within FUNCTION_SOURCES; the changer is caught plain, quoted
+    (`'typeset'`), escaped (`\typeset`) and behind an in-shell wrapper (`builtin typeset -fu g`, `\builtin typeset -fu g`,
+    `'builtin' typeset -fu g`; NAME_RUN_AXIS, NAME_RUN_CHANGERS). And a head run by a word that runs a FOLLOWING command in
+    this shell but is no peelable wrapper, zsh's `repeat <count> cmd`, whose count is peeled and whose inner command is
+    vetted the same way (RULE_C_INNER_HEADS). An external wrapper (nohup, setsid, env, nice, sudo, timeout, ...) runs a
+    CHILD, which cannot change this shell's name-runs, so a changer or a filled word behind one defines nothing here and is
+    not refused (the filled-word follow-up keeps its reading; `coproc typeset -fu g`, a coprocess subshell, stays allowed).
+    So clause (c) closes the autoload, typeset -fu, declare -fu and functions -u roads, the literal eval/source/`.`/trap
+    roads, the variable-head and hidden-head family, and the opaque-source head. THE CENSUS
     PREMISE: the heads rule S reads are the installed shells' builtins and reserved words and the command's own definitions;
     a function or an alias from the user's environment is outside the guard's reading at the base and at the head alike (a
     child session's environment is not the command). THE NAME-RUN AXIS's census asks the same population as THE ASSIGNING
@@ -5244,24 +5256,31 @@ document stands on its own, each with the reasoning it was given.
     redirection kind the clause reads beside the word (an output duplication, an input duplication, a here-string and a
     here-document: AS8-ruleS-bracevar-outdup, -indup, -herestring, -heredoc, each red where its own kind is not read),
     AS8-ruleS-bracevar-path (a `{PATH}>` before a made name) and the control AS8-ruleS-ctl-noredir; clause (b)
-    AS8-ruleS-table-bash-ba and AS8-ruleS-table-bash-split; clause (c) AS8-ruleS-nameRun-typeset-fu and
-    AS8-ruleS-nameRun-declare-fu, and the head read at both places a may-change word stands, behind an in-shell wrapper
-    at the peel index (AS8-ruleS-nameRun-builtin-typeset-fu) and after a reserved word at the raw head index
-    (AS8-ruleS-nameRun-if-typeset-fu), each red where the clause reads the other place alone, each refused now where the
-    pre-round-2 head allowed it while bash or zsh wrote. The cost, on the restricted side:
+    AS8-ruleS-table-bash-ba and AS8-ruleS-table-bash-split; clause (c) AS8-ruleS-nameRun-typeset-fu,
+    AS8-ruleS-nameRun-declare-fu and -readonly-fu (a literal changer head), AS8-ruleS-nameRun-typeset-fu-quoted, -dquoted
+    and -bslash (the quoted and escaped spellings), AS8-ruleS-nameRun-builtin-typeset-fu (behind an in-shell wrapper) and
+    AS8-ruleS-nameRun-if-typeset-fu (after a reserved word); and, the by-construction closure (C1), the head the earlier
+    spelling-by-spelling check could not read: a changer reached through a VARIABLE head (AS8-ruleS-nameRun-var-typeset,
+    -var-declare, -var-readonly), a head the shell BUILDS from an expansion (AS8-ruleS-nameRun-bracevar-typeset), a changer
+    behind a variable after an in-shell wrapper (AS8-ruleS-nameRun-builtin-var), a literal changer behind a quoted or
+    escaped wrapper (AS8-ruleS-nameRun-bslash-builtin, -quoted-builtin), and one run by zsh's `repeat`
+    (AS8-ruleS-nameRun-repeat, -repeat-builtin). Each is refused now where the pre-round-2 head and the branch head allowed
+    it while zsh wrote the tracked file; each red at the branch head before C1, and each red under a single-site
+    mutant of ruleHeadUnsafe: the unreadable-head check dropped (the var and bracevar rows), the non-external unknown
+    wrapper made safe (the builtin-var row), the repeat recursion dropped (the repeat rows), and commandOf made to peel only
+    an unquoted wrapper (the bslash and quoted rows). The cost, on the restricted side:
     AS8-ctl-func-call-unrelated, a function definition, now takes fork main's reading (the bare name after a bound path
     refuses) where ROOT alone allowed it, writing nothing; option-insensitive, a head like `typeset x=1` beside a
     mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it. FUNCTION_SOURCES
-    and the function-clause second walk STAY BESIDE rule S, and the full deletion the orchestrator's reading proposed was
-    DISPROVEN by a real-shell probe (fork PR 975's round 2, R1): the axis classifies LITERAL heads only, while the second
-    walk (anyDefined) also closes a function defined through a head the guard reads as a runtime value -- an opaque or unread
-    head that may be `source` or eval (a command sourcing a definition through a variable whose value a reader filled in), or
-    a FUNCTION_SOURCES word the walk resolves from a variable -- which no static head axis can catch. Removing the second
-    walk reopens that road: fork main allows it, the pre-round-2 head allows it, this axis alone allows it, yet all three
-    shells write (the row that pins it is the unread-head function-definition loop, refused only through anyDefined). So the
-    axis replaces the FUNCTION_SOURCES classification for a LITERAL head (clause (c) refuses it directly) while the hand set
-    and the second walk stay for a head read as a runtime value; retiring them in full needs a ruling or a mechanism the
-    static axis cannot supply. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
+    and the function-clause second walk STILL STAND in the code as of C1. The R1 disproof of the orchestrator's proposed
+    deletion rested on clause (c) reading LITERAL heads only, so a function defined through a head the guard read as a
+    runtime value (the opaque source or eval head `c=.; "$c" file`, or a FUNCTION_SOURCES word resolved from a variable
+    `x=autoload; $x g`) was caught at the R1 build by the second walk (anyDefined) alone. C1 changes that premise: clause
+    (c), BY CONSTRUCTION, now FAILS on any head the guard cannot read, so those same roads give rule S's refusal before the
+    second walk is consulted (the unread-head function-definition loop, AS8-root-func-unread-head-loop, and the opaque
+    source head `c=.; "$c" file` are both refused at the C1 build through rule S, verified by a three-hook probe). Whether
+    FUNCTION_SOURCES and the second walk can therefore be retired in full, with no road reopened, is retried and settled in
+    C3 (R1's ruled deletion); they are kept here so C1 changes no verdict but the ones clause (c) closes. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
     spelled the old way, arithmetic run in this shell, which the guard read as a dollar and text, so a name in it was a
     mention the gate let pass under a program (`ls $[PATH=0]` before a copied cp run by its bare name copied in bash and
     zsh, where fork main refused it). It is read as an arithmetic expansion now, bare, double-quoted and in a
