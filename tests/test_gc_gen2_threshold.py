@@ -17,14 +17,19 @@ off the defaults comes back untouched), is idempotent, and sets N rather than at
 value applies, 0 leaves CPython's own thresholds and says nothing, unset and empty are the default, and a value that is
 not a non-negative integer the collector can hold is said once on stderr (one line, the prefix, the knob's name, the
 raw value and the default, asserted by structure) with the default applied; (c) the interpreter gate: the reason table
-over build facts, a forced decline through the seam leaving the thresholds and saying the reason once beside them, and
-this interpreter's own branch asserted from the thresholds read back against the build facts, never a version string
-alone; the read-back post-condition and the never-raises guard through a collector stub; (d) main calls the step once,
-after the hook's install and before the boot warm, and the step's functions read no clock; loading the module under a
-private name touches no threshold (the step runs from main alone, as install_gc_hook is kept out of test processes);
-(e) the reference's gc bullet names the knob, the default, the mechanism and the read-back keys, as continuation lines
-at 80 columns (the Documented pins slice the bullet to the next list item); and (f) the exact stderr line captured from
-a child interpreter's real stderr, count one, for a malformed knob and for the default boot.
+over build facts, a forced decline through the seam leaving the thresholds and saying the reason once beside them, a
+malformed knob and a forced decline each said on a line of its own, and this interpreter's own branch asserted from the
+thresholds read back against the build facts, never a version string alone; the read-back post-condition and the
+never-raises guard through a collector stub (ReadBack), and the stderr guard through a stderr whose writes raise
+(FailingStderr: the write fails inside _gc_threshold_say's own guard, so the step neither raises nor says an error
+line); (d) main calls the step once, after the hook's install and before the boot warm, and the step's functions read
+no clock; loading the module under a private name touches no threshold (the step runs from main alone, as
+install_gc_hook is kept out of test processes); (e) the reference's gc bullet names the knob, the default, the
+mechanism and the read-back keys, as continuation lines at 80 columns (the Documented pins slice the bullet to the next
+list item); and (f) the exact stderr line captured from a child interpreter's real stderr, count one, for a malformed
+knob and for the default boot. The applied claims in (a) and (b) are pinned on every build through a storing collector
+stub with the gate opened through the seam (AppliedOnEveryBuild); where the step applies they are pinned again on the
+real collector, and a build whose gate declines asserts the decline there instead.
 
 Interpreter facts the gate reads, measured 2026-09-19 with one probe per build: the third threshold binds the
 full-collection rate on CPython 3.10 to 3.13 and 3.14.5 up; CPython 3.14.0 to 3.14.4 (the incremental collector) do not
@@ -305,6 +310,31 @@ class Gate(_Thresholds):
         self.assertEqual(lines2, [], "said once")
         self.assertEqual(gc.get_threshold(), seed)
 
+    def test_a_malformed_knob_and_a_declining_reason_each_get_their_own_line(self):
+        """Two different reasons in one process, both said: the said-set is keyed per reason, so the knob's line does
+        not swallow the decline's. The seam forces the decline, so this holds on every build, not only on the builds
+        whose own gate declines."""
+        os.environ[KNOB] = "abc"
+        real = km._gc_gen2_threshold_reason
+        km._gc_gen2_threshold_reason = lambda *a, **k: "a synthetic reason for this test"
+        self.addCleanup(setattr, km, "_gc_gen2_threshold_reason", real)
+        seed = self.seed(10)
+        result, lines = self.call()
+        self.assertIsNone(result)
+        self.assertEqual(gc.get_threshold(), seed, "a decline leaves the thresholds as found")
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(all(l.startswith(PREFIX) for l in lines), lines)
+        knob_lines = [l for l in lines if "%s='abc'" % KNOB in l]
+        reason_lines = [l for l in lines if "a synthetic reason for this test" in l]
+        self.assertEqual(len(knob_lines), 1, lines)
+        self.assertEqual(len(reason_lines), 1, lines)
+        self.assertNotEqual(knob_lines, reason_lines, lines)
+        self.assertIn("not applied", reason_lines[0])
+        result2, lines2 = self.call()
+        self.assertIsNone(result2)
+        self.assertEqual(lines2, [], "each reason said once")
+        self.assertEqual(gc.get_threshold(), seed)
+
     def test_this_interpreter_takes_the_branch_its_build_facts_predict(self):
         before = self.seed(10)
         result, lines = self.call()
@@ -366,6 +396,132 @@ class ReadBack(_Thresholds):
         result2, lines2 = self.call()
         self.assertIsNone(result2)
         self.assertEqual(lines2, [], "said once")
+
+
+class _StoringCollector:
+    """A collector stub that stores the tuple it is given and reads it back, so the applied path runs on a build whose
+    gate declines (the free-threaded one) as well as on one where it applies."""
+
+    def __init__(self, thresholds):
+        self.thresholds = tuple(thresholds)
+        self.sets = []
+
+    def get_threshold(self):
+        return self.thresholds
+
+    def set_threshold(self, *args):
+        self.sets.append(args)
+        self.thresholds = tuple(args)
+
+
+class AppliedOnEveryBuild(_Thresholds):
+    """(a) and the applied half of (b) on every build: the gate opened through the seam and the collector a storing stub
+    seeded off every build's defaults (701, 11), so exact N, the first two as found, idempotence, an explicit knob value
+    and the default under a malformed one are pinned on a build where the real collector's step declines, too."""
+
+    _stub = ReadBack._stub      # borrowed, not inherited: a ReadBack subclass would run ReadBack's two tests again
+
+    def test_the_step_sets_exactly_n_and_the_first_two_as_found(self):
+        n = km.GC_GEN2_THRESHOLD_DEFAULT
+        stub = _StoringCollector((701, 11, 10))
+        self._stub(stub)
+        real_before = gc.get_threshold()
+        result, lines = self.call()
+        self.assertEqual((result, stub.sets, lines), ((701, 11, n), [(701, 11, n)], []))
+        result2, lines2 = self.call()                             # idempotent: the same tuple, no line
+        self.assertEqual((result2, stub.thresholds, lines2), ((701, 11, n), (701, 11, n), []))
+        stub.thresholds = (701, 11, 5000)                         # exactly N, never "at least N"
+        result3, lines3 = self.call()
+        self.assertEqual((result3, stub.thresholds, lines3), ((701, 11, n), (701, 11, n), []))
+        self.assertEqual(gc.get_threshold(), real_before, "the real collector was never touched")
+
+    def test_an_explicit_value_applies(self):
+        os.environ[KNOB] = "250"
+        stub = _StoringCollector((701, 11, 10))
+        self._stub(stub)
+        result, lines = self.call()
+        self.assertEqual((result, stub.sets, lines), ((701, 11, 250), [(701, 11, 250)], []))
+
+    def test_a_malformed_value_applies_the_default(self):
+        n = km.GC_GEN2_THRESHOLD_DEFAULT
+        os.environ[KNOB] = "abc"
+        stub = _StoringCollector((701, 11, 10))
+        self._stub(stub)
+        result, lines = self.call()
+        self.assertEqual((result, stub.sets), ((701, 11, n), [(701, 11, n)]))
+        self.assertEqual(len(lines), 1, lines)
+        self.assertRegex(lines[0], r"^%s %s='abc' .*\b%d$" % (re.escape(PREFIX), re.escape(KNOB), n))
+
+
+class _ClosedPipe(io.TextIOBase):
+    """A stderr whose every write raises, the way a closed pipe does; counts the writes attempted."""
+
+    def __init__(self):
+        super().__init__()
+        self.writes = 0
+
+    def write(self, s):
+        self.writes += 1
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+class FailingStderr(_Thresholds):
+    """(c, continued) The stderr guard in _gc_threshold_say: a write that raises is swallowed there, so the step neither
+    raises nor reaches its own outer except (no error key is said). main calls the step with no guard of its own."""
+
+    def _closed_call(self):
+        pipe = _ClosedPipe()
+        with redirect_stderr(pipe):
+            result = km._raise_gc_gen2_threshold()
+        return result, pipe
+
+    def _force_decline(self):
+        real = km._gc_gen2_threshold_reason
+        km._gc_gen2_threshold_reason = lambda *a, **k: "a synthetic reason for this test"
+        self.addCleanup(setattr, km, "_gc_gen2_threshold_reason", real)
+
+    def test_a_decline_under_a_failing_stderr_returns_none_and_leaves_the_thresholds(self):
+        self._force_decline()
+        seed = self.seed(10)
+        result, pipe = self._closed_call()
+        self.assertIsNone(result)
+        self.assertEqual(gc.get_threshold(), seed)
+        self.assertEqual(pipe.writes, 1)
+        self.assertEqual(km._GC_THRESHOLD_SAID, {"interpreter"}, "the guard swallowed the write; no error followed")
+
+    def test_a_malformed_knob_and_a_decline_under_a_failing_stderr(self):
+        self._force_decline()
+        os.environ[KNOB] = "abc"
+        seed = self.seed(10)
+        result, pipe = self._closed_call()
+        self.assertIsNone(result)
+        self.assertEqual(gc.get_threshold(), seed)
+        self.assertEqual(pipe.writes, 2)
+        self.assertEqual(km._GC_THRESHOLD_SAID, {"knob", "interpreter"})
+
+    def test_a_malformed_knob_under_a_failing_stderr_with_this_builds_own_gate(self):
+        os.environ[KNOB] = "abc"
+        seed = self.seed(10)
+        result, pipe = self._closed_call()
+        self.assertNotIn("error", km._GC_THRESHOLD_SAID)
+        if EXPECT_APPLIED:
+            self.assertEqual(result, seed[:2] + (km.GC_GEN2_THRESHOLD_DEFAULT,))
+            self.assertEqual(gc.get_threshold(), result)
+            self.assertEqual(pipe.writes, 1)
+            self.assertEqual(km._GC_THRESHOLD_SAID, {"knob"})
+        else:
+            self.assertIsNone(result)
+            self.assertEqual(gc.get_threshold(), seed)
+            self.assertEqual(pipe.writes, 2)
+            self.assertEqual(km._GC_THRESHOLD_SAID, {"knob", "interpreter"})
+
+    def test_the_knob_parser_under_a_failing_stderr_returns_the_default(self):
+        os.environ[KNOB] = "abc"
+        pipe = _ClosedPipe()
+        with redirect_stderr(pipe):
+            n = km._gc_gen2_threshold_knob()
+        self.assertEqual(n, km.GC_GEN2_THRESHOLD_DEFAULT)
+        self.assertEqual(pipe.writes, 1)
 
 
 class Isolation(unittest.TestCase):
