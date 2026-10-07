@@ -1036,6 +1036,64 @@ try {
       await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } delete window.__rompUsagePullMs; });
       fr.emptiedOpen = em;
     }
+    // ...and a tap with no failed read pulls first (PR 976's round 3, tests-1): the panel opens at once only where the newest
+    // read failed, and every other tap opens on its own pull's end. The card opened over a pull answered with the window
+    // reading (barsReading: an ok read, so the shell's flag is false and it holds a reading; Usage enabled with neither line),
+    // the bound raised to cfg.raceMs, and Usage clicked with the tap's own pull held. Before the click, a stray request held
+    // since the opening (the shell's 60 s refresh) is answered ok, so the request held after it is the tap's own and the
+    // newest read to end is still an ok one. The shell's handler runs in the task the phoneAct message arrives in, and opens
+    // the panel at once, where it does, before it starts the pull; so once the phoneAct has been heard and the tap's pull is
+    // held, the event, the modal is read: not up. The held pull is then answered with a reading of the same window reported
+    // five minutes before, and the modal awaited: up over that reading, updated 5m ago (the opening's reading says 10m ago,
+    // and the panel's last paint, hidden since the turns above, is read before the click as not saying it, so that age is
+    // the tap's answer's alone)
+    {
+      const pf = {};
+      const panelState = () => page.evaluate(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+        const age = t ? t.querySelector(".ru-tip-age") : null;
+        return { up: !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block",
+                 backOn: !!b && b.classList.contains("on"), tipShown: !!t && t.style.display === "block",
+                 tipModal: !!t && t.classList.contains("ru-modal"), closeSet: typeof window.__rompUsageClose === "function",
+                 windows: !!t && !!t.querySelector(".ru-tip-win"), age: age ? age.textContent.trim() : null }; });
+      const answerOk = async () => { let n = 0;
+        for (const route of held.splice(0)) {
+          n++; try { await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(barsReading(false)) }); } catch (e) { /* the page ended it first */ }
+        }
+        return n; };
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } window.__mtabsActs.length = 0; });
+      pf.strayFirst = await answerOk();
+      mode = "bars";
+      const sf = await kit.openCard();
+      pf.asked = await kit.askEnded(sf);
+      await frames(page);
+      pf.usage = await kit.usageNow(sf);
+      pf.reading = await page.evaluate(() => typeof window.__rompUsageReading === "function" && window.__rompUsageReading());
+      pf.flag = await page.evaluate(() => (typeof window.__rompUsageFailed === "function" ? window.__rompUsageFailed() : null));
+      pf.before = await panelState();
+      mode = "hang";
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.raceMs);
+      pf.stray = await answerOk();
+      if (pf.usage) {
+        await page.mouse.click(pf.usage.left + pf.usage.w / 2, pf.usage.top + pf.usage.h / 2);
+        pf.tapSeen = await page.waitForFunction(() => window.__mtabsActs.includes("usage"), null, { timeout: 5000 }).then(() => true, () => false);
+        for (let i = 0; i < 100 && !held.length; i++) await sleep(50);
+        pf.tapHeld = held.length;
+        pf.whileHeld = await panelState();
+        pf.clicked = await kit.shellNow(sf);
+        mode = "lab";
+        for (const route of held.splice(0)) {
+          const now = Math.floor(Date.now() / 1000);
+          const body = { rows: [{ host: "", usage: { fiveHour: { pct: 56, resetsAt: now + 3 * 3600 }, t: now - 300 } }], host: "" };
+          try { await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }); } catch (e) { /* the page ended it first */ }
+        }
+        pf.opened = await page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+          return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 10000 }).then(() => true, () => false);
+        await frames(page);
+        pf.after = await panelState();
+      }
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } delete window.__rompUsagePullMs; });
+      fr.pullFirst = pf;
+    }
     out.failedReads = fr;
     await context.close();
   }

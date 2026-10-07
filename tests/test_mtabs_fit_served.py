@@ -184,7 +184,12 @@ has run in the shell (its flag cleared) the modal is still closed, the backdrop 
 readings closes that panel: the card's pull held past HANG_MS again, Usage clicked with the tap's own pull held, the modal
 up within 1 s and left open, and that pull answered with ERROR_STATUS; once the shell's readings have emptied, the modal is
 closed, the backdrop off (its class, and its computed display none), the close hook cleared, and the element at the
-window's centre not the backdrop. Then the deploy
+window's centre not the backdrop. And a tap with no failed read pulls first (PR 976's round 3): the card opened over a
+pull the driver answers with the window reading (the shell's flag false, Usage enabled with neither line), the bound
+raised to RACE_MS, and Usage clicked with the tap's own pull held: once that pull is held, the Usage modal is not up (no
+.ru-modal shown, the backdrop off, no close hook), and once it is answered with a reading of the same window reported five
+minutes before, the modal opens over that reading (updated 5m ago, an age neither the opening's reading nor the panel's
+last paint shows). Then the deploy
 skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -275,7 +280,9 @@ once the held pull's answer has run, in Chromium), and where the tap's own pull 
 bound (nothing open 1 s after the click, then the modal opened by that pull's answer, in Chromium, WebKit and Firefox).
 The emptied panel is red at the head round 2's pass built, where renderRows' empty exit hid the panel's content alone
 (the backdrop still on, its computed display block, the close hook set and the backdrop the element at the window's
-centre, in Chromium, WebKit and Firefox).
+centre, in Chromium, WebKit and Firefox). The pull-first tap is red under a mutant of kernel.py that drops the READ_FAILED
+conjunct from the panel opener's at-once branch, so that every tap over a reading opens the panel at once (the modal up,
+the backdrop on and the close hook set while the tap's pull is held, in Chromium, WebKit and Firefox).
 The row and the tabs are red where Usage keeps two
 lines' height in every state (Usage 43.64px tall, 43.65 in Firefox, where Restart kernel is 28.8, at every width in both
 themes); under a
@@ -852,7 +859,9 @@ def _failed_problems(engine, fr):
     the held pull's fresher answer with its By session button left in place (PR 976's round 2); and, the panel opened that way
     again and closed while the tap's pull is held, that pull's answer leaves it closed (PR 976's round 2); and, the panel
     opened that way again and left open, that pull answered with ERROR_STATUS, which empties the readings, closes it, the
-    backdrop and the close hook with it (romp-manager's ruling on PR 976's round 2 pass)."""
+    backdrop and the close hook with it (romp-manager's ruling on PR 976's round 2 pass); and, with no failed read (an
+    opening whose pull read the window reading), a tap whose own pull is held leaves the Usage modal closed while that pull
+    is held and opens it once the pull is answered with a reading (PR 976's round 3)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -1078,6 +1087,32 @@ def _failed_problems(engine, fr):
         out.append("%s: the tap's held pull was answered with %d while the Usage modal was open, emptying the readings, and the "
                    "modal was not closed (the backdrop off, the close hook cleared, nothing left dimmed): %r" % (
                        where, ERROR_STATUS, ea))
+    # ...and a tap with no failed read pulls first (PR 976's round 3, tests-1): the panel opens at once only where the newest
+    # read failed. The card opened over an ok read of the window reading (the shell's flag false, a reading held, Usage enabled
+    # with neither line, no modal up, and the panel's hidden content not saying 5m ago), and a tap whose own pull is held:
+    # once that pull is held, the modal is not up (no .ru-modal shown, the backdrop off, no close hook), and once the pull is
+    # answered with a reading reported five minutes before, the modal opens over that reading (its window section, updated 5m
+    # ago). Red with the at-once branch's READ_FAILED conjunct dropped (the modal up while the tap's pull is held)
+    pf = fr.get("pullFirst") or {}
+    if not pf.get("asked") or pf.get("reading") is not True or pf.get("flag") is not False or not_enabled(pf.get("usage")) \
+            or (pf.get("before") or {}).get("up") is not False or "5m ago" in ((pf.get("before") or {}).get("age") or ""):
+        out.append("%s: the pull-first tap's premise (an opening whose pull read the window reading: the shell's flag false, a "
+                   "reading held, Usage enabled with neither line, no modal up, its hidden content not saying 5m ago): %r" % (
+                       where, {k: pf.get(k) for k in ("asked", "reading", "flag", "usage", "before")}))
+    pk = pf.get("clicked") or {}
+    if not pf.get("tapSeen") or not pf.get("tapHeld") or pk.get("settingsOpen") or pk.get("cardHidden") is not True \
+            or pk.get("acts") != ["usage"]:
+        out.append("%s: the pull-first tap's premise (the tap closing the card, posting phoneAct usage and holding its own pull): "
+                   "heard %r, held %r, %r" % (where, pf.get("tapSeen"), pf.get("tapHeld"), pk))
+    ph = pf.get("whileHeld") or {}
+    if ph.get("up") is not False or ph.get("tipModal") is not False or ph.get("tipShown") is not False \
+            or ph.get("backOn") is not False or ph.get("closeSet") is not False or pk.get("usage") is not False:
+        out.append("%s: with no failed read, a tap on Usage opened the Usage modal while its own pull was held (only a tap after a "
+                   "failed read opens it at once; every other tap opens it on the pull's end): %r" % (where, ph))
+    pa = pf.get("after") or {}
+    if not pf.get("opened") or pa.get("up") is not True or pa.get("windows") is not True or "5m ago" not in (pa.get("age") or ""):
+        out.append("%s: with no failed read, the tap's held pull was answered with a reading, and the Usage modal did not open over "
+                   "it: opened %r, %r" % (where, pf.get("opened"), pa))
     return out
 
 
