@@ -72548,6 +72548,12 @@ var connT=0;   // when the current socket's connect() attempt started — the pr
 // dials the remote relay on this same origin, which cannot open while this socket is down, so it waits for the flag
 // (false) and redials on romp:wsup; undefined until the first open or close, so a page without the shim dials as before.
 function netState(s){try{window.__rompLocalUp=(s==="up");if(window.parent!==window)window.parent.postMessage({romp:"wsState",app:APP,state:s},"*");}catch(e){}}
+// [fork] iOS item 4b (2026-10-03): tells the shell that a dial of this pane's closed without ever opening, the event that says its
+// reconnect FAILED; posted after that close's down word. The shell's Log writes its connection-lost entry on this word (or on the
+// shell's own failed dial, _LANDING_ERRS_JS), never on the down word alone: a socket put down and reopened at once is no outage.
+// cut: the dial was still CONNECTING past the watchdog's connect bound when it closed, not refused; the Log does not count such a
+// close while another socket of the page is open (its stands(), and why).
+function netFail(cut){try{if(window.parent!==window)window.parent.postMessage({romp:"wsFail",app:APP,cut:!!cut},"*");}catch(e){}}
 // A FILE dragged onto a pane that takes no drops must not navigate the pane to the file — the browser's default for an
 // unhandled drop (the user 2026-09-12: an image dropped beside the chat's box replaced the page with the image). Every
 // pane but the chat refuses it here: a not-allowed cursor over the pane, the drop swallowed. The chat's own document takes
@@ -72828,6 +72834,7 @@ enqueue(msg);};   // the handoff to the bundle is the ONE deferred step (see the
 ws.onclose=function(ev){netState("down");
 if(openSock===this){armFresh();try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected,bundleReady:bundleReady,readyAcked:readyAcked,readyQueued:readyQueued}});}catch(e){}}
 else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}
+if(openSock!==this)netFail(Date.now()-connT>15000);   // [fork] iOS item 4b: a dial that never opened has closed (refused, or cut by the watchdog's CONNECTING arm): this reconnect failed, which is what the shell's Log waits for. The argument is that arm's own test, read at the close: every close the arm makes reads true here, since it closes only past the bound (its line is upstream's and pinned, so it carries no mark of its own), and a close the browser made past the bound had waited as long, the question the Log asks
 if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale(cw+"-closed");}   // the reconnected socket died before its resync: nothing is coming on it, and the view IS stale
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
 // a close landing inside the return window: the socket the keep-decision row (and maybe its return-fresh) was written
@@ -74462,7 +74469,7 @@ window.__rompNotify(m.kind||'error',m.text,
 // a pane toggled OFF still holds a live socket (the Fleet pane is hidden by default, its iframe always
 // loaded), so a blip on a pane you can't even see shouldn't cry wolf while the chat pane you interact
 // through is up. Gate on the pane-enabled body class the toggle sets (po-chat/po-feed/po-timeline/po-fleet).
-// Only the up->down TRANSITION logs an entry; the live red cue rides the state itself.
+// Only the up->down TRANSITION can log an entry, once that drop's reconnect fails (`lost`, below); the live red cue rides the state itself.
 var st={},stc={};   // stc: split chat columns (2026-09-08) by column, apart from the first column's `chat` key — one column's 'up' must never mask another's drop
 function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}for(var c in stc){if(stc[c]==='down'&&shown('chat'))return true;}return false;}
@@ -74470,20 +74477,69 @@ window.__rompColGone=function(c){delete stc[String(c)];paint();};   // a closed 
 var PN=""" + json.dumps(dict(_PANE_ORDER)) + """;   // key → rail label, from _PANE_ORDER (one list with the rail, the tabs and the drop row); timeline key stays internal — the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
 try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){if(!(p.id in PN))PN[p.id]=String(p.title||p.id);});}catch(e){}   // the registry panes' titles (plans/panes-as-data.md)
 function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()+k.slice(1):k);}   // the page's copy of _pane_label: the rail's word, else the key capitalised for a sentence (Settings), never a raw key (the 1715 lows, low 4)
+// [fork] iOS item 4b (2026-10-03): a drop is logged when its reconnect FAILS, never at the drop. `lost` holds, per pane key or split
+// column ('col:'+n), the entry a drop would write, from the up->down transition until a failure writes it or the socket reopens and
+// drops it unwritten. A failure is a dial that closed without ever opening: the pane's own (the shim's wsFail word, below) or the
+// shell's (window.__rompLinkFailed, called from its socket's close in _LANDING_MOBILE_JS), which fails every waiting entry, because
+// on a return the panes wait for the shell's link and dial nothing while it is down. Before this the transition wrote the entry:
+// every return whose sockets reopened at once (the return's own put-down of a stale socket, or the FIN a thawed page receives)
+// logged "connection lost" for the chat and the Feed and left an unread digit on the Log control, a false interrupt. The entry is
+// written while the pane is still down and shown; a drop on a pane not shown keeps waiting, and one no longer down (parked, or a
+// column closed) is dropped.
+// The Log keeps no timer of its own, but a dial's connect cut is a timer (15 s: the shim's watchdog, the shell's SH_CONNECT_MS), and a
+// close it made (`cut`, on the word or the call) fails nothing while a socket of this page is open (stands(): the shell's link, a
+// pane's or a column's). The kernel is answering that socket, and Chromium and Firefox hold each socket's opening handshake to a
+// host until the one ahead of it is done (RFC 6455 section 4.1), so on a slow network the dials a return makes together wait in line
+// and the last of them can reach its cut while every handshake is succeeding (the review of item 4b, 2026-10-03: a desktop return at
+// 3.5 s per handshake logged the Files pane at +22 s). A refused dial fails whatever stands; with nothing open, a hung outage, the
+// first cut writes, at 15 s.
+var lost={};
+// [fork] review round 1 of item 4b (2026-10-04): `leaving`, a latch set on beforeunload and read by both failure doors below before
+// any handling of their own (window.__rompLinkFailed first; the wsFail listener right after the pane protocol's source check).
+// Firefox closes the page's dials that never opened after beforeunload and before pagehide, and delivers their close events while
+// the page still runs, so a reload while a dial was connecting (a return's redial, the boot dials) read each such close as a failed
+// reconnect and wrote one unread entry per shown pane, which the reloaded page showed. beforeunload also fires for a navigation that
+// does not unload (a 204, a download), and a latch that never cleared would leave every later outage unwritten, so the page's next
+// real event clears it: the shell's next dial, its open or the next frame on its link (window.__rompNotLeaving, from
+// _LANDING_MOBILE_JS), a pane's or a column's open (its up word, below), or pageshow. The frame (the round's call 1, 2026-10-04):
+// in Chromium and WebKit a 204 or a download closes no socket, so the link can stand through a whole outage of the panes alone,
+// and without the frame that outage went unwritten and its entries were dropped at its end. The link's next frame comes
+// within one keepalive (KEEPALIVE_S, 10 s by default), so a pane-only outage that ends before it still goes unwritten. An unload
+// makes none of these events. One that lands after beforeunload and before a failure word reaches this Log clears the latch, and
+// each failure word read after it writes its entry: up to 3 false entries on the desktop with the default panes shown, one for
+// each shown pane whose dial the unload closed (review round 2 of item 4b, 2026-10-05, as measured in the lab's Firefox reloads
+// while the panes' dials connected: the unload's closes came mostly 1 to 2 ms after beforeunload, 453 of 462 within 13 ms and
+// the latest at 21 ms, and the failure words reached the Log's listener 2 to 9 ms after it, 352 of 388 of them, the latest at
+// 32 ms). The likeliest is a frame on the link, so the reloads exposed are those while a pane's dial connects and the link is
+// open: the boot dials, and a return's pane redials, since the panes wait for the link and dial once it is up (and a burst of
+// frames follows the link's open, the kernel's answers to its ready). Only the shell's own return dial, which the panes wait
+// behind, is not exposed: the link is down then and carries no frame.
+var leaving=false;
+window.addEventListener('beforeunload',function(){leaving=true;});
+window.addEventListener('pageshow',function(){leaving=false;});
+window.__rompNotLeaving=function(){leaving=false;};
+function stands(){if(window.__rompLink&&window.__rompLink().up)return true;for(var k in st){if(st[k]==='up')return true;}for(var c in stc){if(stc[c]==='up')return true;}return false;}
+function lostFail(k){var x=lost[k];if(!x)return;if((x.col?stc[x.col]:st[x.app])!=='down'){delete lost[k];return;}
+if(!shown(x.app))return;delete lost[k];window.__rompNotify('conn',x.text);}
+window.__rompLinkFailed=function(cut){if(leaving)return;if(cut&&stands())return;for(var k in lost)lostFail(k);};
+window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;if(leaving)return;var m=e&&e.data;if(!m||m.romp!=='wsFail'||(m.cut&&stands()))return;
+var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';lostFail(col?'col:'+col:m.app);});
 window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
+if(m.state==='up')leaving=false;   // [fork] review round 1 of item 4b: a pane's or a column's socket opened, so the page is not leaving (the latch above)
 if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
-if(sc==='down'&&pc!=='down'&&shown('chat'))window.__rompNotify('conn','Kernel connection lost: chat split '+col+' (reconnecting)');else paint();return;}
+if(sc==='down'&&pc!=='down')lost['col:'+col]={app:'chat',col:col,text:'Kernel connection lost: chat split '+col+' (reconnecting)'};else if(sc==='up')delete lost['col:'+col];paint();return;}
 // A PARKED pane (2026-09-18: off screen on the phone, its redial waiting for its tab; the shim's netState("parked")) is its
 // own state here, never 'down': nothing is lost and nothing is reconnecting, so the cue stays dark and the log silent; its
-// later drop still logs, since the rule below then reads prev as parked, not down. One fork-only line, ahead of the tracking
+// later drop is a drop like any other, since the rule below then reads prev as parked, not down. One fork-only line, ahead of the tracking
 // line, which is upstream's and stays byte for byte (review round 1, 2026-09-18: the PR had rewritten that line, and two
 // upstream test pins went red).
 if(m.state==='parked'){st[m.app]='parked';paint();return;}
 var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
-if(s==='down'&&prev!=='down'&&shown(m.app))
-window.__rompNotify('conn','Kernel connection lost: '+paneLabel(m.app)+' pane (reconnecting)');
-else paint();});
+if(s==='down'&&prev!=='down')
+lost[m.app]={app:m.app,col:'',text:'Kernel connection lost: '+paneLabel(m.app)+' pane (reconnecting)'};
+else if(s==='up')delete lost[m.app];
+paint();});
 window.addEventListener('romp-panes',paint);
 // opening marks seen only what the filters let you SEE: a muted kind's entries stay unread while it is muted. Re-enabling its
 // toggle with the Log open (the toggles sit in its panel) lists them, which marks them seen as an opening would; with the
@@ -77415,15 +77471,17 @@ shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));   // +k=: the page key the socket class needs, added by the page-key script
 shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
+try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}   // [fork] review round 1 of item 4b (2026-10-04): a dial of the page's link, so the page is not leaving: the Log's leaving latch (_LANDING_ERRS_JS), set by a beforeunload that did not unload, clears here, at the open and at each frame below
 var shCutHere=false;clearTimeout(shCutT);var shCutMe=shCutT=setTimeout(function shCut(){if(shCutT===shCutMe)shCutT=0;if(ws.readyState!==0)return;shCutHere=true;try{ws.close();}catch(e){}},SH_CONNECT_MS);   // [fork] iOS item 1a (2026-10-02): the connect cut on this dial's own timer, SH_CONNECT_MS after the dial (the watchdog tick cut it up to SH_TICK_MS later). The open, the close and the next dial clear it (an abandon is always followed by a dial); the open and the close clear it by this dial's own handle (shCutMe), so an older socket's late event never cancels a newer dial's cut; a callback that runs anyway finds its own socket no longer CONNECTING and closes nothing; all three reset shCutT only while shCutT is still their dial's. shCutHere: the close this timer made, which this dial's onclose reads as a hung attempt by the event, not by the clock
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
 ws.onopen=function(){clearTimeout(shCutMe);if(shCutT===shCutMe)shCutT=0;shOpened=true;shLastRecv=Date.now();shResumeProvisional=0;shRung=0;try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}   // [fork] iOS item 1a: the open clears this dial's OWN connect cut (shCutMe) and resets shCutT only while it is still this dial's, so an older socket's open delivered after a newer dial leaves that dial's cut in force (review round 1, 2026-10-02)
+try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}   // [fork] review round 1 of item 4b: the link opened, so the page is not leaving (the Log's leaving latch)
 shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
 if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
 shTell();   // [fork] D3: link up - re-tell the panes
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
-ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}var m;try{m=JSON.parse(ev.data);}catch(e){return;}   // [fork] review round 1 of item 4b (2026-10-04, call 1): a frame on the link shows the page is still here, so the Log's leaving latch clears: in Chromium and WebKit a beforeunload that did not unload (a 204, a download) closes no socket, and the link can stand through a whole outage of the panes alone. Every frame, before its type is read
 if(m&&m.type==='restarting'){shRestartAnnounced=Date.now();return;}   // [fork] D3: the kernel's announced death - the redial keeps its tight cadence
 if(m&&m.type==='ka'&&m.pv&&window.__rompReload&&window.__rompReload.notePanes)window.__rompReload.notePanes(m.pv);   // the pane set's revision beside the build token (plans/panes-as-data.md): a define or remove at the kernel offers a reload
 if(m&&m.type==='ka'){if(m.dv&&window.__rompReload)window.__rompReload.noteDv(m.dv);}   // build drift on the shell's own keepalive (T265; an OFFER since 2026-09-16)
@@ -77456,6 +77514,7 @@ if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an anno
 else if(!shOpened&&!shCutHere&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut that the cut did not make: shCutHere, iOS item 1a, so a timer that fires while the wall clock reads a ms short of SH_CONNECT_MS still paces a hung attempt below): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
 else if(shInWin)shd=250;   // a HUNG attempt the connect cut paced (the dial's own timer, or the tick's backstop), inside a return window: prompt
 else shd=SH_BLIND_MS;   // the blind cadence for an ordinary drop outside any window (today's shell)
+if(!shOpened)try{window.__rompLinkFailed&&window.__rompLinkFailed(shCutHere||Date.now()-shConnT>=SH_CONNECT_MS);}catch(e){}   // [fork] iOS item 4b (2026-10-03): this dial closed without ever opening (refused, or its connect cut): the page's link failed to come back, and with it the reconnect of every pane waiting on it, so the Log writes the drops it holds (_LANDING_ERRS_JS `lost`). Below the superseded close's return above, so a close delivered after a newer dial fails nothing. The argument says the connect cut made this close (its own timer, shCutHere, or the tick's backstop past SH_CONNECT_MS: the ladder's complement of a refusal above), which the Log does not count while a pane's socket is open, since this dial may have waited in line behind theirs
 shTimer=setTimeout(shellWS,shd);};}catch(e){}}   // the one pending redial timer (a dial clears it, shellWS)
 // [fork] D3: the shell's progress watchdog - the shim's three arms with the shell's own copy of the bounds. An OPEN
 // socket quiet past the bound (PROVISIONAL_MS while a resumed keep awaits a confirming frame, STALE_MS otherwise) is

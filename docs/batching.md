@@ -14,16 +14,14 @@ then the merged tree is the tree the sweep and CI tested. `scripts/batch.py land
 right before the merge and refuses if the batch head no longer contains it; a move after that read
 is not stopped, and `finish` reports it loudly (maintainer step 6). One job of `ci.yml`, the secret
 scan, also runs in a workflow of its own (`.github/workflows/secret-scan.yml`) on every push of a
-branch or a tag whose commit carries that file, a member PR's and the merge to main included, and
-on every push to an open PR's branch. GitHub reads a push's workflows from the commit the push puts
-on its ref, and a PR's from the merge commit it makes of the PR's head and its base, which carries
-the base's copy of the file unless the branch edited or deleted it, so a member PR's pushes are
-scanned even on a branch cut from main before the file landed. Among the pushes that start no run: a
-push to such a branch that has no open PR, until it merges main; a tag on such a commit; and a push
-whose commit lacks the file because it or an earlier commit on its branch deleted it. A PR that
-conflicts with its base gets no run of its own until the conflict is resolved (CLAUDE.md,
-"Credentials", says what the scan reads, which pushes start no run and GitHub's other limits).
-Nothing in the landing reads that workflow's runs.
+branch or a tag whose commit carries that file, a member PR's and the merge to main included, once
+per push: it has no pull request trigger, since the private runner bills every run. GitHub reads a
+push's workflows from the commit the push puts on its ref, so among the pushes that start no run are
+a push to a branch cut from main before the file landed, until it merges main; a tag on such a
+commit; and a push whose commit lacks the file because it or an earlier commit on its branch deleted
+it (that file's header says what the scan reads, which pushes start no run, what dropping the pull
+request trigger gave up, and GitHub's other limits). Nothing in the landing reads that workflow's
+runs.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
@@ -74,25 +72,35 @@ reached main (`finish` runs it, and it also runs on every push to main).
    (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open
    after the batch merges, and `finish` reports that rather than hiding it.
 8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
-9. Expect no `ci.yml` run on your PR. Its Checks tab shows the secret scan's runs of each push
-   (`Secret scan on push (gitleaks)`: one for the pull request, and one for the push when its commit
-   carries `.github/workflows/secret-scan.yml`, which a branch cut from main before that file landed
-   does not until it merges main), the tier-label check after
-   the PR opens or reopens or its labels change, not after a push, and Tier policy's skipped rows,
-   which evaluate nothing on the fork. The tests run in your own sweep at your head (item 3), in the
-   batch's sweep at the batch head, and in the one CI run on the batch branch.
+9. Expect no `ci.yml` run on your PR. Its Checks tab shows the secret scan's run of each push
+   (`Secret scan on push (gitleaks)`, one for the push when its commit carries
+   `.github/workflows/secret-scan.yml`, which a branch cut from main before that file landed does
+   not until it merges main), the tier-label check after
+   the PR opens or reopens or its labels change, not after a push, Tier policy's skipped rows,
+   which evaluate nothing on the fork, and, on a PR that touches the site's inputs (`docs/`,
+   `mkdocs.yml`, `overrides/` or `docs.yml` itself), `docs.yml`'s `build` check (a strict
+   `mkdocs build`) and its `deploy` row, which always skips on a pull request. The tests run in
+   your own sweep at your head (item 3), in the batch's sweep at the batch head, and in the one CI
+   run on the batch branch.
 
 ## If you are the maintainer
 
 Once, already done on this fork: delete branches on merge, squash and rebase merges off, so
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
 on, admin bypass) is optional and comes after the first batch has shown the check names. The checks
-to require are the job checks a batch push reports: `Python <version> (ubuntu-latest)` for each
-Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
+to require are the job checks a batch push reports: `Python <version> (ubuntu-latest, shard <shard>)`
+for each shard (1, 2, 3 and 4) and each Linux cell a batch push runs: under ci.yml's full shape, as
+built (3.10, 3.11, 3.12, 3.13 and 3.14t), and under its smaller shape (3.12 and 3.14t). Under the
+smaller shape 3.10, 3.11 and 3.13 run on the weekly schedule and on a manual run alone, so a ruleset
+must not require their names: a required check that no batch push reports holds every batch.
+Switching the shape is a three-line change in ci.yml (its header, THE SHAPE SWITCH, names the three
+lines), and a ruleset follows it. The other checks are
+`Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
 `Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
-`Served pages (pytest, ubuntu-latest)`. A batch push also reports `Secret scan on push
-(gitleaks)`, from `.github/workflows/secret-scan.yml`, for the push and, once the batch PR is open,
-for the pull request, the same scan as `Secret scan (gitleaks)`
+`Served pages (pytest, ubuntu-latest)`. Each Linux interpreter runs as one job per shard of the test
+files, since one worker running the whole suite does not fit the private runner (`tests/conftest.py`,
+its CI's shards section, states which files each shard runs). A batch push also reports `Secret scan on push
+(gitleaks)`, from `.github/workflows/secret-scan.yml`, for the push, the same scan as `Secret scan (gitleaks)`
 under a name of its own, since a required check is matched by job name whatever the workflow;
 requiring `Secret scan (gitleaks)` already covers the scan. Do not require `Exactly one tier
 label` on the fork: its copy runs only when a PR opens or reopens or its labels change, never on a
@@ -324,8 +332,12 @@ subject; `verify` refuses the branch otherwise.
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
    switch, so a Chromium that fails to launch there skips instead of failing), the other Python
    versions and macOS run only in GitHub's CI: the Linux jobs in every run of `ci.yml` (a batch
-   push, a manual run, the weekly schedule), and the macOS cells only in a manual run
-   (`workflow_dispatch`) or the weekly schedule. CI's free-threaded cell runs pytest with
+   push, a manual run, and the weekly schedule under its smaller shape alone; under that shape a
+   batch push runs Python 3.12 and 3.14t, and 3.10, 3.11 and 3.13 run weekly and in a manual run),
+   and the macOS cells only in a manual run
+   (`workflow_dispatch`) whose `macos` input is on: it is off by default, for cost, and you turn it
+   on with the box in the Actions tab's "Run workflow" form or with `gh workflow run CI --ref
+   <branch> -f macos=true`. CI's free-threaded cell runs pytest with
    `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
    default. Each
    leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed
@@ -367,8 +379,9 @@ subject; `verify` refuses the branch otherwise.
    records the commit (`runner.checkout.main`, null without one). CI's job checkouts hold no
    `origin/main` except in a run on main itself: `actions/checkout@v4`, at its default depth 1
    in every job a leg stands in for, fetches the one commit as the remote-tracking ref of the
-   branch the run is on (the batch branch's, in the run `land` reads), so a run on main (the
-   weekly schedule, or a dispatch on main) holds it at the commit it checks out, and a batch
+   branch the run is on (the batch branch's, in the run `land` reads), so a run on main (a
+   dispatch on main, or the weekly schedule, which runs under `ci.yml`'s smaller shape alone) holds it at
+   the commit it checks out, and a batch
    branch's run holds none. A test that reads `origin/main` can therefore behave differently in the
    sweep than in CI; one that first checks whether its clone is shallow (fork PR 954's history
    case does) takes its shallow-clone handling in CI whether or not `origin/main` is there.

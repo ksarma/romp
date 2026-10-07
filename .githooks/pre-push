@@ -33,10 +33,9 @@
 #                 git mode, with the path exemptions the hook's scan cannot
 #                 apply, on each push to this repository, of a branch or a
 #                 tag, whose commit carries .github/workflows/secret-scan.yml
-#                 and on each push to an open pull request's branch
-#                 (CLAUDE.md, "Credentials", names the pushes that start no
-#                 run and GitHub's own limits), so such a push made without
-#                 the hook's scan is scanned by CI in a run of that push.
+#                 (that file's header names the pushes that start no run and
+#                 GitHub's own limits), so such a push made without the
+#                 hook's scan is scanned by CI in a run of that push.
 #
 # The identifier scan makes four checks per pushed ref, all about what THIS
 # push changes on the remote:
@@ -2009,9 +2008,9 @@ scans_armed() {   # status 0 when either scan would run or whether one would can
 # asked for (ROMP_NO_GITLEAKS), else a notice that no gitleaks resolved. No
 # binary is loud rather than silent, but not a blocker: requiring an install to
 # push would break every clone that never wanted the scanner. On a push to this
-# repository whose commit carries .github/workflows/secret-scan.yml, or to an
-# open pull request's branch, CI scans the full history in a run of this push
-# (CLAUDE.md, "Credentials", names the pushes that start none).
+# repository whose commit carries .github/workflows/secret-scan.yml, CI scans
+# the full history in a run of this push (that file's header names the pushes
+# that start none).
 # scan_credentials prints it, and so does bash_gate when it ends the hook under
 # an older bash with neither scan armed, so the two cannot print different
 # texts.

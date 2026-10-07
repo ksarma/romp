@@ -17355,7 +17355,7 @@ exit_trap_refused() {   # the push just made printed the EXIT trap's refusal who
 # cases that need the gate to act skip where the bash first on PATH, which runs the hook in every case, is 5.1 or
 # later, since the gate does nothing there: a run of this file under an older bash first on PATH (the macOS cell's
 # 3.2, or a build of 3.2, 4.4 or 5.0 first on PATH) is where they run. So the per-push Linux cells never run them, and
-# the macOS cell, which runs only on a dispatch or on the weekly schedule, is the one CI cell that does; there they act
+# the macOS cell, which runs only on a dispatch with its macos input on, is the one CI cell that does; there they act
 # only because the Shell job's step Install bash 5.1 or later (macOS) puts a link to /bin/bash first on PATH, ahead of
 # Homebrew's bash, so in a macOS cell on CI (CI=true, uname Darwin) a bash 5.1 or later first on PATH fails these
 # cases instead of skipping them, and the gate cannot go unchecked there with every check green (the gate audit's F1).

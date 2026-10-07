@@ -4,24 +4,138 @@ name: CI
 # postal/), the shell surfaces (hooks / postal / manager), and the VS Code
 # extension build; and scan the whole history for credentials (the secrets job).
 #
-# LINUX runs on every push to a batch branch (batch/**), on the weekly schedule and by hand; it is
-# free on a public repo, with no minute cap. Member PRs and merges to main run none of it (2026-09-27;
-# a copy of the secrets job runs on each push whose commit carries secret-scan.yml and on each push to
-# an open pull request's branch, and that file's header says why and which pushes start no run of it):
+# LINUX runs on every push to a batch branch (batch/**) and by hand, and on a weekly schedule under the
+# smaller shape alone (THE SHAPE SWITCH, below). Member PRs and merges to main run none of it (2026-09-27; a copy of
+# the secrets job runs on each push whose commit carries secret-scan.yml, and that file's header says
+# why and which pushes start no run of it):
 # the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate, and
 # scripts/batch.py land refuses a batch whose head does not contain main, reading main again right
 # before the merge, so the merge commit's tree is the batch head's tree, the one this workflow tested
 # on the batch push; a move of main after that last read is not stopped, and batch.py finish reports
-# it loudly from the merge commit's first parent (docs/batching.md). A private repository is billed
-# for each run by the job-minute, each job rounded up to a whole minute. Run 36716348831, a dispatch
-# of 2026-09-30, ran on the public runner (4 CPUs and 16 GB; the private one has 2 CPUs and 8 GB, and
-# no run has been measured there); by that rule its Linux jobs come to 214 minutes, all of this
-# workflow a batch push runs (211 in the dispatch before it, run 36664031774). The same push also
-# runs secret-scan.yml's copy of the secrets job, about 3 minutes a run (2 to 5 measured, and more
-# as the history grows; that file's header gives the runs), once for the push and once for the pull
-# request when the batch PR is open. A manual run or the weekly schedule adds the macOS cells: 132
-# runner minutes in run 36716348831, billed at about ten times the Linux rate, so about 1,320 Linux
-# minutes' worth, and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
+# it loudly from the merge commit's first parent (docs/batching.md).
+# THE SHAPE SWITCH (2026-10-06): the python job runs in one of two shapes, chosen by three lines that must agree.
+# full, the shape as built: every batch push runs Python 3.10, 3.11, 3.12, 3.13 and 3.14t, and nothing runs
+# on a schedule.
+# smaller: a batch push runs 3.12 and 3.14t alone; a weekly scheduled run on main runs 3.10, 3.11 and 3.13, on Linux
+# alone, with every other Linux job; a manual run still runs all five. In both shapes each interpreter runs as
+# SHARD_COUNT shard jobs on Linux under the same caps, and the macOS cells run only on a manual run with its macos input
+# on. The three lines: the on: block's two schedule lines, the schedule: key and its one cron entry, both commented
+# under full and both live under smaller, and the 'full' or 'smaller' literal that opens the python job's
+# python-version expression. Switching the shape is a three-line change: edit all three lines, and
+# tests/test_ci_shards.py fails unless the three agree (the schedule lines live under full would bill a weekly run
+# nobody chose; commented under smaller, 3.10, 3.11 and 3.13 would never run; one schedule line live without the other
+# makes the file invalid). One line cannot carry the choice: the on: block takes no expression, and a job's strategy
+# reads only the github, needs, vars and inputs contexts; a repository variable would put the choice outside this
+# file, and a job-level if: would report a skipped job as a success. The schedule takes two lines, not one, because the
+# one-line form (a flow mapping inside a flow sequence) is a YAML form tests/test_ci_sdk_pin.py refuses. Under full no
+# scheduled run can start, since the on: block has no schedule trigger. Under smaller, a
+# break that shows only on 3.10, 3.11 or 3.13 lands on main and shows at the next weekly run, up to a week later, and a
+# scheduled run tests main's latest commit with main's copy of this file, so the weekly run starts only once the switch
+# is on main. Under smaller, make the first run on the private repository a manual run of main, which runs every
+# interpreter, so that the shard caps, which take projections for 3.10, 3.11 and 3.13, can be re-derived from it,
+# since its batch pushes carry 3.12 and 3.14t alone; and a ruleset that requires checks by name must not require the
+# 3.10, 3.11 or 3.13 jobs, which no batch push reports (docs/batching.md, the maintainer section).
+# Cost: a public repository is not billed for these runs. A private one is billed for each run by
+# the job-minute, each job rounded up to a whole minute, and this repository moves to a private one
+# (approved 2026-10-04) whose runner, the private runner here, has 2 CPUs and 8 GB, where the public
+# runner has 4 CPUs and 16 GB. Run 36716348831, a dispatch of 2026-09-30, ran on the public runner;
+# by that rule its Linux jobs come to 214 minutes, all of this workflow a batch push runs (211 in the
+# dispatch before it, run 36664031774). On the private runner each Linux Python interpreter runs as
+# SHARD_COUNT jobs (tests/conftest.py), four today, each running one worker over one shard of the test
+# files: two workers peak at 10.9 GB (the Run pytest step gives the measurement), and one worker
+# running the whole suite outgrew 8 GB in a local run, as did the larger of two shards, the largest
+# of three passed the 5 GB a shard's worker is held to, and so did one of four by the hash alone,
+# which is why the shards follow a weighted rule (the python job's cap comment gives those
+# measurements; this file ran the cells on one worker each, on the premise that one worker fits,
+# until the first of them). The estimate (four shards at the weighted rule, 2026-10-05): each shard
+# job is that shard's measured one-worker phase (the python job's cap comment: 3.12's own for 3.12,
+# 3.14t's own for 3.14t, and the slower of the two for 3.10, 3.11 and 3.13) plus the time before and
+# after the Run pytest step in that interpreter's cell of run 37212676524 (batch/2026-10-04b, 18 to
+# 27 s before and 2 to 3 s after), each job rounded up to a whole minute: 12, 25, 11 and 21 or 22
+# minutes for an interpreter's four shards (10, 21, 11 and 21 for 3.12; 12, 25, 8 and 21 for 3.14t),
+# 337 for the twenty shard jobs (352 for the fifteen jobs of three shards). The other Linux jobs at their times in
+# that run, on the public runner, but for Vendored tooling: 50 for Served pages, 41 for Shell, 28 for Vendored
+# tooling, from its step's time on 2 CPUs (below) and the job's 11 s outside that step in that run, where its time in
+# that run gave 15, 7 for vscode-extension and 3 for the secrets job, 129 minutes (116 with Vendored tooling at 15; 95
+# in run 37179700919 and 111 in run 37128151383 at the public runner's times). With secret-scan.yml's copy, about
+# 3 minutes (below), a batch run bills about 469 minutes (484 with three shards). At 0.006 dollars a minute, GitHub's
+# posted rate for its Linux 2-core x64 runner (read 2026-10-05), that is about 2.81 dollars a run. The caps and this
+# estimate take different phases: the caps take each shard's slowest measured run of the three runs of four shards on
+# 3.12 and 3.14t, and for 3.10, 3.11 and 3.13 their projected phases of each shard's slowest 3.12 run, by that shard's
+# own ratios (the python job's cap comment), the estimate the weighted run's measured ones, and with 3.10, 3.11 and
+# 3.13 at those projected phases and 3.12 and 3.14t at the weighted run's, a batch run would bill about 477 minutes, 8
+# more than the estimate's 469. The fork had 30 CI runs on batch branches in the 30 days to 2026-10-04 and none in the
+# 30 days before (23 in September; 27 since 2026-09-21, when batches began to land daily, about 58 a month at that
+# rate), so about 84 dollars a month at 30 runs and about 163 at 58. A manual run, Linux alone by default (below),
+# bills about 466 minutes, about 2.80 dollars. Manual runs are counted at the normal pace, one or two a month, here
+# two: of the 29 in the 30 days to 2026-10-04, 28 came from 2026-09-27 on, CI-infrastructure work on four branches,
+# and one came in the 22 days before. So about 15,000 minutes and about 90 dollars a month for this workflow at 30
+# batch runs, and about 28,100 minutes and about 169 dollars at 58.
+# The repository's other workflows add about 4,200 minutes a month, about 25 dollars, at the pace of
+# the week to 2026-10-04 (2026-09-28 to 2026-10-04) scaled to 30 days
+# (tests/test_ci_cost_estimate.py holds these sums to their inputs). The rates for secret-scan.yml
+# and pr-tier.yml were measured on 2026-10-05 and supersede the 2,730 and 2,290 minutes a month this
+# estimate gave them before. secret-scan.yml runs on each push, a batch push included (a batch run's
+# figure above counts that copy); the other pushes were 238 in that week by the repository activity
+# API (187 branch pushes, 35 branch creations, 3 force-pushes and 13 merges to main; pushes to batch
+# branches and branch deletions not counted), where the earlier 212
+# counted this workflow's runs on pull requests outside batch branches and on pushes to main, so
+# about 1,020 a month at 3 billed minutes a run (75 over its 25 runs in that week), about 3,060
+# minutes. pr-tier.yml runs on each pull request opened, reopened, labeled or unlabeled: 152 in that
+# week (47 pull requests opened, by the pulls API, and 95 labels added, 10 removed and none
+# reopened, by the issue-events API), where the earlier 534 counted every run of that week, when
+# main's copy also ran on each push to a pull request and each edit; those 534 runs billed 535
+# minutes (one took 2), so about 650 minutes a month. ledger.yml and pr-orphans.yml run on each push
+# to main and docs.yml on those that touch the site's inputs: 32 runs and 39 billed minutes in that
+# week (13, 13 and 6 runs; docs.yml's other 4 runs were on pull requests), about 170 minutes a
+# month. docs.yml also runs on each pull request that touches the site's inputs (its header names
+# them), a trigger on main since 2026-10-05. At that week's pace that is 78 runs: the openings of
+# and pushes to such pull requests that started a run of pr-tier.yml then, whose copy on main ran on
+# both (on 20 pull requests, their files read on 2026-10-06; a newer push cancels an older run, so
+# fewer may bill), at 1 billed minute a run (each of its 4 runs on a pull request that week), about
+# 330 minutes a month. tier-policy.yml's one job is skipped outside the project's repository (its
+# job-level if:), so its runs bill nothing. So about 19,200 minutes and about 115 dollars a month in all at 30 batch
+# runs, and about 32,300 minutes and about 194 dollars at 58. Those are the full shape's figures. Under the smaller
+# shape (above), by the same method, a batch run's shard jobs are 3.12's and 3.14t's alone, 129 minutes, so a batch
+# run bills about 261 minutes, about 1.57 dollars; the weekly run bills 3.10's, 3.11's and 3.13's shard jobs,
+# 208 minutes, and the other Linux jobs, 129, without secret-scan.yml's copy: the weekly run bills about 337 minutes,
+# about 2.02 dollars, so about 1,440 minutes and about 9 dollars a month at 30/7 (about 4.3) runs a month; a manual
+# run is unchanged. With 3.10, 3.11 and 3.13 at the caps' projections, a weekly run would bill about 345 minutes, 8
+# more than the estimate's 337. So about 10,200 minutes and about 61 dollars a month for this workflow under the
+# smaller shape at 30 batch runs, and about 17,500 minutes and about 105 dollars at 58, and about 14,400 minutes and
+# about 87 dollars a month with the other workflows at 30 batch runs, and about 21,700 minutes and about 130 dollars
+# at 58: about 64 dollars a month less than full at 58. The shape switch's three lines (above) decide which of the two
+# is billed: flipping them from full to smaller is the whole change. These dollars are the list price, and every
+# minute here would be billed at list price: GitHub documents 50,000 included minutes a month for Enterprise Cloud on
+# standard GitHub-hosted runners such as these, charged to the repository's owner (read 2026-10-05), and the owner's
+# other repositories use them up in about the first week of each month. One of them alone used about 28,000 on 1 to 4
+# October 2026, a pace that spends the 50,000 in about seven days (its runs' jobs read from the jobs API, each rounded
+# up to a whole minute; the owner's billing figures could not be read). The times of this workflow's other Linux jobs
+# are the public runner's, on 4 CPUs and 16 GB, but for Vendored tooling's. A local measurement on 2026-10-05, under a
+# systemd CPUQuota of 200 percent against 400 percent, found the served-page tests and the bats suites barely slower
+# on 2 CPUs: a sample of the served-page tests ran 539 s against 554 s, and two samples of the bats suites ran
+# 9 percent longer and 17 percent shorter (the second moved by the machine's load). That sample does not cover the
+# Vendored tooling job: its step is node --test, which runs os.availableParallelism() - 1 test files at once, three on
+# the public runner's 4 CPUs and one on the private runner's 2, and measured the same way on 2026-10-06 the step took
+# 1664.87 s on 2 CPUs against 1326.29 s on 4, 25.5 percent longer, where its time in run 37212676524 was 834 s; the
+# estimate bills that 2-CPU time (the job's comment gives the measurement). Two things are not measured: the private
+# runner's 8 GB memory limit and its speed per core.
+# The first private batch run confirms the Served pages, Shell and Vendored tooling caps, and the shard caps are
+# re-derived from its times (the python job's cap comment). The
+# estimate made for one worker per cell, before the first measurement: by the serial ratio measured on
+# four CPUs (1437 s against 739 s) the cells of
+# run 36716348831 would take about 40 to 53 minutes each, and those of run 37158350467 about 61 to
+# 74, so a batch run's Linux jobs would bill about 325 minutes by run 36716348831 and about 444 by
+# run 37158350467, whose Linux jobs bill 279 on the public runner (each cell's pytest step scaled by
+# that ratio, every other job at its public time). The first batch push on the private runner gives the
+# measured and billed figures. The same push also runs secret-scan.yml's copy
+# of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
+# about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
+# runs). A manual run (workflow_dispatch) runs the Linux jobs alone by default, in both shapes the jobs and cells a
+# batch push runs under full, but not secret-scan.yml's copy, about 2.80 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
+# says why it is off by default) it adds the macOS cells: 132 runner minutes in run 36716348831,
+# billed at about ten times the Linux rate, so about 1,320 Linux minutes' worth, about 8 dollars,
+# and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
 # ended 52 minutes into its pytest step when the per-test timeout stopped its in-process run on a
 # test that hung (the same hang is in main's macOS runs), and the bats cell failed 11 s into its
 # test step without running a test (bats could not gather the tests: macOS's bash 3.2 rejected the
@@ -31,25 +145,17 @@ name: CI
 # the batch branches and the branches of the open and merged PRs (the runs the Shell job's cap
 # comment reads), in run 37045964763 (a dispatch of fork PR 940's branch on 2026-10-02, a branch
 # that installs gitleaks and a newer bash on macOS, since merged), its time from the jobs API.
-# Going private needs a change to this file before the first private batch push. The Linux Python
-# cells' two workers do not fit the private runner (they peak at 10.9 GB; the Run pytest step gives
-# the measurement), so the cells must run serially, and by the serial ratio measured there (1437 s
-# against 739 s) the cells of run 36716348831 would take about 40 to 53 minutes each, and those of
-# run 37158350467, the run the python job's 50-minute Linux cap is sized from, about 61 to 74, every
-# one past that cap. So run them serially with a larger cap (T230b's rule, at the python job's
-# timeout, gives about 63 minutes for run 36716348831's slowest cell and about 84 for run
-# 37158350467's, both past the 50-minute ceiling tests/test_ci_bats_bound.py holds) or split the
-# suite across more cells. Estimated so, a batch run's Linux jobs would bill about 325 minutes there
-# by run 36716348831 and about 444 by run 37158350467, whose Linux jobs bill 279 on the public
-# runner (each cell's pytest step scaled by that ratio, every other job at its public time; nothing
-# has been run on 2 CPUs).
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (a macOS bats
 # job alone has taken 48 min 1 s, above) and the runners are scarcer, so they do NOT run
-# on every push. They run once a week on a schedule (see `on:`) and
-# by hand from the Actions tab ("Run workflow") when you want a cross-platform
-# check before a release or after touching a platform-sensitive surface (launchd,
-# the folder opener, the CLI scope).
+# on every push. From 2026-09-16 they also ran once a week on a schedule; that run is paused until
+# the first month's bill on the private runner is read (see `on:`), and the smaller shape's weekly run
+# takes none of them. They run on a
+# manual run that asks for them: tick the macos box in the Actions tab's "Run workflow"
+# form, or run `gh workflow run CI --ref <branch> -f macos=true`. Ask for them when you
+# want a cross-platform check before a release (scripts/release.sh's gate dispatches
+# with the input on) or after touching a platform-sensitive surface (launchd, the
+# folder opener, the CLI scope).
 # On a macOS dev box, the pre-push hook runs the same suites locally, so the
 # common macOS-only breakages (a real browser opening, a GNU-only flag)
 # are caught before the push rather than waiting on this manual run.
@@ -72,18 +178,50 @@ on:
     # is not a trigger: its branch filter selects the BASE branch, so picking out batch PRs there
     # would take a job-level `if:`, and a skipped job reports success.
     branches: ['batch/**']
-  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)
-  schedule:
-    # The macOS cells also run ONCE A WEEK on their own (2026-09-16): with the manual switch alone the
-    # release gate was the first macOS run in two weeks, and it found twenty-nine failures that had
-    # accumulated unseen. One run at a quiet hour Pacific (Monday 10:00 UTC is 03:00 Pacific in summer,
-    # 02:00 in winter); the manual dispatch stays for the release day and for a platform-sensitive change.
-    - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does
+  workflow_dispatch:   # the manual run; its macos input, off by default, adds the macOS cells (below)
+    # The macos input (2026-10-05): a manual run runs the Linux jobs alone unless the input is true. To ask for the
+    # macOS cells, tick the box in the Actions tab's "Run workflow" form, or run `gh workflow run CI --ref <branch>
+    # -f macos=true`. The reason is cost control, as for the paused weekly run: the macOS cells bill at about ten
+    # times the Linux rate, about 8 dollars of macOS minutes a dispatch by the header's figures (132 runner minutes in
+    # run 36716348831, a floor), where a run's Linux jobs come to about 3 dollars. Each matrix job's os: expression
+    # selects macOS on a dispatch only when the input is true, and never on a batch push or on the schedule event
+    # (tests/test_ci_macos_input.py holds the input and the gate). scripts/release.sh, whose release gate
+    # is the macOS run, dispatches with the input on.
+    inputs:
+      macos:
+        description: 'Also run the macOS cells (about 8 dollars of macOS runner minutes a run)'
+        type: boolean
+        default: false
+  # The weekly schedule, lines 1 and 2 of the shape switch (the header's THE SHAPE SWITCH): both
+  # commented under full, the shape as built, so no scheduled run can start; both live under smaller,
+  # where the weekly run on main runs 3.10, 3.11 and 3.13 on Linux alone, with every other Linux job.
+  # Line 3 is the python job's python-version expression; switch all three (tests/test_ci_shards.py
+  # fails unless they agree).
+  # The weekly macOS run stays PAUSED (2026-10-04) until the first month's bill on the private runner is
+  # read, in both shapes: on a private repository every run is billed, and the macOS cells bill at
+  # about ten times the Linux rate (about 1,320 Linux minutes' worth in run 36716348831, the header's
+  # figure). No matrix job's os: expression names the schedule event, so the smaller shape's weekly run
+  # takes no macOS cell; bringing them back is a change to the three os: expressions
+  # (tests/test_ci_macos_schedule.py holds the schedule lines and the pause). From 2026-09-16 to
+  # 2026-10-04 the macOS cells ran ONCE A WEEK on their own: with the manual switch alone the release
+  # gate was the first macOS run in two weeks, and it found twenty-nine failures that had accumulated
+  # unseen. Until they are back, a manual dispatch with its macos input on is the release day's and a
+  # platform-sensitive change's run.
+  # The smaller shape's weekly run is scheduled for Monday 10:17 UTC (03:17 Pacific in summer, 02:17 in
+  # winter), at minute 17 rather than on the hour, since GitHub documents that scheduled runs are delayed
+  # more at the start of each hour and that some may be dropped. The scheduled time is not the start
+  # time: main's weekly cron at 10:00 UTC started 6 h 16 min to 9 h 6 min late on this repository (runs
+  # 35624503138, 36461933863 and 37360905751, 09:16 to 12:05 Pacific), and about as late on the project
+  # (runs 35623182872, 36461122557 and 37359769689). tier-policy.yml's hourly cron at minute 17 ran about
+  # 5 times a day rather than 24 (146 scheduled runs from 2026-09-09 to 2026-10-06), so minute 17 did not
+  # keep that cron on time, and this run may start in the Pacific working morning.
+  # schedule:   # shape switch, line 1 of 3: commented under 'full', live under 'smaller'
+  #   - cron: "17 10 * * 1"   # shape switch, line 2 of 3: commented under 'full', live under 'smaller'
 
 # A newer push to a BATCH BRANCH cancels the older in-flight run on that branch:
 # a rebuild's new head supersedes the old one, whose verdict nobody reads and
 # whose minutes would still be spent. The event is part of the key on purpose: a
-# dispatch (the macOS gate, on main or on a batch branch) is keyed apart from
+# dispatch (the macOS gate with its macos input on, on main or on a batch branch) is keyed apart from
 # that ref's pushes, so a push never cancels it; a bare ref key let an
 # auto-merged PR cancel the in-flight release run mid-watch (2026-07-27).
 # main is not a push trigger (see `on:`), but the group still keys a push to
@@ -101,7 +239,7 @@ concurrency:
 
 jobs:
   python:
-    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(', shard {0}', matrix.shard) || '' }})
     runs-on: ${{ matrix.os }}
     # Every job is time-boxed. Without this a test that BLOCKS (waiting on a socket,
     # a prompt that never comes) burns the 6h default before
@@ -110,8 +248,8 @@ jobs:
     # 600 s per-test timeout plus setup, or a stall that begins late in the run is killed by
     # this cap first - the identical silence the per-test timeout exists to end. On 2026-09-03 the
     # measured pytest phases ran 160-300 s, so 15 min left ~100 s of headroom and 25 min was
-    # 300 + 600 + setup with margin for a slow runner. The macOS cells (a manual dispatch or the
-    # weekly schedule) run the same suite on the image's slower runners, and the suite grows with
+    # 300 + 600 + setup with margin for a slow runner. The macOS cells (a manual dispatch, and the
+    # weekly schedule until its pause) run the same suite on the image's slower runners, and the suite grows with
     # every merge: 17 to 26 minutes on 2026-09-16 (the 3.10 cell cancelled at 25 min 27 s under a
     # 25-minute cap), 33 to 35 minutes on the dispatch of 2026-09-24 03:48 UTC, and on the release
     # dispatch five hours later (run 35976250043) the 3.13 cell finished green in 38 min 52 s while
@@ -121,42 +259,173 @@ jobs:
     # the rule gave 53 to 54. macOS gets 60, the pin's ceiling (past an hour a hung cell eats the
     # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
-    # runs longer than the ceiling allows. Linux gets 50 by the same rule, applied to the finished
-    # Linux cells among the runs on main, on the batch branches and on the branches of the open and
-    # merged PRs (a cell cancelled at a cap has no measured length; the Shell job's cap reads the
-    # same runs), read at 03:32 UTC on 2026-10-04: the slowest, the 3.14t cell of run 37158350467 (a
-    # dispatch of fork PR 959's branch on 2026-10-03, job 111306365110), took 2276 s in its pytest
-    # step with two workers and 32 s in the steps before it, so the rule gives 2276 + 600 + 32 =
-    # 2908 s, about 48 min 28 s, past the 35 minutes main had and past the 40 that fork PR 926's
-    # branch set on 2026-09-30 from run 36664031774 (whose slowest Linux pytest step took 1572 s)
-    # before it set 50 on 2026-10-02, and 50 leaves about 1 min 32 s. Each step's time is the
-    # jobs API's.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 50 }}
+    # runs longer than the ceiling allows.
+    # Linux: each interpreter runs as SHARD_COUNT jobs (tests/conftest.py), four today, one for each shard of the test
+    # files (the matrix's shard axis below; tests/conftest.py's CI's shards section states the rule that puts each file
+    # in one shard), and each job runs ONE worker over its shard on the private runner (2 CPUs and 8 GB; the Run pytest
+    # step says why). The shards exist because one worker running the whole suite does not fit 8 GB. A local measurement
+    # on 2026-10-04 found it: the Run pytest step's command at this branch, on a fresh checkout, under a systemd
+    # CPUQuota of 200 percent and an 8 GiB memory cap with no swap, on a shared machine whose 1-minute load was 62 at
+    # the start and 36 to 44 at the end, outgrew the cap. The one worker reached 8 GiB and was killed by the memory cap,
+    # once in the 3.12 run and twice in the 3.14t run (xdist started a new worker each time and failed the test it was
+    # running; the worker was about 7.2 GB resident at 81 percent of the suite), so the runs' phases, 4283 s and 4411 s,
+    # include those restarts, and 8 GB does not hold one worker of this suite. This file ran the cells on one worker
+    # each, on the premise that one worker fits, until that measurement.
+    # Two shards did not fit either. Measured the same way on 2026-10-05 (1-minute load 21 to 54), shard 1's pytest
+    # phase was 1098 s on 3.12 and 1211 s on 3.14t, its worker peaking at 4.01 and 4.51 GB resident, but shard 2's
+    # worker reached 6.66 GB resident on 3.12 (the scope's peak, page cache included, 6.92 GB), past the 6 GB a shard
+    # may take on an 8 GB runner, which leaves the rest to the runner's own system. So the count went to three.
+    # Three shards fit, with too little room. Measured on 2026-10-05 the same way: the Run pytest step's command at this
+    # branch with the cell's ROMP_TESTS_SHARD, on a fresh checkout, under a CPUQuota of 200 percent and an 8 GiB memory
+    # cap with no swap, with bats, zsh, gitleaks and perf off PATH as on the runner, on a shared machine whose 1-minute
+    # load was 27 to 80. The pytest phase on 3.12 and on 3.14t, then the worker's peak resident memory on each (the
+    # scope's peak, page cache included, in brackets): shard 1, 661 s and 678 s, 2.99 and 3.05 GB (3.16 and 3.24); shard
+    # 2, 930 s and 981 s, 3.04 and 2.89 GB (3.82 and 3.32); shard 3, 2348 s and 2459 s, 5.38 and 5.60 GB (5.57 and
+    # 5.81). No worker was killed. By the rule below the three phases gave caps of 25, 30 and 55 (678 + 600 + 27 =
+    # 1305 s, 981 + 600 + 27 = 1608 s and 2459 + 600 + 27 = 3086 s). Shard 3's worker was over 5 GB, the target set on
+    # 2026-10-05 for each shard's worker, which keeps about 1 GB of the 6 GB for the files' growth, so the count went to
+    # four.
+    # Four shards by the hash alone did not meet the target either. Measured the same way on 2026-10-05 (1-minute load 14
+    # to 61), the pytest phase on 3.12 and on 3.14t, then the worker's peak on each (the scope's peak in brackets): shard
+    # 1, 553 s and 559 s, 2.32 and 2.30 GB (2.55 and 2.64); shard 2, 1482 s and 1438 s, 2.64 and 2.71 GB (3.56 and
+    # 3.35); shard 3, 661 s and 466 s, 2.31 and 2.47 GB (2.42 and 2.60); shard 4, 1145 s and 1222 s, 4.72 and 5.13 GB
+    # (4.86 and 5.28). One module put shard 4 over: tests/test_thread_stop_census.py raised its worker's peak by 2.41 GB.
+    # So the shards follow a weighted rule (tests/conftest.py's CI's shards section): that module is listed for shard 1,
+    # whose worker held the least where it runs, and every other file keeps its hash shard.
+    # Four shards at the weighted rule fit, each worker at or under 5 GB on both interpreters. Measured the same way on
+    # 2026-10-05 (1-minute load 15 to 66): shard 1, 529 s and 679 s, 4.25 and 4.60 GB (4.41 and 4.79); shard 2, 1220 s
+    # and 1451 s, 2.62 and 2.73 GB (3.50 and 3.37); shard 3, 614 s and 409 s, 2.30 and 2.46 GB (2.42 and 2.60); shard 4,
+    # 1237 s and 1204 s, 2.74 and 2.75 GB (3.08 and 2.99). No worker was killed in any of these runs. Each phase is
+    # pytest's summary figure rounded up to the second, on a shared machine whose load moves it: shard 2 on 3.12 took
+    # 1482 s in the hash-alone run and 1220 s in this one, over the same files.
+    # Four shards at the weighted rule still fit after main was merged into this branch: main's 447 commits added 33
+    # test files (6, 10, 10 and 7 to shards 1 to 4) and changed 173. Measured the same way at the merged head (the
+    # merged-main run; shard 2 on 2026-10-05 and the other shards on 2026-10-06, 1-minute load 8 to 23): shard 1, 519 s
+    # and 543 s, 4.53 and 4.83 GB (4.68 and 5.02); shard 2, 1293 s and 1361 s, 2.80 and 3.09 GB (3.71 and 3.35); shard
+    # 3, 554 s and 466 s, 3.08 and 3.95 GB (3.20 and 4.09); shard 4, 1066 s and 1143 s, 2.98 and 3.01 GB (3.33 and
+    # 3.27). No worker was killed. The largest worker, shard 1's on 3.14t, is 0.17 GB under the 5 GB target. Every
+    # worker's peak rose against the weighted run: by 0.18 to 0.36 GB in shards 1, 2 and 4, and in shard 3 by 0.78 GB on
+    # 3.12 and 1.48 GB on 3.14t; on 3.12 the four shards ran 64, 194, 192 and 208 more tests. The phases moved both
+    # ways, and these runs started at 1-minute loads of 8 to 21 where the weighted run's started at 15 to 64, so the two
+    # runs' phases are not a like-for-like comparison. For shard 3, two instrumented runs, one at each head, back to back
+    # on 2026-10-06 (the merged head's from 00:44 UTC at a 1-minute load of 17.90, the earlier head's from 00:54 UTC at
+    # 22.44, 3.12 and 3.14t side by side in each; pytest -v with each output line stamped, so not a wall measurement),
+    # found the phase 12 to 13 percent longer at the merged head, 577 s against 515 s on 3.12 and 487 s against 431 s on
+    # 3.14t, and the run at the earlier head reached the weighted run's worker peaks again, to within 0.02 GB. The
+    # shard's worker held about 0.1 GB more once its 234 test files were collected (224 before), and the new
+    # tests/test_ephemeral_port_census.py, which walks every file under tests/, added about 0.5 GB on 3.12 and 0.6 GB on
+    # 3.14t in its setup and kept it. So the worker held about 0.8 GB more on 3.12 and about 1.0 GB more on 3.14t when
+    # tests/test_served_pins_read_elements.py began, the file in which both instrumented 3.14t runs peak.
+    # Each shard's cap is T230b's rule for its governing phase, then the margin rule: the phase, plus the 600 s per-test
+    # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, and then 5 minutes more when that
+    # leaves less than 60 s between the sum and the cap. The figures are in the expression's matrix.shard clauses, one
+    # for each shard. Both the margin rule and the governing phase's use of each shard's slowest run (below) were
+    # decided on 2026-10-05, because a margin under a minute is far inside the run-to-run variation measured above
+    # (shard 2's two 3.12 phases over the same files differ by 21 percent), and a higher cap costs nothing on a normal
+    # run, since billing counts only the minutes a job uses, and about 5 billed minutes on a wedged one (3 cents at the
+    # header's rate), where a timeout shows as a cancelled, red job and costs a rerun. A shard's governing phase is the
+    # largest of every measured run of the shard above, in the three runs of four shards, the hash-alone run, the
+    # weighted run and the merged-main run, on 3.12 and 3.14t, and of each of those runs' projected phase on each
+    # interpreter not measured locally, 3.10, 3.11 and 3.13: the run's 3.12 phase times that shard's Run pytest seconds
+    # on that interpreter over its seconds on 3.12 in run 37415499848 (a dispatch of this branch on 2026-10-06, one
+    # worker a job on the public runner), rounded up to the second. A projection, not a measurement. Each shard takes
+    # its own ratio, since the ratio varies by shard (2026-10-06). In that run the Run pytest steps took, by shard:
+    # shard 1, 523 s on 3.10, 580 s on 3.11, 581 s on 3.12 and 556 s on 3.13, ratios to 3.12 of 0.90, 1.00 and 0.96;
+    # shard 2, 1883 s on 3.10, 1219 s on 3.11, 1204 s on 3.12 and 1417 s on 3.13, ratios to 3.12 of 1.56, 1.01 and 1.18;
+    # shard 3, 633 s on 3.10, 560 s on 3.11, 663 s on 3.12 and 572 s on 3.13, ratios to 3.12 of 0.95, 0.84 and 0.86;
+    # shard 4, 1146 s on 3.10, 890 s on 3.11, 1104 s on 3.12 and 1067 s on 3.13, ratios to 3.12 of 1.04, 0.81 and 0.97.
+    # Shard 2's 3.10 ratio is the largest, and it moved between runs: 1.45 in run 37415501622 (2000 s against 1383 s,
+    # the same day, with two memory-sampling steps added to this file; its shard 2 jobs ran to the end, with three
+    # failures), and 0.91 in run 37344074782 (1265 s against 1396 s), a dispatch before main was merged into this
+    # branch. The slowest tests of that shard on 3.10 are the PeerStateLock census tests of
+    # tests/test_postal_remote_sids_mirror.py: in run 37415499848 the two slowest took 158 s and 123 s on 3.10, against
+    # 32 s and 25 s on 3.12. Shard 2's projection multiplies figures from both sides of main's merge: the hash-alone
+    # run's 1482 s was measured before it and the 1.56 after it. The rule takes that product as the worst case, as it
+    # takes every shard's slowest run. So a measured run governs shards 1 and 3, and 3.10's projection governs shards 2
+    # and 4. The time before the step is the 27 s in the 3.14t cell of run 37212676524 (batch/2026-10-04b, on the public
+    # runner; job 111476102341), the longest of its five Linux cells; in run 37415499848 the time before the step was 16
+    # to 33 s in its twenty Linux shard jobs, and at 33 s each cap is the same. A shorter time before the step never
+    # gives a higher cap: from 23 to 33 s the rule and the margin rule give each shard its cap, and from 16 to 22 s they
+    # give shard 2 50, under its cap of 55. So, for each shard, the run that governs, its projection, the sum, the
+    # margin under the rule's figure and the cap: shard 1, measured, the weighted
+    # run's 679 s on 3.14t, and 679 + 600 + 27 = 1306 s, so 25, a margin of 194 s; shard 2, 3.10 projected from the
+    # hash-alone run's 1482 s on 3.12, times 1883/1204 is 2318 s, and 2318 + 600 + 27 = 2945 s, so 50 by the rule, a
+    # margin of 55 s, under 60 s, so 55; shard 3, measured, the hash-alone run's 661 s on 3.12, and 661 + 600 + 27 =
+    # 1288 s, so 25, a margin of 212 s; shard 4, 3.10 projected from the weighted run's 1237 s on 3.12, times 1146/1104
+    # is 1285 s, and 1285 + 600 + 27 = 1912 s, so 35, a margin of 188 s. Shards 1 and 4 ran other files in the
+    # hash-alone run than the rule CI runs gives them: tests/test_thread_stop_census.py ran in shard 4 there and in
+    # shard 1 in the weighted run and the merged-main run, which follow that rule. The caps count all three runs;
+    # counting the weighted run and the merged-main run alone would change neither cap: shard 1's cap already comes from
+    # the weighted run, and shard 4's cap already comes from the weighted run. The merged-main run governs no cap:
+    # counted alone it would give 25, 50, 25 and 35. Until 2026-10-06 the caps were 25, 45, 30 and 40, by one ratio for
+    # the whole suite, from run 37212676524 (1639 s on 3.10, 1554 s on 3.11, 1248 s on 3.12 and 1422 s on 3.13), in
+    # which 3.10's ratio to 3.12 was 1.31; each shard's own ratio took shard 2 from 45 to 55, shard 3 from 30 to 25 and
+    # shard 4 from 40 to 35. Each cap is re-derived from the first run on the private repository's 2-CPU runners, whose
+    # jobs give the private runner's own phases and setup times; the fork's public runners have more CPUs, so the fork's
+    # CI times are not that measurement. Each step's time is the jobs API's. tests/test_ci_bats_bound.py holds each cap
+    # to its governing phase and the rule, and this comment to the figures. The caps are keyed on the shard alone and
+    # hold in both shapes (the header's THE SHAPE SWITCH): under smaller a batch push runs 3.12 and 3.14t alone, and the
+    # caps keep the projections of 3.10, 3.11 and 3.13, since those interpreters still run on the weekly run and on a
+    # manual run.
+    # 90 is the figure each shard's cap held before the shards were measured. The whole suite's estimated one-worker
+    # phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
+    # 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its pytest step,
+    # scaled by the serial ratio measured on four CPUs (1437 s against 739 s, the Run pytest step's measurement) to
+    # 4496 s, and 4496 + 600 + 25 = 5121 s, about 85 min 21 s, so 90 (the 25 s before the step is that job's on the
+    # public runner). With two workers on the public runner the same rule gave 50 (the 3.14t cell of run 37158350467:
+    # 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR
+    # 926's branch set on 2026-09-30 from run 36664031774 and the 35 main had before that PR.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 55 || matrix.shard == '3' && 25 || 35 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
       fail-fast: false
       matrix:
-        # macOS is in the matrix ONLY on a manual run (workflow_dispatch) or the weekly
-        # schedule; a batch push gets Linux alone. See the billing note in the header.
-        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
-        python-version: ['3.10', '3.13']
-        include:
-          - os: ubuntu-latest
+        # macOS is in the matrix ONLY on a manual run (workflow_dispatch) whose macos input is
+        # true; a batch push, the weekly schedule (live under the smaller shape alone), and a manual
+        # run with the input left off, get Linux alone. See the billing note in the header.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # Line 3 of the shape switch (the header's THE SHAPE SWITCH): its first literal is the shape, 'full' or
+        # 'smaller'. Under full every run gets all five interpreters. Under smaller a manual run gets all five, the
+        # weekly schedule 3.10, 3.11 and 3.13, and any other run (a batch push; a pull_request, were it a trigger)
+        # 3.12 and 3.14t, so a trigger added later cannot quietly run all five. The values are JSON strings, so 3.10
+        # stays "3.10". An exclude entry below whose value a run's list lacks matches nothing: GitHub's matrix parser
+        # (MatrixBuilder.cs in actions/runner) checks an exclude entry's keys alone and matches its values against each
+        # cell, and run 37344074782, a manual run with macos off, accepted six entries naming macos-latest, a value its
+        # os list lacked. 3.14t is setup-python's spelling for the free-threaded build (see the header).
+        python-version: ${{ fromJSON('full' == 'smaller' && github.event_name != 'workflow_dispatch' && (github.event_name == 'schedule' && '["3.10","3.11","3.13"]' || '["3.12","3.14t"]') || '["3.10","3.11","3.12","3.13","3.14t"]') }}   # shape switch, line 3 of 3: 'full' or 'smaller'
+        # The shards: tests/conftest.py assigns each test file to one of SHARD_COUNT shards (its CI's shards
+        # section), and the Run pytest step hands it the cell's shard, so it skips the other shards' files. The axis
+        # lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it to the constant, and the shards to a partition of
+        # the files).
+        shard: ['1', '2', '3', '4']
+        exclude:
+          # macOS runs 3.10 and 3.13 alone, as before the shards (the header says why), and unsharded (below)
+          - os: macos-latest
             python-version: '3.11'
-          - os: ubuntu-latest
+          - os: macos-latest
             python-version: '3.12'
-          - os: ubuntu-latest
-            python-version: '3.14t'   # setup-python's spelling for the free-threaded build (see the header)
+          - os: macos-latest
+            python-version: '3.14t'
+          # One macOS job for each of those, the shard-1 cell, whose shard value the Run pytest step leaves empty,
+          # so it runs every test file under the macOS cap, as before the shards. GitHub reads an exclude entry whose
+          # value the os list lacks (a batch push lists no macOS) as matching nothing; confirmed on the new repo's
+          # first CI run.
+          - os: macos-latest
+            shard: '2'
+          - os: macos-latest
+            shard: '3'
+          - os: macos-latest
+            shard: '4'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
-        # pytest-xdist: the Run pytest step passes -n on every cell, two workers on ubuntu-latest
-        # and -n 0, an in-process run, elsewhere, and pytest refuses -n without it (the reasons
-        # are on that step).
+        # pytest-xdist: the Run pytest step passes -n on every cell, one worker (-n 1) on
+        # ubuntu-latest and -n 0, an in-process run, elsewhere, and pytest refuses -n without it
+        # (the reasons are on that step).
         run: python -m pip install --upgrade pip pytest pytest-timeout pytest-xdist
       - name: Install cryptography
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
@@ -187,9 +456,15 @@ jobs:
         # the constant. A second residual, of the interpreter having the SDK: on the 3.10 to 3.13 cells (and
         # the two macOS cells; not 3.14t, which defers annotations) tests/test_session_host.py run ALONE fails
         # 8 SpawnSecrets tests, its Popen patch live when the module first imports the SDK and mcp's win32
-        # utilities evaluate subprocess.Popen[bytes] at class definition; the one pytest invocation below
-        # collects an SDK-importing module first and is green. Pre-existing on any such interpreter; the
-        # class's docstring has the detail; a follow-up.
+        # utilities evaluate subprocess.Popen[bytes] at class definition. It is green when the pytest process
+        # that runs it also collects a module that imports the SDK, wherever that module sorts, since pytest
+        # collects every file before any test runs: each macOS cell's one invocation collects the whole suite,
+        # and on Linux the shard that holds tests/test_session_host.py collects such modules, today shard 2,
+        # with tests/test_host_transport.py among them. That is where tests/conftest.py's rule (its CI's shards
+        # section) puts the files today, and nothing keeps an SDK importer in that file's shard: a change to the
+        # shards that leaves it in a shard with none turns the 3.10 to 3.13 shard jobs that run it red with
+        # these 8 SpawnSecrets failures. Pre-existing on any such interpreter; the class's docstring has the
+        # detail; a follow-up.
         # The constant pins the SDK alone. Its dependency closure resolves fresh on every run (26 packages on
         # 2026-09-20: the 3.12 cell's pip line on run 35518107329 lists 27 names with the SDK, anyio among
         # them), so a red that no commit explains is a transitive release, and the pin test below does not
@@ -231,7 +506,7 @@ jobs:
         # that name, among others), and every module whose text spells neither pytest nor py.test and holds no star
         # import, which the census does not parse). pytest-xdist's two plugins, which the box's default run
         # loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
-        # the command's arguments, so the flag blocks anyio's plugin in the Linux cells' two workers as well
+        # the command's arguments, so the flag blocks anyio's plugin in the Linux cells' worker as well
         # (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag
         # both did). Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
@@ -360,6 +635,13 @@ jobs:
           # whose run block changes the runner without spelling those names, such as one that replaces or
           # shadows the python on PATH, reinstalls pytest, or deletes or edits test files.
           ROMP_SDK_REQUIRE: "1"
+          # The cell's shard (2026-10-04): the matrix's shard value on the ubuntu-latest cells, where each interpreter
+          # runs as one job per shard, and empty on every other cell, the macOS cells among them, which run every test
+          # file. tests/conftest.py reads it, removes it from the environment so no process a test starts inherits it,
+          # and skips the test files its rule assigns to the other shards; a value that names no shard is a
+          # usage error before collection. tests/test_ci_shards.py holds the value per cell and the shards to a
+          # partition of the collected test files.
+          ROMP_TESTS_SHARD: ${{ matrix.os == 'ubuntu-latest' && matrix.shard || '' }}
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
           # would otherwise turn it back on, with a RuntimeWarning in pytest's summary that the
@@ -373,29 +655,37 @@ jobs:
         # timeout in test_session_move_live. Its timer waits on an Event, so it can never itself
         # consume a patched sleep. --durations names the slowest tests on every run so a creeping
         # one is visible before it stalls.
-        # Two workers on the ubuntu-latest cells, none elsewhere (-n 2 and -n 0, 2026-09-25):
-        # serially the cells had reached the 25-minute cap they had then (this fork's main, run
-        # 35890814789: the 3.14t cell at 24 min 35 s). Measured on 2026-09-22 with Python 3.10 at
-        # this step's other flags on a four-CPU budget (a systemd CPUQuota of 400 percent; GitHub
-        # documents its Linux runner for a public repository at 4 CPUs and 16 GB), the suite took
-        # 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two workers at 10.9 GB
-        # (decimal, page cache included), about 5 GB a worker; three workers peaked at 15.8 GB,
-        # near the 16 GB GitHub documents. The macOS cells stay serial under their 60-minute cap:
-        # GitHub documents that runner for a public repository at 3 CPUs and 7 GB (arm64), below
-        # the two-worker peak, and two workers have not been measured on it.
-        # The count keys on matrix.os, as timeout-minutes does, and names the one label whose
-        # documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, rather than
-        # excluding macOS or matching every Linux runner (runner.os), so a runner the matrix adds
-        # later runs serially until it is measured.
+        # One worker on the ubuntu-latest cells, none elsewhere (-n 1 and -n 0, 2026-10-04): the
+        # private runner has 2 CPUs and 8 GB, and two workers do not fit it, nor does one worker over the whole
+        # suite, so each ubuntu-latest job runs one worker over one shard of the test files (the
+        # ROMP_TESTS_SHARD key above; the job's cap comment has the measurement). Measured on 2026-09-22
+        # with Python 3.10 at this step's other flags on a four-CPU budget (a systemd CPUQuota of 400
+        # percent; GitHub documents its Linux runner for a public repository at 4 CPUs and 16 GB),
+        # the suite took 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two
+        # workers at 10.9 GB (decimal, page cache included), about 5 GB a worker; three workers
+        # peaked at 15.8 GB. The Linux cells ran two workers on the public runner from 2026-09-25 to
+        # 2026-10-04 (serially they had reached the 25-minute cap they had then: this fork's main,
+        # run 35890814789, the 3.14t cell at 24 min 35 s); the two-worker peak is past the private
+        # runner's 8 GB, and a local run on 2026-10-04 found one worker's peak past it too (the job's
+        # cap comment), which is why the cells are split into shards. One worker (-n 1) rather than an in-process run (-n 0) or no xdist: under
+        # the one worker a test the per-test timeout ends fails by name and the other tests run on
+        # (below, as under two workers), where in an in-process run, the macOS
+        # cells', the timeout's thread method ends the whole run at the hung test; and the worker
+        # costs one worker's memory beside the controller's, which collects no tests. The macOS
+        # cells stay serial under their 60-minute cap: GitHub documents that runner for a public
+        # repository at 3 CPUs and 7 GB (arm64), below the two-worker peak, and two workers have
+        # not been measured on it.
+        # The count keys on matrix.os, as timeout-minutes does, and names the one label the
+        # private runner's shape was sized for, rather than excluding macOS or matching every
+        # Linux runner (runner.os), so a runner the matrix adds later runs serially until it is
+        # measured.
         # GitHub substitutes the expression into this line before the shell runs it. -n 0 is
         # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
         # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
         # as merged, but for the Linux figure: the runs before 2026-09-30 they cite are
-        # romp-on/romp's Actions runs of its serial suite. With two workers the measurement above
-        # put this fork's Linux cells at about half their serial time; the suite has grown since,
-        # and the Linux cap of 50 is sized from the slowest finished two-worker Linux cell, the
-        # 3.14t cell of this fork's run 37158350467 (the job's comment above).
-        # Under the Linux cells' workers a timeout ends the worker process running the hung test:
+        # romp-on/romp's Actions runs of its serial suite. The Linux figures are sized for one worker
+        # over one shard on the private runner (the job's comment above).
+        # Under the Linux cells' worker a timeout ends the worker process running the hung test:
         # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
         # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
         # which xdist's transport (execnet) points at /dev/null, so the log names the test but
@@ -405,7 +695,7 @@ jobs:
         # exiting, and so does a concurrent.futures thread of either daemon flag still running a
         # task, since concurrent.futures' exit hooks join every thread in their tables: serially the
         # cell hangs until the thread ends or the job cap cancels it, and under the Linux cells'
-        # workers the controller kills a worker still alive when the run ends, so the run would
+        # worker the controller kills a worker still alive when the run ends, so the run would
         # pass. tests/conftest.py's session-end thread guard restores that signal on the Linux
         # cells: at each process's last test it gives each non-daemon thread, and each thread in
         # those tables, up to 10 s to end (it leaves out the main thread, and any thread whose name,
@@ -421,12 +711,12 @@ jobs:
         # concurrent.futures worker, which the interpreter wakes at exit, and a thread stopped only
         # after the check (a config cleanup, pytest_sessionfinish or pytest_unconfigure).
         # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
-        # auto-load in this process, in the Linux cells' two workers (xdist hands each the command's
+        # auto-load in this process, in the Linux cells' worker (xdist hands it the command's
         # arguments, the flag among them) and in every pytest child the suite spawns in this interpreter
         # (the launchers under tests/ pass the same flag); the SDK step's comment states the decision
         # and its measurement, and tests/test_ci_sdk_pin.py holds the flag on every pytest invocation
         # in this file (its population check) and on the launchers under tests/ its launcher census reads.
-        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
+        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }} -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
@@ -453,8 +743,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) or the weekly schedule; see the header note.
-        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS only on a manual run (workflow_dispatch) whose macos input is true; the weekly schedule (the smaller
+        # shape's) gets Linux alone; see the header note.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       # bats comes from the pinned release tarball, NOT apt: an Azure apt-mirror outage hung
@@ -580,9 +871,9 @@ jobs:
 
   secrets:
     # The same job runs as secret-scan.yml's secrets job on each push, of a branch or a tag, whose
-    # commit carries that file and on each push to an open pull request's branch (its header names the
-    # pushes that start no run), since this workflow runs only on a batch push, by hand and on the
-    # schedule (2026-09-30).
+    # commit carries that file (its header names the pushes that start no run), since this workflow
+    # runs only on a batch push and by hand (2026-09-30; that file's pull_request trigger was dropped
+    # on 2026-10-04, and this workflow's weekly schedule runs under its smaller shape alone, the header's).
     # tests/test_ci_secret_scan.py holds the two copies equal, every key but the name, so a change
     # here is made there too; the reasons for the steps are written here only.
     name: Secret scan (gitleaks)
@@ -659,39 +950,56 @@ jobs:
     # took 31 min 50 s of its 35-minute cap: Run bats 700 s, then this step 1180 s, where at
     # ffab236bd (run 36308512751) the step took 67 s. The growth is fork PR #780's tracked-changes
     # bash guard: batch 925, the one merge between the two heads, added 27,628 lines under tools/
-    # and vendor/track-changents/, about 25,700 of them #780's. node --test runs files side by side
-    # but a file's tests one after another, and the tests of one file,
-    # tools/romp-track-bash-guard.test.mjs, which run the guard as a process and real bash and dash
-    # over tables of shell texts (zsh too where it is installed; the Linux runner has none), add up
-    # to about 1100 s in that run's log (the slowest single test 222 s). That file sets the step's
-    # length; the other 104 files finish inside it.
+    # and vendor/track-changents/, about 25,700 of them #780's. In run 36388144219, on the public runner's
+    # 4 CPUs, node --test ran files side by side but a file's tests one after another, and the tests
+    # of one file, tools/romp-track-bash-guard.test.mjs, which run the guard as a process and real
+    # bash and dash over tables of shell texts (zsh too where it is installed; the Linux runner has
+    # none), add up to about 1100 s in that run's log (the slowest single test 222 s). In that run
+    # that file set the step's length; the other 104 files finished inside it.
     # Raising the Shell cap instead would hide the growth, and with the step inside the Shell job a
     # PR that added more than about three minutes of bats time (the job's margin at 1d591384e was
     # 190 s) ran that job past its cap.
-    # The cap here is the expected time and half again. Linux: 1180 s is 19 min 40 s, and half
-    # again is about 30 minutes. macOS has never run this step on the fork (it came after Run bats,
-    # which was red on every macOS run there). The macOS cells ran the Python suite about twice as
-    # long as the Linux cells (the python job's comment above), and macOS has zsh, whose legs the
-    # Linux runner skips. On a development box zsh adds about 18 to 29 percent to that file: 1368 s
-    # against CI's 1121 s, less 44 s of work only the box does (a history sweep CI's shallow
-    # checkout skips, and a slower strace leg), and 1571 s against 1222 s in two matched concurrent
-    # runs with and without zsh. So the rule gives about 70 to 76 minutes (twice 19 min 40 s, 18 to
-    # 29 percent more, and half again), an estimate that already includes the half again. The
+    # The cap here is the expected time and half again, rounded up to a multiple of 5 minutes.
+    # Linux: on the private runner's 2 CPUs node --test runs one test file at a time, since by
+    # default it runs os.availableParallelism() - 1 files at once, 3 on the public runner's 4 CPUs
+    # and 1 on 2. So the expected time is the step's time on 2 CPUs, measured on 2026-10-06 in the
+    # review's first round of fork PR 986: the step's command over this branch, with node 22, two
+    # copies at once on a development box, took 1664.87 s under a CPUQuota of 200 percent and
+    # 1326.29 s under 400 percent, 25.5 percent longer, with 1148 tests and no failure in each;
+    # three node:test files that each wait 2 s took 2.95 times as long pinned to 2 CPUs as to 4
+    # (taskset; 6.28 s against 2.13 s).
+    # 1664.87 s is 27 min 45 s, and half again is 41 min 37 s, so 45. The box has zsh, whose legs
+    # the Linux runner skips (below), so that time counts legs CI does not run; the cap and the
+    # header's cost estimate take it as measured. The header's sentence on the first private batch
+    # run names this job for that run to confirm. Until 2026-10-06 the Linux cap was 30: the step's
+    # 1180 s on the public runner, 19 min 40 s, and half again, 29 min 30 s. macOS has never run
+    # this step on the fork (it came after Run bats, which was red on every macOS run there). The
+    # macOS cells ran the Python suite about twice as long as the Linux cells (the python job's
+    # comment above), and macOS has zsh, whose legs the Linux runner skips. On a development box zsh
+    # adds about 18 to 29 percent to that file: 1368 s against CI's 1121 s, less 44 s of work only
+    # the box does (a history sweep CI's shallow checkout skips, and a slower strace leg), and
+    # 1571 s against 1222 s in two matched concurrent runs with and without zsh. So the estimate
+    # before rounding is about 70 to 76 minutes (twice the public runner's 19 min 40 s, 18 to 29
+    # percent more, and half again), an estimate that already includes the half again. The
     # macOS cap is 90, 14 minutes past the estimate's upper figure, because two of its inputs are
     # weak: the factor of two comes from the Python suite rather than this step, and about three
     # quarters of that file's time on the box was spent in child processes (the guard run as a node
     # process, bash and dash), whose cost on a macOS runner has not been measured. 90 is past the
     # hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds it at 60 or less,
-    # since past an hour a hung cell holds the dispatch): the rule's figure for this step, 70 to 76
-    # minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
-    # minutes. The first macOS run (a dispatch or the weekly schedule) measures the step, and the
-    # cap is re-read from it. A batch push's run starts the Linux cell alone, so batches are not
-    # affected.
+    # since past an hour a hung cell holds the dispatch): the estimate before rounding for this step,
+    # 70 to 76 minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
+    # minutes. The first macOS run (a dispatch with its macos input on, the one run that selects macOS)
+    # measures the step, and the cap is re-read from it. A batch push's run starts the Linux
+    # cell alone, so batches are not affected.
     # Follow-ups, in this order: (1) make the hook's per-paren case check linear (skipNested in
     # hooks/romp-track-bash-guard.mjs tests /\bcase\b/ over the whole slice read so far at every
     # `)`: about 210 s of this step on CI, and a stall of about 16 s in the hook itself on a command
     # nested 2000 deep, on a development box); (2) split tools/romp-track-bash-guard.test.mjs so
-    # node runs its parts side by side.
+    # node runs its parts side by side. A split shortens the step only where node runs files side
+    # by side, on the public runner's 4 CPUs and in the macOS cell. On the private runner's 2 CPUs
+    # node runs one file at a time, so there a split also needs the step to pass --test-concurrency
+    # above 1 (vscode-extension's npm test passes 8), and any gain there is to be measured on that
+    # runner, not assumed.
     # The manager handshake step stays in the Shell job for T224's reason (upstream's ruleset
     # requires that job's check). This step is the fork's alone (upstream's ci.yml has no such
     # step), and the fork has no ruleset or branch protection: scripts/batch.py land reads the batch
@@ -703,12 +1011,13 @@ jobs:
     # tests/test_ci_vendored_job.py holds this job, its comments aside, equal to a literal (every
     # key, step and field, both caps and the node version), so a change here changes that literal
     # too, on purpose.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 90 || 30 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 90 || 45 }}
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) or the weekly schedule, as in the Shell job; see the header note.
-        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS only on a manual run (workflow_dispatch) whose macos input is true, as in the Shell job; the weekly
+        # schedule (the smaller shape's) gets Linux alone; see the header note.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       # Node 22, pinned as the Shell job pins it for the handshake step, so the step never rides
@@ -746,10 +1055,10 @@ jobs:
     # kept because 931's leg, one file whose tests run in order, was timed on a development box and
     # not on the runner, where it may take longer. A bound of 7 minutes (420 s) is about that step
     # time and half again, the rule the vendored-tooling and served-pages jobs size their caps by,
-    # applied here to the step's bound. tools/ci-browser-legs.test.mjs holds the step's bound within
-    # the cap less the recorded job time, which counts the step's own seconds as well: 565 s and
-    # 420 s make 16 min 25 s, so 17. The job's own time and half again, about 14 min 8 s, is under it
-    # too.
+    # applied here to the step's bound. tools/ci-browser-legs.test.mjs
+    # holds the step's bound within the cap less the recorded job time, which counts the step's own
+    # seconds as well: 565 s and 420 s make 16 min 25 s, so 17. The job's own time and half again,
+    # about 14 min 8 s, is under it too.
     # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
     # step and field, the cap included), so a change here changes that literal too, on purpose. The
     # Browser legs step below carries a bound of its own, 5 minutes (its timeout-minutes), the
@@ -852,9 +1161,9 @@ jobs:
         # one hung leg fails by name (node cancels that file and ends its process at the bound, naming it, and runs the
         # other files on; a leg's own { timeout } does not end the process, since a live browser handle keeps it up
         # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
-        # the batch push's CI run, or in a workflow_dispatch of the PR's branch (which also runs the macOS cells), since
+        # the batch push's CI run, or in a workflow_dispatch of the PR's branch (the macOS cells too if its macos input is on), since
         # the PR's own sweep does not run this step (scripts/sweep.py's docstring: it runs only in GitHub's CI, in every
-        # run of this workflow: a batch push, a manual run, the weekly schedule), and raises the step's timeout-minutes
+        # run of this workflow: a batch push, a manual run, and the weekly run under the smaller shape), and raises the step's timeout-minutes
         # when the total needs it, and the job's cap with it when the new bound does not fit the margin (the job
         # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
         # seconds, job minutes and the job's cap:
@@ -910,10 +1219,56 @@ jobs:
     # marker is absent, as it is after an npm run build, so the first lab built that step's dist
     # again. On main's run the repeated steps took about 16 s: the checkout 6 s, node 1 s, npm ci
     # 3 s, the cache 3 s, Chromium 1 s, and the job's own set-up and post steps.
-    # The cap is the expected time and half again: the step's 1930 s and about 16 s of setup is
-    # about 32 min 30 s, and half again is about 49 minutes, so 50. That also covers the step's
-    # other rule, the phase plus the 600 s per-test timeout plus setup (about 42 min 30 s), and the
-    # three PRs above together (about 329 s more, a job of about 37 min 55 s).
+    # The cap is the job's expected time and half again, rounded up to a multiple of 5, the rule
+    # the vendored-tooling job sizes its cap by, with the slowest job as the expected time: the job
+    # has run within seconds of the 50-minute cap main's ci.yml gives it, and half again leaves room
+    # for the suite to grow, which the slowest job plus 10 minutes did not (2026-10-06). The rule
+    # reads every job, a job cancelled at the cap counted at its cancel time as a lower bound on its
+    # true duration, since leaving such a job out reads the rule on the miss side (2026-10-06). A
+    # higher cap costs nothing on a run that finishes under it: a job bills the minutes it runs.
+    # The evidence is the first attempt of run 37390122873 (fork PR 968's checks): job
+    # 112032952459 (run 37390122873, attempt 1), at least 3016 s, cancelled at the 50-minute cap,
+    # started at 23:48:18 UTC on 2026-10-05 and completed at 00:38:34 UTC on 2026-10-06, its served
+    # step cancelled at 00:38:31, 2993 s after the step began; its log's last progress line, 83
+    # percent of the tests, came 47 min 41 s into the step. The run's second attempt re-ran the job,
+    # which succeeded in 47 min 10 s, so the run concluded success and its default job listing shows
+    # only that job. 3016 s is 50 min 16 s, from the job's start to its completion as the jobs API
+    # gives them, and half again is 4524 s. 50 min 16 s and half again is 75 min 24 s, so 80.
+    # Two more jobs were cancelled at that cap: job 110492093901 (run 36898691471, attempt 1), at
+    # least 3000 s (2026-10-01), and job 111708325878 (run 37293073638, attempt 1), at least 3000 s
+    # (fork PR 978's checks, 2026-10-05; the run's second attempt re-ran the job, which succeeded in
+    # 40 min 12 s). Their records run 3300 s and 3301 s from start to completion, ending 300 s and
+    # 301 s after the cap fired, and hold no step times and no log. GitHub cancels a job that
+    # reaches its timeout-minutes, and its documentation of a cancellation gives the runner 5
+    # minutes, after which the server forcibly terminates the jobs still running. Those five
+    # minutes are that wait, and the records, with no step times and no log, do not show the job
+    # running in them, so each job is counted at the cap's 3000 s, which gives 75. Counted at
+    # 3300 s, each would give 85.
+    # The measured jobs: main's push run after batch 970 took 49 min 51 s (run 37340134888, 2991 s;
+    # it concluded success), fork PR 977's checks 49 min 9 s (run 37389629730, 2949 s; success), and
+    # main's weekly scheduled run at the same commit 47 min 56 s (run 37360905751, 2876 s; the job
+    # succeeded, and the run concluded failure for another job). Read at 01:28 UTC on 2026-10-06,
+    # this workflow's runs since this job's first, on 2026-09-28, hold 265 completed jobs of this
+    # name, 24 of them cancelled. The jobs API lists 278 records of this name when every run
+    # attempt is listed (filter=all): re-running a run's failed jobs lists the run's
+    # already-finished job of this name again in the later attempt, with the same times and
+    # runner, and 13 of the 278 are such copies. Listing only each run's latest attempt, the API's
+    # default, gives 260. The slowest that finished is run 37340134888's, which alone would give
+    # 75. Of the 24 cancelled jobs, the three above were cancelled at the cap and the others ended
+    # sooner, the longest at 2266 s, so none of those moves the figure. All ran on the public
+    # runner; each job's time is the jobs API's, from its start to its completion.
+    # The python job's rule, the phase plus the 600 s per-test timeout plus the time before the
+    # step, gives 3589 s for run 37340134888 (its step's 2973 s, the 600 s and the 16 s before the
+    # step), about 59 min 49 s, 1211 s under 80. The header's sentence on the first private batch
+    # run names this job for that run to confirm.
+    # Until 2026-10-05 the cap was 50, the expected time and half again from the step's own time:
+    # the step's 1930 s in run 36388144219 and about 16 s of setup were about 32 min 30 s, and
+    # half again about 49 minutes; 50 then also covered the phase plus the 600 s per-test timeout
+    # plus setup (about 42 min 30 s) and the three PRs above together (about 329 s more, a job of
+    # about 37 min 55 s). On 2026-10-05 it was set to 60, the slowest job then measured (49 min
+    # 11 s, in run 37212676524) plus 10 minutes, the Shell job's rule; on 2026-10-06 to 75 for a
+    # few hours, the slowest job that finished and half again; and then to 80, when the rule came
+    # to read the cancelled jobs too.
     # No strategy key: the job has no matrix, so fail-fast would have no effect (it cancels a
     # matrix's other cells when one fails, and this job has one cell).
     # Last in the file: tests/test_ci_sdk_pin.py appends synthetic steps at the end of the file and
@@ -923,7 +1278,14 @@ jobs:
     # batch as any other red does.
     # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
     # step and field, the cap included), so a change here changes that literal too, on purpose.
-    timeout-minutes: 50
+    # It also holds the cap at or above the rule's figure for the slowest of the jobs it records
+    # (SERVED_RUNS), every job, a cancelled one at its counted time; each measured job named above
+    # as `run <id>, <s> s` and each cancelled one as `job <id> (run <id>, attempt <n>), at least
+    # <s> s`, and each job named in that second form recorded there with those figures; and the
+    # rule's sentence above (the slowest time, that time and half again, and the cap) to that time
+    # and to this line, so a lower cap, or a newly measured or cancelled slowest job, changes that
+    # module too.
+    timeout-minutes: 80
     defaults:
       run:
         working-directory: vscode-extension
@@ -972,7 +1334,9 @@ jobs:
         # as "optional", which the switch leaves alone (WebKit's system libraries would need apt, which
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
-        # the job's one long phase (1930 s at the fork's main 1d591384e, against the job's cap above),
+        # the job's one long phase (2973 s of the job's 49 min 51 s in run 37340134888, the slowest that finished of the jobs
+        # the cap above is sized from, and at least 2993 s in the job the cap cancelled in run 37390122873's first attempt;
+        # it took 1930 s in run 36388144219, before it had a job of its own),
         # and every served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
         # (the maintainer's round 1 of the wsBytesByHost review), both pinned by tests/test_served_labs_under_ci.py: the pytest line
         # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the dist
