@@ -349,7 +349,12 @@ process.stdout.write(JSON.stringify({
         js = km._LANDING_ERRS_JS
         self.assertIn("function shown(k){return document.body.classList.contains('po-'+k);}", js)
         self.assertIn("if(st[k]==='down'&&shown(k))return true;", js, "a down pane counts only while visible")
-        self.assertIn("shown(m.app)", js, "and only a visible pane's drop logs an entry")
+        # and only a visible pane's drop logs an entry: since iOS item 4b (2026-10-03) the entry is written when the drop's
+        # reconnect fails, so the gate sits where it is written. This pins WHERE the gate is read; the behaviour (a hidden
+        # pane's failure writes nothing, the same drop is written at a failure once the pane is shown) is executed in
+        # tests/test_conn_lost_on_failure.py LogWaitsForTheFailure
+        self.assertIn("if(!shown(x.app))return;delete lost[k];window.__rompNotify('conn',x.text);", js,
+                      "the entry is written only for a pane the shell shows")
         self.assertIn("window.addEventListener('romp-panes',paint)", js, "re-check the cue on pane toggle")
         # the pane toggle actually fires the romp-panes event this listens for, and both scripts ride the shell
         self.assertIn("new Event('romp-panes')", km._LANDING_COLLAPSE_JS)
@@ -378,7 +383,8 @@ process.stdout.write(JSON.stringify({
         self.assertLess(js.index(split_col), js.index(parked), "after the split-column branch: a parked column never writes the first column's key")
         self.assertLess(js.index(parked), js.index(upstream), "before the tracking line: a park returns before up or down is written")
         self.assertIn("if(st[k]==='down'&&shown(k))return true;", js, "liveDown reads down alone: parked does not light it")
-        self.assertIn("if(s==='down'&&prev!=='down'&&shown(m.app))", js, "the log's transition rule is down's alone")
+        self.assertIn("if(s==='down'&&prev!=='down')\nlost[m.app]=", js,
+                      "the log's transition rule is down's alone (since iOS item 4b it records the drop in lost, and a failure writes it)")
         shim = km._shim("feed")
         self.assertIn('parked=true;returnParked=true;netState("parked");', shim, "the shim's one parked word")
         self.assertEqual(shim.count('netState("down")'), 2, "abandon() and onclose post down as before; the park posts none")

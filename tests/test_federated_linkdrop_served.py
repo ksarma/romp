@@ -335,8 +335,9 @@ class LinkProxy:
     the loop's 0.2 s), so without the wait a dial straight after drop() connected to it and was reset, and a resume()
     straight after drop() bound a second listener beside it through SO_REUSEPORT, and the system could hand a dial to the
     closed one, which reset it the same way (the maintainer's round 7, correctness-2). None of this was measured on
-    another system: LinkProxyEnds, which a scheduled Python cell also runs on macOS, requires there only that such a dial
-    does not connect. LinkProxyEnds holds the port bound from construction until stop().
+    another system: LinkProxyEnds also runs on macOS, in a macOS Python cell, which only a manual dispatch of CI with its
+    macos input on starts, and requires there only that such a dial does not connect. LinkProxyEnds holds the port bound
+    from construction until stop().
 
     The upstream socket's timeout is cleared once it connects, as the kernel's own relay clears it (kernel.py _remote_ws:
     create_connection's timeout would otherwise cut the long-lived splice), so a pair stays up however long its remote side

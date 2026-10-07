@@ -8,6 +8,8 @@ import ast
 import atexit
 import collections
 import concurrent.futures.thread    # the session-end thread guard reads its exit-join table (EXIT_JOIN_TABLES)
+import fnmatch
+import hashlib
 import importlib.util
 import json
 import math
@@ -724,14 +726,17 @@ def pytest_configure(config):
     worker, until the emitting module inserts the venv path; a controller whose interpreter has no SDK,
     which on a box is every controller; and the CI steps that install
     no SDK, today the served-pages job's served-page pytest step, which loads this conftest (the Python matrix
-    cells' interpreter, the five Linux cells and the two macOS cells on a weekly or dispatch run, imports the class
-    since the SDK install step, in the controller and, on the Linux cells' two workers since batch 917, in each
-    worker, since the package is installed in that interpreter rather than added to the path at import). A
+    cells' interpreter, the five Linux cells and the two macOS cells on a dispatch run with its macos input on,
+    imports the class since the SDK install step, in the controller and, on the Linux cells' workers since batch 917 (two, and one since
+    2026-10-04), in each worker, since the package is installed in that interpreter rather than added to the path at
+    import). A
     module-level warnings.filterwarnings in the emitting module does not
     hold either: pytest wraps collection and each test in catch_warnings, which restores the filter list on
     exit. addinivalue_line appends to the ini list, so an ini file added later merges with this line. Both
-    of the SDK's message forms ("...: permission_mode ..." and "... for: <tools>") start with the prefix."""
+    of the SDK's message forms ("...: permission_mode ..." and "... for: <tools>") start with the prefix.
+    Then the run's shard, read before collection starts (the CI's shards section below)."""
     config.addinivalue_line("filterwarnings", "ignore:can_use_tool will not be invoked:UserWarning")
+    _stash_run_shard(config)
 
 
 # No test's git reads the developer's configuration (2026-09-06). Fixture repos are built by `git
@@ -2354,6 +2359,161 @@ def pytest_collectreport(report):
     yield
 
 
+# ---- CI's shards (2026-10-04) ----------------------------------------------------------------------------------------
+# ci.yml's Linux Python cells each run as SHARD_COUNT jobs, one for each shard of the test files, each with one pytest
+# worker. The private runner has 2 CPUs and 8 GB, and one worker running the whole suite does not fit it: a local run of
+# the Run pytest step's command on 2026-10-04, under a CPUQuota of 200 percent and an 8 GiB memory cap with no swap, had
+# its one worker killed by the memory cap once on Python 3.12 and twice on 3.14t, the worker about 7.2 GB resident at
+# 81 percent of the suite (ci.yml's python job comment has the measurement).
+# THE RULE (weighted, 2026-10-05): a test file named in HEAVY_MODULES is in the shard the list gives it; every other test
+# file's shard is the SHA-256 digest of its path relative to the repository root, written with forward slashes
+# ("tests/test_x.py"), its first eight bytes read as a big-endian integer, modulo SHARD_COUNT, plus one (hash_shard).
+# shard_of applies both. It is a function of the path alone, so a new test file under tests/ always lands in exactly one
+# shard (WHERE IT ACTS below says why one outside tests/ does not), and adding, removing or renaming a file moves no
+# other file. Python's built-in hash() is not used: it is salted per process for strings, so two processes could
+# disagree.
+# Why a hash for most files: what a worker holds grows over its process's life (every module it imports stays
+# imported, and the run's caches only grow; a collection of the whole suite alone held more than 5 GB on 2026-10-04,
+# and of one shard about 3.2 GB), so a shard's peak depends on which files, and how many, its one process collects and
+# runs. A hash spreads each family of related modules (the kernel's, the postal service's, the censuses that parse the
+# tree) across the shards in about equal parts, and it needs no upkeep. Whether the split holds each shard under the
+# runner's budget is the measurement in ci.yml's python job comment. Two shards did not: on 2026-10-05, under the
+# runner's shape, shard 2's worker reached 6.66 GB on 3.12, past the 6 GB a shard may take on an 8 GB runner. Three
+# did not meet the target set the same day, 5 GB for each shard's worker, which keeps about 1 GB of the 6 GB for the
+# files' growth: shard 3's worker reached 5.38 GB on 3.12 and 5.60 GB on 3.14t. Four by the hash alone did not either:
+# shard 4's worker reached 4.72 GB on 3.12 and 5.13 GB on 3.14t, and it was one module. In a run of shard 4 on 3.14t
+# that stamped each test's result with the time and sampled the worker every second, the worker was at 2.72 GB when
+# tests/test_thread_stop_census.py began and its peak rose 2.41 GB while that file ran; no other file raised any shard's
+# worker's peak by more than 0.4 GB once the shard's collection was done (in those runs, one of each shard on 3.14t).
+# Why the list: the hash does not weigh a file, so a module that heavy can land in the shard that is already the fullest
+# where it runs, as it did in shard 4. So the heaviest modules are named, each with its measured peak (the module's own run, the Run pytest step's
+# command with the one file named, under the runner's shape), at most one to a shard, each in the shard whose worker
+# held the least where the module runs (the files run in path order, so a module adds to what the files before it
+# left). A module joins the list when a shard passes 5 GB because of it; tests/test_ci_shards.py holds every entry to
+# a test file that exists and to one entry a shard. The list has one entry: of twelve modules measured alone (the
+# censuses that parse the tree, and the files that raised a shard's peak most), the next heaviest,
+# tests/test_session_env.py, peaked at 0.59 GB on 3.12 and 0.74 GB on 3.14t. At this rule each shard's worker stayed at
+# or under 5 GB on both interpreters, 4.60 GB at most (shard 1 on 3.14t; ci.yml's python job comment has the runs).
+HEAVY_MODULES = {
+    # alone: 2.53 GB on 3.12 and 2.81 GB on 3.14t. Shard 1's worker held 1.97 GB on 3.14t where this file runs, the
+    # least of the four shards (shard 4's, where the hash put it, held 2.72 GB)
+    "tests/test_thread_stop_census.py": 1,
+}
+# WHERE IT ACTS: pytest_ignore_collect below, when the run's environment names a shard (SHARD_ENV, set by ci.yml's Run
+# pytest step from the matrix's shard axis on the ubuntu-latest cells, and empty on the macOS cells, which run every
+# file), skips every test file of the other shards before pytest imports it, so a shard's process never imports another
+# shard's modules (a deselection after collection would). A run that names none, every local run among them, skips
+# nothing. The value is read at this file's import and taken once, by the first configure in the process
+# (_stash_run_shard), so a pytest a test runs in this process later is not sharded. That configure removes it from the
+# environment of a process that runs tests, so no process a test starts inherits it (a child pytest over a directory,
+# such as a census that collects the tree, would otherwise collect one shard of it). It leaves it in the environment of
+# an xdist controller (by xdist's own test for one: a dist option other than "no" and a tx list that is not empty),
+# which runs no test and whose workers inherit its environment when it starts them; each worker reads it at its own
+# import and removes it in its own configure. A file named on the command line is not asked about: pytest consults
+# pytest_ignore_collect only for the paths it finds under the ones it was handed. Nor is a test file outside tests/:
+# pytest consults this file's hooks only for paths under tests/, so every shard collects such a file (ci.yml's Run
+# pytest step collects from the repository root), and tests/test_ci_shards.py's census goes red on it, naming it among
+# the files in two or more shards. git ls-files lists no test file outside tests/ (2026-10-06).
+# tests/test_ci_shards.py holds the shards to a partition of the collected test files, each in one shard, none in two,
+# none left out.
+# The rule lives in this file rather than a module of its own because this file imports no module of the repository
+# but the tests package (tests/test_hermetic_kernel_postal.py's direct-import allowlist), and that file's rule holds
+# this file's keyed reads (of the environment, of pytest's options) to literal keys, which is why SHARD_ENV is spelled
+# out where it is read. That file also lists pytest_ignore_collect among the hooks this file may implement.
+SHARD_COUNT = 4   # the one constant: ci.yml's shard axis lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it)
+SHARD_ENV = "ROMP_TESTS_SHARD"   # the variable a run names its shard by (spelled as a literal where it is read)
+SHARD_REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+_RUN_SHARD_TEXT = os.environ.get("ROMP_TESTS_SHARD")
+_RUN_SHARD = pytest.StashKey()
+
+
+def hash_shard(relpath):
+    """The hash half of THE RULE above: the digest's first eight bytes modulo SHARD_COUNT, plus one."""
+    digest = hashlib.sha256(relpath.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % SHARD_COUNT + 1
+
+
+def shard_of(relpath):
+    """The shard, 1 to SHARD_COUNT, of the test file whose repository-relative path is relpath (THE RULE above): its
+    HEAVY_MODULES entry when it has one, else hash_shard."""
+    if relpath in HEAVY_MODULES:
+        return HEAVY_MODULES[relpath]
+    return hash_shard(relpath)
+
+
+def shard_repo_path(path):
+    """path relative to the repository root, with forward slashes: the key shard_of reads."""
+    return os.path.relpath(os.path.realpath(str(path)), SHARD_REPO).replace(os.sep, "/")
+
+
+def parse_shard(text):
+    """The shard a value of SHARD_ENV names: None for an unset or empty value (every file runs), else the integer
+    named by one of the values "1" to str(SHARD_COUNT), compared as written: ASCII digits, with no sign, space or
+    leading zero. Any other value raises ValueError, naming the variable and the value: a shard that does not exist
+    would collect nothing, and a misspelled one must not pass for no shard. The test is that set of values, not
+    str.isdigit and int(): str.isdigit takes non-ASCII digits, which int() either reads as a shard (an Arabic-Indic or
+    a fullwidth digit) or refuses with its own message, which names neither the variable nor this file (a superscript
+    digit), and int() reads "01" as 1."""
+    if text is None or text == "":
+        return None
+    names = tuple(str(k) for k in range(1, SHARD_COUNT + 1))
+    if text not in names:
+        raise ValueError("%s=%r names no shard: it must be empty or one of %s, in ASCII digits (tests/conftest.py, "
+                         "CI's shards)" % (SHARD_ENV, text, ", ".join(names)))
+    return int(text)
+
+
+# pytest's default test-file patterns, which this repository does not change (it has no ini file, and
+# tests/test_thread_stop_census.py holds that); were they changed, a file they add would reach every shard, and
+# tests/test_ci_shards.py's census, which asks pytest which files it makes test modules of, would name it in two
+TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+
+
+def is_test_file(path, patterns=TEST_FILE_PATTERNS):
+    """Whether path is a file pytest makes a test module of: a .py file whose name matches one of `patterns`, matched
+    as pytest's own matcher does: a pattern without a path separator against the file's name, one with a separator
+    against the whole path, with `*/` put before a relative pattern."""
+    path = str(path)
+    if not path.endswith(".py") or not os.path.isfile(path):
+        return False
+    for p in patterns:
+        if os.sep not in p:
+            target = os.path.basename(path)
+        else:
+            target = path
+            if os.path.isabs(path) and not os.path.isabs(p):
+                p = "*" + os.sep + p
+        if fnmatch.fnmatch(target, p):
+            return True
+    return False
+
+
+def _stash_run_shard(config):
+    """Take the run's shard into the config, once a process (a later configure in the process, a pytest a test runs in
+    it, gets none), refusing a value that names no shard as a usage error before collection starts; then remove the
+    variable from the environment unless this process is an xdist controller, whose workers inherit its environment.
+    The test is xdist's own for handing tests to workers (its _is_distribution_mode), which needs both a dist option
+    other than "no" and a tx list that is not empty. A worker has dist "no", and a run with neither -n nor --tx has no
+    tx, so --dist alone runs in process; xdist's tryfirst pytest_cmdline_main fills tx from -n before this configure."""
+    global _RUN_SHARD_TEXT
+    text, _RUN_SHARD_TEXT = _RUN_SHARD_TEXT, None
+    try:
+        config.stash[_RUN_SHARD] = parse_shard(text)
+    except ValueError as e:
+        raise pytest.UsageError(str(e))
+    if config.getoption("dist", "no") == "no" or not config.getoption("tx", None):
+        os.environ.pop("ROMP_TESTS_SHARD", None)
+
+
+def pytest_ignore_collect(collection_path, config):
+    """Skip a test file of another shard (True); say nothing of any other path (None), so pytest's own rules decide."""
+    shard = config.stash.get(_RUN_SHARD, None)
+    if shard is None or not is_test_file(collection_path):
+        return None
+    return True if shard_of(shard_repo_path(collection_path)) != shard else None
+
+
 # ── thread census (T282) ──────────────────────────────────────────────────────────────────────────────
 # A test that starts a real kernel loop, a backend pump or a fake server must end it before its module ends: a
 # daemon thread that outlives its module runs against whatever the shared modules (the judge, the event model)
@@ -2929,12 +3089,18 @@ def _require_served_test_ran(item, rep) -> None:
 # ci.yml's Run pytest line (no path, no -k, no --ignore) or in its env (no PYTEST_ADDOPTS), and those two are held
 # since round 5's ruling C: tests/test_ci_sdk_pin.py's run_pytest_status refuses a word on that line outside its option
 # allowlist and a key of its merged env outside its env allowlist; no conftest in the tree sets collect_ignore or
-# collect_ignore_glob or defines a collection hook (this file, the only one, implements two reporting hooks,
-# pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no pytest.ini,
-# .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Of the rest of that read,
-# tests/test_thread_stop_census.py's test_the_population_is_what_pytest_collects_under_tests holds pytest.ini,
-# setup.cfg, tox.ini and pyproject.toml absent at the repository root and in tests/ itself; nothing pins the conftest
-# read, .pytest.ini, pytest.toml or .pytest.toml, or any of the seven in a directory below those two.
+# collect_ignore_glob; and the repo has no pytest.ini, .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml,
+# setup.cfg or tox.ini. Of the rest of that read, tests/test_thread_stop_census.py's
+# test_the_population_is_what_pytest_collects_under_tests holds pytest.ini, setup.cfg, tox.ini and pyproject.toml
+# absent at the repository root and in tests/ itself; nothing pins the conftest read, .pytest.ini, pytest.toml or
+# .pytest.toml, or any of the seven in a directory below those two. One collection hook in this file does change what a
+# run collects, on purpose (2026-10-04): pytest_ignore_collect (the CI's shards section above), which, when the run's
+# environment names a shard (ROMP_TESTS_SHARD, an entry of the Run pytest step's env allowlist, set on the
+# ubuntu-latest cells), skips the test files of the other shards, whole files and nothing within one. So the guarded
+# module runs in one shard of each ubuntu-latest interpreter, and in every macOS cell, which names no shard;
+# tests/test_ci_shards.py holds the shards to a partition of the collected test files, each in one shard, none in two,
+# none left out. This file's other collection hooks are two reporting hooks, pytest_make_collect_report and
+# pytest_collectreport, which drop nothing.
 _NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
 
 
