@@ -49,8 +49,7 @@ a fixed label of its own:
   is `HttpOnly` and `SameSite=Lax`, lasts a year, and is named for this kernel,
   so two kernels on one host keep separate sessions. On its own it opens only
   the page documents (the dashboard shell and its pane pages) and the static
-  files (`/dist/`, `/media/` and `/sw.js`), which hold code, one setting
-  (whether task tracking is on), and no session data.
+  files (`/dist/`, `/media/` and `/sw.js`).
 - A **page key**. The sign-in response writes it into this origin's local
   storage; that response is served with `Cache-Control: no-store`, and no other
   response carries the key. The pages send it as an `X-Romp-Key` header (a
@@ -79,7 +78,7 @@ at, or the kernel's own port on `127.0.0.1` or `localhost`), any
 `Origin` header at all, which non-browser clients send and a browser sends on a
 `GET` navigation (a frame's included) and on a load made without CORS (a
 script, an image), whichever page made it. That is why the cookie alone opens
-only the page documents and static files, which hold no session data. The
+only the page documents and static files. The
 WebSocket upgrade is checked the same way. A page whose stored key
 no longer matches its session (two sign-ins that overlapped, or storage cleared
 while the tab was open) gets a refusal of its own and moves to the sign-in
