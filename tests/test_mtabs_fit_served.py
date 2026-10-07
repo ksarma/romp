@@ -78,10 +78,11 @@ wrap only where it still cannot.
   from the shell's 23 degrees to 15 in OKLCH, so it stays as far from the connected node's clay (#c2410c) as the shell's
   red is: 9.04 in OKLab distance x100, where the shell's has 8.94 (romp-manager's call 1 at round 1). Usage keeps its
   resting fill on hover too, as the Remote kernels button does, where the row's accent wash put its muted line at 4.38:1 in
-  the dark theme, under the 4.5:1 text needs (romp-manager's first decision before round 2). And both buttons' labels, the
-  Remote kernels label and Usage's name, keep their resting colour on hover, the card's text colour set on the label
-  itself, where the row's hover colour, the accent, read 3.89:1 on the light theme's button fill, under the 4.5:1 text
-  needs (romp-manager's ruling on round 2's pass).
+  the dark theme, under the 4.5:1 text needs (romp-manager's first decision before round 2). And every label in the row
+  keeps its resting colour on hover, the card's text colour set on each label by one rule for the row's buttons, where the
+  row's hover colour, the accent, read 3.89:1 on the light theme's button fill under Usage's name and the Remote kernels
+  label (romp-manager's ruling on round 2's pass) and 4.15:1 on the light theme's wash under Restart kernel's, under the
+  4.5:1 text needs (romp-manager's ruling at the launch of round 3: the whole row, not a list of labels).
 - The fallback. The action cluster is one element (.mtabs-acts) and the bar may wrap: where the tabs and the three actions
   left do not fit one row (below 322px in Chromium and 318px in WebKit and Firefox, so at 320px in Chromium and not in the
   other two; below 358px in Chromium and 353px in WebKit and Firefox with the Files tab on, so at 320px in all three), the
@@ -222,7 +223,11 @@ out of the layout (its computed display none) while a line shows. Then the card 
 reading and again over a pull the driver aborts in transit (Usage enabled beside USAGE_ERR), Usage's name read with the
 pointer off the row, and the pointer moved onto Usage with its transitions off: the line reads TEXT_FLOOR or more on the
 fill Usage wears hovered, :hover read as the premise, and the name wears its colour at rest and reads TEXT_FLOOR or more
-on that fill. Then a desktop
+on that fill. Then the card opened over the lab's reading again, and every button the row holds, listed from the page (so
+a button added to the row later is read too; the three in MOVED must be among them), hovered in turn from off the row with
+its transitions off, enabled and holding :hover as the premise: each label, every visible, laid-out element holding words of
+its text, reads TEXT_FLOOR or more on the fill its button wears hovered, each composited through the backgrounds and
+opacities out to the first opaque background (romp-manager's ruling at the launch of round 3, item 1). Then a desktop
 window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the
 bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
@@ -316,7 +321,9 @@ built, in Chromium, WebKit and Firefox, both labels' hovered colour is red, the 
 rgb(31, 30, 29) in the light one, which reads 3.89:1 on the hovered fill #e7ded2, under TEXT_FLOOR). In Chromium, a
 mutant of gear.css's label rule that drops either label turns that label's reads red and the other's not, and one whose
 rule does not skip a disabled Usage turns the no-reading leg's name red (rgb(204, 204, 204), the card's text colour,
-where the disabled button wears rgb(110, 118, 129)).
+where the disabled button wears rgb(110, 118, 129)). At the head round 3 reviews, in Chromium, WebKit and Firefox,
+the read of every button in the row is red on Restart kernel's label alone, in the light theme alone, the one label the
+row's hover colour still reached: rgb(194, 65, 12), 4.15:1 on its hovered wash #f4e3d7, under TEXT_FLOOR.
 Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
@@ -1438,6 +1445,72 @@ def _contrast_problems(engine, contrast):
     return out
 
 
+def _through(fg, under):
+    """The pixel the colour fg paints, or with fg None the pixel beside it, through `under`, the driver's layers from fg's own
+    element out to the first opaque background (each its background, background image and opacity) and the opacity of
+    everything above that one: each element's background over what lies under it, then its content (the next element in, or fg
+    at the innermost), then its opacity on the whole group, as normal blending composites. An AssertionError where the layers
+    cannot be measured: no opaque background, a background image, an opacity on or above the opaque one, a colour not rgb()."""
+    layers = (under or {}).get("layers") or []
+    assert (under or {}).get("opaque") is True and layers, "no opaque background under it: %r" % (under,)
+    assert all((ly.get("img") or "none") == "none" for ly in layers), "a background image in its layers: %r" % (layers,)
+    base = _rgba(layers[-1].get("bg"))
+    assert base[3] == 1 and float(layers[-1].get("op")) == 1 and float(under.get("above")) == 1, \
+        "an opacity on or above its opaque background: %r" % (under,)
+    inner = layers[:-1]
+
+    def paint(j, below):
+        inside = _over(_rgba(inner[j].get("bg")), below)
+        content = paint(j - 1, inside) if j else (_over(fg, inside) if fg else inside)
+        op = float(inner[j].get("op"))
+        return tuple(below[i] + op * (content[i] - below[i]) for i in range(3)) + (1.0,)
+    if not inner:
+        return _over(fg, base) if fg else base
+    return paint(len(inner) - 1, base)
+
+
+def _row_problems(engine, contrast):
+    """Every button in the card's row of moved actions, as the page lists them, hovered: each label reads TEXT_FLOOR or more on
+    the fill its button wears hovered, in the dark and the light theme (romp-manager's ruling at the launch of PR 976's round 3,
+    item 1: the whole row, not a list of labels). The list is the page's own, so a button added to the row later is read with no
+    edit here; the three the row holds today (MOVED) must be among those read, so a read that lists fewer is a red, not a pass.
+    Each button must be enabled and hold :hover with the pointer on it (the read is of a hover), and show a label."""
+    out = []
+    for name, theme in THEMES:
+        where = "%s row of moved actions hovered, %s theme (%s)" % (engine, name, theme)
+        rw = (contrast.get(name) or {}).get("row")
+        if not rw:
+            out.append("%s: not read" % where)
+            continue
+        buttons = rw.get("buttons") or []
+        acts = [b.get("act") for b in buttons if b]
+        if rw.get("ended") is not True or rw.get("count") != len(buttons) or not set(MOVED) <= set(acts):
+            out.append("%s: the premise (an opening over the lab's reading whose ask has ended, every button the row holds read, "
+                       "the row's %s among them): ended %r, %r of %r read, acts %r" % (
+                           where, list(MOVED), rw.get("ended"), len(buttons), rw.get("count"), acts))
+        for b in buttons:
+            if not b:
+                out.append("%s: a button the page listed is gone at its read" % where)
+                continue
+            bw = "%s, %r (%s)" % (where, b.get("title"), b.get("act"))
+            if b.get("hovered") is not True or b.get("disabled") is not False:
+                out.append("%s: the premise (enabled, the pointer on it holding :hover): hovered %r, disabled %r" % (
+                    bw, b.get("hovered"), b.get("disabled")))
+                continue
+            if not b.get("labels"):
+                out.append("%s: no label seen" % bw)
+            for lb in b.get("labels") or []:
+                try:
+                    px, fill = _through(_rgba(lb.get("colour")), lb.get("under")), _through(None, lb.get("under"))
+                    ratio = _contrast(px, fill)
+                    if ratio < TEXT_FLOOR:
+                        out.append("%s: its label %r reads %.2f:1 (%s, %s) on the fill its button wears hovered (%s), under %g:1" % (
+                            bw, lb.get("text"), ratio, lb.get("colour"), _hex(px), _hex(fill), TEXT_FLOOR))
+                except (AssertionError, TypeError, ValueError) as e:
+                    out.append("%s: its label %r is unmeasured: %s" % (bw, lb.get("text"), e))
+    return out
+
+
 class MtabsFit(unittest.TestCase):
     """One lab kernel for every leg (setUpClass); each leg is one driver run in one engine."""
     maxDiff = None
@@ -1555,6 +1628,7 @@ class MtabsFit(unittest.TestCase):
         problems += _skew_problems(engine, r.get("skew") or {"vp": list(ACTS)})
         problems += _follow_problems(engine, r.get("follow") or {"vp": list(ACTS), "wide": list(WIDE)})
         problems += _contrast_problems(engine, r.get("contrast") or {})
+        problems += _row_problems(engine, r.get("contrast") or {})
         problems += _height_problems(engine, r.get("contrast") or {})
         self.assertEqual([tuple(x["vp"]) for x in r["rail"]], list(RAIL), engine + ": every rail width was read")
         problems += _rail_problems(engine, r["rail"])

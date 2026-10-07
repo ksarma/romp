@@ -114,13 +114,16 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    round 2): its line in the muted text, Couldn't load, read 4.38:1 on the dark theme's wash, under the 4.5:1 that text
    needs (tests/test_mtabs_fit_served.py reads it hovered in both themes) */
 #rsettings #rs-pact-net:hover:not(:disabled), #rsettings #rs-pact-usage:hover:not(:disabled) { background: var(--btn-bg, #2a2a2a); }
-/* ...and the two buttons' labels, Usage's name and the Remote kernels label, keep their resting colour on hover, the card's
-   text colour set on the label itself, as the unlit glyph's is above, so the row's hover colour (the accent) never reaches
-   them (romp-manager's ruling on PR 976's round 2 pass): on the button's fill the accent read 3.89:1 in the light theme,
-   under the 4.5:1 that text needs, and round 1's ui-3 had the Remote kernels label keep the card's text colour. A disabled
-   button's label keeps the faint colour the button gives it (the rule skips a disabled button). tests/test_mtabs_fit_served.py
-   reads each label hovered in both themes */
-#rs-pact-net:not(:disabled) > span, #rs-pact-usage:not(:disabled) .rs-pact-name { color: var(--fg, #ccc); }
+/* ...and every label in the row, each span a button holds directly (Usage's words, the Remote kernels and the Restart kernel
+   names), keeps its resting colour on hover, the card's text colour set on the label itself, as the unlit glyph's is above,
+   so the row's hover colour (the accent) never reaches a label; the border still turns accent, and so does a glyph that wears
+   its button's colour (Usage's and Restart kernel's). One rule for the whole row (romp-manager's ruling at the launch of PR
+   976's round 3, item 1; the round 2 pass had set the colour on Usage's name and the Remote kernels label alone): in the light
+   theme the accent read 3.89:1 on the resting fill Usage and Remote kernels keep, and 4.15:1 on the wash Restart kernel takes,
+   under the 4.5:1 that text needs. A disabled button's label keeps the faint colour the button gives it (the rule skips a
+   disabled button), and Usage's lines and loader keep their own muted colour. tests/test_mtabs_fit_served.py hovers every
+   button the row holds, listed from the page, and reads each label against the fill its button wears hovered, in both themes */
+#rsettings .rs-pact:not(:disabled) > span { color: var(--fg, #ccc); }
 #rs-pact-net.busy svg path { stroke-dasharray: 3 3; animation: rs-pact-march 0.9s linear infinite; }
 @keyframes rs-pact-march { to { stroke-dashoffset: -6; } }
 #rs-pact-net .rn-ok { fill: var(--accent, #9cd2ff); }

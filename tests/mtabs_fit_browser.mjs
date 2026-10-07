@@ -88,7 +88,10 @@
 // line Usage shows with its left edge beside the name's right edge, the loader's computed display, and whether the name is
 // seen; then the card opened over the lab's reading and again over a pull failed in transit (Usage enabled beside Couldn't
 // load), Usage's name read with the pointer off the row, then the pointer moved onto Usage's centre (its transitions off
-// first), and its hovered fill, the line's and the name's colours and whether :hover holds read.
+// first), and its hovered fill, the line's and the name's colours and whether :hover holds read; then the card opened over the
+// lab's reading again and every button the row holds, listed from the page, hovered in turn from off the row (its transitions
+// and its descendants' off first): whether :hover holds, whether it is disabled, and each label (each visible, laid-out element
+// holding words of its text), its computed colour with the backgrounds and opacities out to the first opaque background.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -1427,6 +1430,57 @@ try {
           await page.mouse.move(1, 1);
         }
         out.contrast[name].usageHover = uh;
+      }
+      // ...then every button in the card's row of moved actions hovered (romp-manager's ruling at the launch of PR 976's round 3,
+      // item 1: each button's label reads 4.5:1 or more on the fill the button wears hovered, the whole row and not a list of
+      // labels): the card closed and opened over the lab's reading (Usage enabled), the buttons listed from the page, every
+      // button the row holds (so a button added to the row later is read too), and for each, in the page's order, the pointer
+      // moved off the row, the transitions of the button and of everything in it turned off, the pointer moved onto its centre,
+      // and read there: whether :hover holds, whether it is disabled, and each label, every element holding words of the
+      // button's text that is visible and laid out, with its computed colour and the backgrounds and opacities from that element
+      // out to the first opaque background (the Python side composites them); the pointer moved off and the transitions put back
+      {
+        await closeC();
+        usageMode = "lab";
+        await openC();
+        const rw = { ended: await ended(), buttons: [] };
+        rw.count = await sf.evaluate(() => { const row = document.getElementById("rs-pacts"); return row ? row.querySelectorAll("button").length : null; });
+        for (let i = 0; i < (rw.count || 0); i++) {
+          await page.mouse.move(1, 1);
+          await frames(page);
+          const spot = await sf.evaluate((k) => { const b = document.querySelectorAll("#rs-pacts button")[k]; if (!b) return null;
+            window.__rowTransitions = [b, ...b.querySelectorAll("*")].map((e) => { const was = e.style.transition; e.style.transition = "none"; return [e, was]; });
+            const c = b.getBoundingClientRect(); return { x: c.left + c.width / 2, y: c.top + c.height / 2 }; }, i);
+          if (!spot) { rw.buttons.push(null); continue; }
+          await page.mouse.move(lift.left + spot.x, lift.top + spot.y);
+          await frames(page);
+          rw.buttons.push(await sf.evaluate((k) => {
+            const b = document.querySelectorAll("#rs-pacts button")[k];
+            // a computed colour's alpha (1 where it has none); null where it is not an rgb() colour, which the walk below
+            // passes over and the Python side reports
+            const alpha = (c) => { const m = /^rgba?\(([^)]*)\)$/.exec((c || "").trim()); if (!m) return null;
+              const p = m[1].split(/[\s,/]+/).filter(Boolean); return p.length > 3 ? parseFloat(p[3]) / (p[3].endsWith("%") ? 100 : 1) : 1; };
+            // the layers under an element: its background, image and opacity, and its ancestors' in turn, out to the first opaque
+            // background, and the opacity of everything above that one
+            const layers = (el) => { const ls = []; let n = el;
+              for (; n; n = n.parentElement) { const cs = getComputedStyle(n);
+                ls.push({ bg: cs.backgroundColor, img: cs.backgroundImage, op: cs.opacity }); if (alpha(cs.backgroundColor) === 1) break; }
+              let above = 1; for (let p = n && n.parentElement; p; p = p.parentElement) above *= parseFloat(getComputedStyle(p).opacity);
+              return { layers: ls, opaque: !!n, above }; };
+            const seen = (el) => getComputedStyle(el).visibility === "visible" && el.getClientRects().length > 0;
+            const els = [];
+            const tw = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
+            for (let t = tw.nextNode(); t; t = tw.nextNode()) { const el = t.parentElement;
+              if (/\S/.test(t.data) && el && !els.includes(el) && seen(el)) els.push(el); }
+            return { act: b.getAttribute("data-pact"), title: b.getAttribute("title"), hovered: b.matches(":hover"), disabled: b.disabled,
+                     labels: els.map((el) => ({ text: Array.from(el.childNodes).filter((x) => x.nodeType === 3).map((x) => x.data).join("").trim(),
+                                                colour: getComputedStyle(el).color, under: layers(el) })) };
+          }, i));
+          await page.mouse.move(1, 1);
+          await frames(page);
+          await sf.evaluate(() => { for (const [e, was] of window.__rowTransitions || []) e.style.transition = was; delete window.__rowTransitions; });
+        }
+        out.contrast[name].row = rw;
       }
     }
     await context.close();
