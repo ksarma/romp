@@ -175,13 +175,14 @@ def _seen_popen():
 # child injects: an exception raised from the run's communicate (during the wait, once the helper is up, or during the
 # drain), a SIGINT to its own main thread (once the helper is up, or once the shell has exited, and in either case once
 # the main thread waits in the run's communicate, at its selector's first select; or 0.3 s into the drain, from a timer
-# the os.killpg spy starts), a KeyboardInterrupt raised from the os.killpg spy (before the signal, or
-# just after it), from the fallback p.kill(), from Popen.__enter__ (once the helper is up) or from Popen.__exit__'s
-# wait, or, from the os.killpg spy before the signal, a BaseException of the test's own or a PermissionError (with the
-# fallback's os.kill of the shell refused as well). A road named sigint-then-... sends the SIGINT as sigint-wait-running
-# does and then raises a second KeyboardInterrupt from the os.killpg spy. It keeps the run's Popen and prints what it saw
-# as JSON, with the shell's /proc state read right after the call: the child is the shell's parent, so a shell the
-# call did not reap is still there, a zombie or running, and one it reaped is gone.
+# the os.killpg spy starts), a KeyboardInterrupt raised from the os.killpg spy (before the signal, or just after it),
+# from the fallback p.kill(), from Popen.__enter__ (once the helper is up) or from Popen.__exit__'s wait, or, from the
+# os.killpg spy before the signal, a BaseException of the test's own or a PermissionError (with the fallback's os.kill
+# of the shell refused as well). A road named sigint-then-... sends the SIGINT as sigint-wait-running does and then
+# raises a second KeyboardInterrupt from the os.killpg spy. It keeps the run's Popen and prints what it saw as JSON,
+# with the time from the first SIGINT and from the first injected KeyboardInterrupt where the row times from them, and
+# with the shell's /proc state read right after the call: the child is the shell's parent, so a shell the call did not
+# reap is still there, a zombie or running, and one it reaped is gone.
 _EXIT_ROAD_CHILD = r'''
 import errno, importlib.util, json, os, select, signal, subprocess, sys, threading, time
 if not hasattr(os, "pidfd_open"):
@@ -193,6 +194,7 @@ cred = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cred)
 road, cmd, bound, pids, up = sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], int(sys.argv[6])
 seen, started, in_select, killpg_calls, sent, refused = [], threading.Event(), threading.Event(), [], [], []
+injected = []                  # when the child raises ki-in-enter's or ki-in-exit's first KeyboardInterrupt
 
 
 class Cut(BaseException):
@@ -242,6 +244,7 @@ class SeenPopen(subprocess.Popen):
     def __enter__(self):
         if road == "ki-in-enter":
             helper_up()
+            injected.append(time.monotonic())
             raise KeyboardInterrupt()
         return super().__enter__()
 
@@ -272,6 +275,8 @@ real_killpg, real_kill = os.killpg, os.kill
 def killpg(pgid, sig):
     killpg_calls.append([pgid, int(sig)])
     if road in ("ki-at-kill", "ki-in-exit", "sigint-then-ki-at-kill"):
+        if road == "ki-in-exit":
+            injected.append(time.monotonic())
         raise KeyboardInterrupt()
     if road == "cut-at-kill":
         raise Cut()
@@ -340,7 +345,8 @@ if p is not None:
     except OSError:
         state = None
 print(json.dumps({"outcome": outcome, "elapsed": round(elapsed, 3), "sent": len(sent),
-                  "from_sigint": round(t1 - sent[0], 3) if sent else None, "killpg": killpg_calls,
+                  "from_sigint": round(t1 - sent[0], 3) if sent else None,
+                  "from_injection": round(t1 - injected[0], 3) if injected else None, "killpg": killpg_calls,
                   "kill_refused": len(refused), "shell": p.pid if p else None,
                   "returncode": p.returncode if p else None,
                   "stdout_closed": bool(p and p.stdout is not None and p.stdout.closed), "shell_state": state}))
@@ -350,7 +356,8 @@ print(json.dumps({"outcome": outcome, "elapsed": round(elapsed, 3), "sent": len(
 # road, the helper's shape (HelperTimeoutEndsTheGroup._exit_shape), the bound, the call's outcome, the number of
 # os.killpg calls, the run's returncode, the recorded processes left running, and the window the call's elapsed time
 # falls in (None: not checked; a window whose third item is "from the SIGINT" counts from the first SIGINT the child
-# sent, not from the call's start). The rows through ki-at-kill leave the block through Popen.__exit__ and its close
+# sent, one whose third item is "from the injection" from the child's raising the row's first KeyboardInterrupt, and any
+# other from the call's start). The rows through ki-at-kill leave the block through Popen.__exit__ and its close
 # and wait: on each the run's stdout is closed when the call ends, and the shell is reaped (the returncode set and
 # /proc without it) on every one but ki-at-kill, where a KeyboardInterrupt lands before os.killpg: the shell still
 # runs there, and the window's floor shows the quarter-second wait for it that Popen.__exit__ makes before the
@@ -395,9 +402,12 @@ _EXIT_ROADS = (
     # raised from Popen.__exit__'s quarter-second wait (after a first raised from os.killpg before the signal) ends
     # that wait, and the shell runs on. And after a SIGINT in communicate while the shell runs has spent the quarter
     # second, a second one just after os.killpg leaves the shell it signalled unreaped, and one before os.killpg leaves
-    # the shell running; the window shows that nothing waits after communicate's quarter second.
-    ("ki-in-enter", "a hung lone shell", 5, "KeyboardInterrupt", 0, None, ["shell"], (0.0, 0.25)),
-    ("ki-in-exit", "a hung lone shell", 1, "KeyboardInterrupt", 1, None, ["shell"], (1.0, 1.2)),
+    # the shell running; the window shows that nothing waits after communicate's quarter second. The first two rows time
+    # from the event each measures, the KeyboardInterrupt raised from Popen.__enter__ and the one raised from os.killpg
+    # (when the bound has fired), so the spawn and a late wake past the bound stay out of the window, and a
+    # quarter-second wait after the injection would still read past the ceiling.
+    ("ki-in-enter", "a hung lone shell", 5, "KeyboardInterrupt", 0, None, ["shell"], (0.0, 0.25, "from the injection")),
+    ("ki-in-exit", "a hung lone shell", 1, "KeyboardInterrupt", 1, None, ["shell"], (0.0, 0.2, "from the injection")),
     ("sigint-then-ki-after-kill", "a hung tree", 10, "KeyboardInterrupt", 1, None, [], (0.2, 0.45, "from the SIGINT")),
     ("sigint-then-ki-at-kill", "a hung lone shell", 10, "KeyboardInterrupt", 1, None, ["shell"],
      (0.2, 0.45, "from the SIGINT")),
@@ -961,7 +971,8 @@ class HelperTimeoutEndsTheGroup(_Settings):
                 if "skip" in got:
                     self.skipTest(got["skip"])
                 self.assertEqual(sorted(recs), roles, "the helper was up before the call ended")
-                t = got["from_sigint"] if window is not None and window[2:] == ("from the SIGINT",) else got["elapsed"]
+                t = {("from the SIGINT",): got["from_sigint"], ("from the injection",): got.get("from_injection"),
+                     (): got["elapsed"]}[tuple(window[2:])] if window is not None else None
                 seen = {"outcome": got["outcome"],
                         "stdout closed": got["stdout_closed"],
                         "returncode": got["returncode"],
