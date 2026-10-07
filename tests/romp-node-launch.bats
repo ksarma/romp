@@ -30,7 +30,7 @@ setup() {
 
 teardown() {
     # the hang shapes record their pids: whatever a failing case left alive dies here, never in the suite's wake
-    local p; for p in node sleeper; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
+    local p; for p in node sleeper wdsleep; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
     rm -rf "$TEST_DIR"
 }
 
@@ -194,6 +194,89 @@ EOF
     [ -n "$pgid" ]
     run bash -c 'ps -eo pgid=,args= | awk -v g="$1" "\$1==g"' _ "$pgid"
     [ -z "$output" ]
+}
+
+# The watchdog's stand-down (the launcher's TERM once the probe has finished) at each point of the watchdog's own script.
+# CI hit the race twice in 964 runs of the Shell job: a TERM the shell handled between the background fork of the sleep and
+# the assignment _s=$! ran the trap with no pid, so it ended nothing and the sleep ran on to its bound. bash, the shell a mac
+# runs this launcher under, runs a DEBUG trap before every simple command, and with set -T inside subshells too, so the
+# prelude below (read through BASH_ENV) sends the watchdog subshell its TERM just before the named command, and the pending
+# TERM trap runs at exactly that point: deterministic, where the race itself needs a fork's return to be delayed. The
+# prelude also writes the sleep's pid (the subshell's $! as _s=$! is about to run) to wdsleep.pid, which teardown kills, and
+# the watchdog's pid to fired, which proves the TERM was sent. The copy's probe run answers only once that watchdog has
+# exited (or after ten seconds), so the probe's wrapper is alive through the whole stand-down, and a stand-down that
+# signalled the wrapper's tree would reach the copy. The probe run writes wd.gone when it sees the watchdog exit: the launcher
+# sends its own TERM only after the probe has answered, so wd.gone says the watchdog ended on the one TERM the prelude sent,
+# as it must on the launcher's one (a watchdog that waited out its bound instead would hold the launch for the bound).
+_stand_down_at() {   # $1 the watchdog's command, as the launcher spells it, that the TERM lands just before
+    command -v setsid >/dev/null 2>&1 || skip "needs setsid to scope the process-group check (Linux)"
+    local tmo; tmo="$(command -v timeout || true)"
+    [ -n "$tmo" ] || skip "needs coreutils timeout to bound the run"
+    local real; real="$(command -v sleep)"
+    cat > "$BIN/node" <<EOF
+#!/bin/sh
+case "\$0" in
+  "$RN") if [ "\$1" = -e ]; then                       # the probe run; the manager run answers at once
+           trap 'echo TERM > "$TEST_DIR/node.term"; exit 143' TERM
+           i=0
+           while [ \$i -lt 200 ]; do
+             if [ -s "$TEST_DIR/fired" ]; then
+               read -r wd < "$TEST_DIR/fired"
+               st="\$(ps -o stat= -p "\$wd" 2>/dev/null)"
+               case "\$st" in ''|*Z*) : > "$TEST_DIR/wd.gone"; break ;; esac
+             fi
+             "$real" 0.05; i=\$((i + 1))
+           done
+         fi
+         echo "NODE_V1 ran: \$*" ;;
+  *) echo "NODE_V1 ran: \$*" ;;
+esac
+EOF
+    chmod +x "$BIN/node"
+    cat > "$TEST_DIR/stand-down.bash" <<'EOF'
+set -T
+trap 'if [ "$BASH_COMMAND" = '\''_s=$!'\'' ]; then echo "$!" > "$STAND_DOWN_DIR/wdsleep.pid"; fi
+if [ "$BASH_COMMAND" = "$STAND_DOWN_AT" ] && [ ! -e "$STAND_DOWN_DIR/fired" ]; then
+    echo "$BASHPID" > "$STAND_DOWN_DIR/fired"; kill -TERM "$BASHPID"
+fi' DEBUG
+EOF
+    local bare="$TEST_DIR/bare-stand-down"; mkdir -p "$bare"
+    local t; for t in sh cmp cp chmod mv mkdir rm sleep ps pgrep setsid; do ln -s "$(command -v "$t")" "$bare/$t"; done
+    ln -s "$BIN/node" "$bare/node"
+    rm -f "$TEST_DIR/fired" "$TEST_DIR/wdsleep.pid" "$TEST_DIR/node.term" "$TEST_DIR/wd.gone" "$TEST_DIR/pgid"
+    PATH="$bare" BASH_ENV="$TEST_DIR/stand-down.bash" STAND_DOWN_AT="$1" STAND_DOWN_DIR="$TEST_DIR" ROMP_NODE_PROBE_BOUND=30 \
+        run "$tmo" 60 setsid -w sh -c 'printf "%s\n" "$$" > "$1"; exec "$2" "$3" "$4" up' _ "$TEST_DIR/pgid" "$BASH" "$LAUNCH" "$MANAGER"
+}
+_stand_down_asserts() {   # nothing of the probe survives, and nothing outside the watchdog's own tree was signalled
+    # said on failure: what the launcher printed, and the watchdog's sleep if it is still there
+    echo "launcher output: $output"
+    [ ! -s "$TEST_DIR/wdsleep.pid" ] || echo "watchdog sleep: $(ps -o pid=,stat=,args= -p "$(cat "$TEST_DIR/wdsleep.pid")" || echo gone)"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NODE_V1 ran: $MANAGER up"* ]]
+    [ -s "$TEST_DIR/fired" ]                                  # the TERM landed where the case says
+    [[ "$output" != *"cannot run here"* ]]                    # the probe's wrapper was not killed: the probe passed
+    [ ! -e "$TEST_DIR/node.term" ]                            # and the copy under it got no TERM
+    [ -e "$TEST_DIR/wd.gone" ]                                # the watchdog ended on the TERM above, without the launcher's own
+    [ ! -s "$TEST_DIR/wdsleep.pid" ] || _dead "$(cat "$TEST_DIR/wdsleep.pid")"   # the sleep, if one was forked, is gone
+    local pgid; pgid="$(cat "$TEST_DIR/pgid")"
+    run bash -c 'ps -eo pgid=,args= | awk -v g="$1" "\$1==g"' _ "$pgid"
+    [ -z "$output" ]
+}
+@test "the watchdog path: a stand-down between the fork of the sleep and _s=\$! still ends the sleep" {
+    _stand_down_at '_s=$!'
+    [ -s "$TEST_DIR/wdsleep.pid" ]                            # the sleep was forked before the TERM
+    _stand_down_asserts
+}
+@test "the watchdog path: a stand-down before the sleep is forked leaves no sleep and signals nothing outside the watchdog" {
+    # $! there is the probe's wrapper, inherited from the launcher, which backgrounded it on the line before: a trap that
+    # fell back to $! for the unknown pid would end the wrapper's tree and fail a good copy
+    _stand_down_at 'sleep "$_bound"'
+    _stand_down_asserts
+}
+@test "the watchdog path: a stand-down after _s=\$! (before the wait) ends the sleep" {
+    _stand_down_at 'wait "$_s"'
+    [ -s "$TEST_DIR/wdsleep.pid" ]
+    _stand_down_asserts
 }
 
 @test "the watchdog path: a copy that HANGS is killed at the bound, the manager comes up on the system node, and no node is leaked" {

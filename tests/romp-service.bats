@@ -38,7 +38,7 @@ setup() {
 
 teardown() {
     # the hang shapes record their pids: whatever a failing case left alive dies here, never in the suite's wake
-    local p; for p in node sleeper; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
+    local p; for p in node sleeper wdsleep; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
     rm -rf "$TEST_DIR"
 }
 
@@ -211,6 +211,80 @@ _install_hang_asserts() {   # the copy is removed with the reason said, and noth
 @test "install (macOS), the timeout path: a hung copy is killed at the bound (control: so it was before this round)" { _run_install_hang exec timeout; _install_hang_asserts; }
 @test "install (macOS), the timeout path: a shim that FORKS the hung node leaks nothing (control: timeout signals the whole group)" { _run_install_hang fork timeout; _install_hang_asserts; }
 @test "install (macOS), the timeout path: a node that IGNORES TERM is killed by -k a second after the bound instead of holding the install for good" { _run_install_hang deaf timeout; _install_hang_asserts; }
+
+# The install's twin of the launcher's stand-down cases (tests/romp-node-launch.bats says how they work): the watchdog in
+# _node_runs had the same race, a TERM handled between the fork of its sleep and s=$! running the trap with no pid and the
+# sleep left to run out its bound. romp-service is a bash script, so the DEBUG-trap prelude reaches it through BASH_ENV
+# with no shell swapped in. The copy's probe run answers only once the watchdog has exited (wd.gone) or after ten seconds.
+_install_stand_down_at() {   # $1 the watchdog's command, as the install spells it, that the TERM lands just before
+    command -v setsid >/dev/null 2>&1 || skip "needs setsid to scope the process-group check (Linux)"
+    local tmo; tmo="$(command -v timeout || true)"
+    [ -n "$tmo" ] || skip "needs coreutils timeout to bound the run"
+    local real; real="$(command -v sleep)"
+    local rn="$XDG_STATE_HOME/romp/romp-node"
+    cat > "$TEST_DIR/sd-node" <<EOF
+#!/bin/sh
+case "\$0" in
+  "$rn") if [ "\$1" = -e ]; then
+           trap 'echo TERM > "$TEST_DIR/node.term"; exit 143' TERM
+           i=0
+           while [ \$i -lt 200 ]; do
+             if [ -s "$TEST_DIR/fired" ]; then
+               read -r wd < "$TEST_DIR/fired"
+               st="\$(ps -o stat= -p "\$wd" 2>/dev/null)"
+               case "\$st" in ''|*Z*) : > "$TEST_DIR/wd.gone"; break ;; esac
+             fi
+             "$real" 0.05; i=\$((i + 1))
+           done
+         fi
+         exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+    chmod +x "$TEST_DIR/sd-node"
+    cat > "$TEST_DIR/stand-down.bash" <<'EOF'
+set -T
+trap 'if [ "$BASH_COMMAND" = '\''s=$!'\'' ]; then echo "$!" > "$STAND_DOWN_DIR/wdsleep.pid"; fi
+if [ "$BASH_COMMAND" = "$STAND_DOWN_AT" ] && [ ! -e "$STAND_DOWN_DIR/fired" ]; then
+    echo "$BASHPID" > "$STAND_DOWN_DIR/fired"; kill -TERM "$BASHPID"
+fi' DEBUG
+EOF
+    local bare="$TEST_DIR/bare-stand-down"; rm -rf "$bare"; mkdir -p "$bare"
+    local t p
+    for t in bash sh cmp cp chmod mv mkdir rm sleep ps pgrep setsid id date cut head tr printf sed cat grep dirname readlink; do p="$(command -v "$t" 2>/dev/null || true)"; [ -n "$p" ] && ln -s "$p" "$bare/$t"; done
+    rm -f "$TEST_DIR/fired" "$TEST_DIR/wdsleep.pid" "$TEST_DIR/node.term" "$TEST_DIR/wd.gone" "$TEST_DIR/pgid"
+    PATH="$bare" BASH_ENV="$TEST_DIR/stand-down.bash" STAND_DOWN_AT="$1" STAND_DOWN_DIR="$TEST_DIR" ROMP_NODE_PROBE_BOUND=30 \
+        ROMP_NODE_SRC="$TEST_DIR/sd-node" ROMP_OS_OVERRIDE=Darwin \
+        run "$tmo" 60 setsid -w sh -c 'printf "%s\n" "$$" > "$1"; exec "$2" install' _ "$TEST_DIR/pgid" "$SVC"
+}
+_install_stand_down_asserts() {   # the good copy is kept, nothing of the probe survives, nothing outside the watchdog was signalled
+    echo "install output: $output"
+    [ ! -s "$TEST_DIR/wdsleep.pid" ] || echo "watchdog sleep: $(ps -o pid=,stat=,args= -p "$(cat "$TEST_DIR/wdsleep.pid")" || echo gone)"
+    [ "$status" -eq 0 ]
+    [ -s "$TEST_DIR/fired" ]                                  # the TERM landed where the case says
+    [ -x "$XDG_STATE_HOME/romp/romp-node" ]                   # the probe's wrapper was not killed: the copy passed and is kept
+    [[ "$output" != *"cannot run from"* ]]
+    [ ! -e "$TEST_DIR/node.term" ]                            # and the copy under it got no TERM
+    [ -e "$TEST_DIR/wd.gone" ]                                # the watchdog ended on the TERM above, without the install's own
+    [ ! -s "$TEST_DIR/wdsleep.pid" ] || _dead "$(cat "$TEST_DIR/wdsleep.pid")"   # the sleep, if one was forked, is gone
+    local pgid; pgid="$(cat "$TEST_DIR/pgid")"
+    run bash -c 'ps -eo pgid=,args= | awk -v g="$1" "\$1==g"' _ "$pgid"
+    [ -z "$output" ]
+}
+@test "install (macOS), the watchdog path: a stand-down between the fork of the sleep and s=\$! still ends the sleep" {
+    _install_stand_down_at 's=$!'
+    [ -s "$TEST_DIR/wdsleep.pid" ]                            # the sleep was forked before the TERM
+    _install_stand_down_asserts
+}
+@test "install (macOS), the watchdog path: a stand-down before the sleep is forked leaves no sleep and signals nothing outside the watchdog" {
+    _install_stand_down_at 'sleep "$bound"'
+    _install_stand_down_asserts
+}
+@test "install (macOS), the watchdog path: a stand-down after s=\$! (before the wait) ends the sleep" {
+    _install_stand_down_at 'wait "$s"'
+    [ -s "$TEST_DIR/wdsleep.pid" ]
+    _install_stand_down_asserts
+}
 
 @test "install (macOS): ROMP_NODE_PROBE_BOUND=0 is clamped to one second, so a good copy is kept instead of failed at once" {
     # on the watchdog path (a bare PATH without timeout, a stock mac's): the base's sleep 0 killed the probe before a copy that

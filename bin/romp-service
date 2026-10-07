@@ -278,7 +278,16 @@ _node_runs() {   # $1 a node binary: exit 0 when it can run an empty program fro
     # both traps wait for what they killed before exiting, so nothing of the probe outlives the install (the launcher's rule)
     ( trap '_kill_tree "$n"; wait "$n" 2>/dev/null; exit 143' TERM; "$1" -e '' </dev/null >/dev/null 2>&1 & n=$!; wait "$n"; exit $? ) 2>/dev/null &
     local pp=$! wd rc=0
-    ( trap '_end_sleep "${s:-}"; exit 0' TERM; sleep "$bound" & s=$!; wait "$s"; kill "$pp" 2>/dev/null ) >/dev/null 2>&1 &
+    # the stand-down (the TERM below, once the probe has finished) ends the watchdog's sleep wherever it lands, the
+    # launcher's rule: a TERM handled before the fork, or between the fork and s=$!, finds s empty, so the trap only
+    # records it in stop and the check after the assignment ends the sleep; a TERM handled after the assignment, the wait
+    # included, finds the pid, and the trap ends the sleep. An empty s never falls back to $!, the wrapper's pid before the
+    # fork. Before this, a trap that found s empty ended nothing, and the sleep ran on to its bound.
+    ( s=; stop=
+      trap 'stop=1; [[ -z "$s" ]] || { _end_sleep "$s"; exit 0; }' TERM
+      sleep "$bound" & s=$!
+      [[ -z "$stop" ]] || { _end_sleep "$s"; exit 0; }
+      wait "$s"; kill "$pp" 2>/dev/null ) >/dev/null 2>&1 &
     wd=$!
     wait "$pp" || rc=$?
     kill "$wd" 2>/dev/null || true

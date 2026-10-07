@@ -137,8 +137,7 @@ _kill_tree() {
 # leave its child otherwise), TERM, then a KILL if the sleep is still there, waited on either way. The check between
 # them is bounded (up to a second in tenths) and costs nothing on the fast path, where the sleep is gone at the first
 # look; a sleep that ignores TERM (a stand-in on PATH) held the launcher for its whole remaining duration before. The
-# pid may be unbound when the TERM lands between the fork and its assignment under set -u, so it is passed with a
-# default and an empty one is nothing to end.
+# watchdog calls it only with the sleep's pid (see the watchdog below); an empty pid is nothing to end.
 _end_sleep() {
     [ -n "$1" ] || return 0
     _all="$(_tree_of "$1")"
@@ -163,7 +162,20 @@ _probe_node() {
     # launcher's session could see for an instant (CI, 2026-09-14). Waited on, nothing of the probe outlives the launcher.
     ( trap '_kill_tree "$_n"; wait "$_n" 2>/dev/null; exit 143' TERM; "$1" -e '' </dev/null >/dev/null 2>&1 & _n=$!; wait "$_n"; exit $? ) 2>/dev/null &
     _pp=$!
-    ( trap '_end_sleep "${_s:-}"; exit 0' TERM; sleep "$_bound" & _s=$!; wait "$_s"; kill "$_pp" 2>/dev/null ) >/dev/null 2>&1 &
+    # The stand-down (the TERM below, once the probe has finished) ends the watchdog's sleep wherever it lands. The trap
+    # knows the sleep's pid only after _s=$! has run, and the shell runs a pending trap between any two commands, so a TERM
+    # handled before the fork, or between the fork and the assignment, finds _s empty. The trap then only records the
+    # stand-down in _stop and returns, and the check right after the assignment ends the sleep. A TERM handled after the
+    # assignment, the wait included, finds the pid, and the trap ends the sleep and exits. A TERM before the trap is set
+    # ends the subshell (TERM's default action) before it forks anything. Before this, a trap that found _s empty ended
+    # nothing, and the sleep ran on to its bound (CI saw that twice in 964 runs of the Shell job). An empty _s never falls
+    # back to $!: before the fork, $! is the wrapper's pid above, inherited by this subshell, and the stand-down would end
+    # the wrapper's tree and fail a good copy.
+    ( _s=; _stop=
+      trap '_stop=1; [ -z "$_s" ] || { _end_sleep "$_s"; exit 0; }' TERM
+      sleep "$_bound" & _s=$!
+      [ -z "$_stop" ] || { _end_sleep "$_s"; exit 0; }
+      wait "$_s"; kill "$_pp" 2>/dev/null ) >/dev/null 2>&1 &
     _wd=$!
     _rc=0
     wait "$_pp" || _rc=$?
