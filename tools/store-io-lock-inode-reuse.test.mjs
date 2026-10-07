@@ -216,10 +216,10 @@ function writer(w, markers, { tag, waitMs, staleMs, breaker = false }) {
 
 // The waiter breaks the stalled breaker's claim once the claim is older than its bound, so the stall runs
 // past the bound by the lock's own rule, however long the machine takes. The breaker judges by the
-// callers' bound, so the waiter's live lock stays fresh to it whatever the steps between the reports
-// take; judged by the waiter's bound, a slow step would let the breaker break that lock by its age and
-// enter beside it, the very failure this case looks for. Both wait far longer than the case takes: a
-// writer that gives up fails the case.
+// callers' bound (STORE_LOCK_STALE_MS, 15 s), so the waiter's live lock stays fresh to it while the steps
+// between the reports take less than that; judged by the waiter's bound, a slow step would let the breaker
+// break that lock by its age and enter beside it, the very failure this case looks for. Both wait far
+// longer than the case takes: a writer that gives up fails the case.
 const WAITER_STALE_MS = 1000;
 const WAIT_MS = 30000;
 
