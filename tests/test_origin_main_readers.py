@@ -291,6 +291,9 @@ CLASSIFIED = {
     "tools/romp-track-bash-guard-corpus.json": ((NOT_A_READ,),
                                                 "a command string the guard judges, in its own scratch project "
                                                 "(corpusWorld), never run"),
+    "tools/romp-track-bash-guard-rows.test.mjs": ((NOT_A_READ,),
+                                                  "a comment naming the branch head two lines above a `;`-terminated "
+                                                  "callback (split_hits)"),
     "tools/upstream-ledger-figure-gate-before-adoption.test.mjs": ((NOT_A_READ,), "a docstring on recorded output"),
     "tools/viewer-resize-summarize.mjs": ((NOT_A_READ,), "a report's text"),
     "ui/webview/file-comments-markclick-controls.test.ts": ((NOT_A_READ,), "a comment"),

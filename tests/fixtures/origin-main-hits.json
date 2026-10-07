@@ -817,6 +817,9 @@
  "tools/romp-track-bash-guard-corpus.json": [
   "{\"kind\": \"ordinary\", \"cwd\": \"proj\", \"verdict\": \"allow\", \"command\": \"git branch -a\"},"
  ],
+ "tools/romp-track-bash-guard-rows.test.mjs": [
+  "// M3, pre-existing (fork main allows it, as the branch head and this change do, while bash writes; zsh and dash have no mapfile builtin and write nothing; // a witness row, named in decision 47; the checker's finding on fork PR 975's round-2 code-argument pass, tg-k45): bash's mapfile runs its `-C` callback // as a command line in this shell once per `-c` count of lines read, the index and the line appended, so the `;`-terminated callback defines the reader"
+ ],
  "tools/upstream-ledger-figure-gate-before-adoption.test.mjs": [
   "*  branch point: the branch merged origin/main, so that diff also counts what main brought in (22 files by that form at the head",
   "/** The output of `git diff --name-only origin/main...HEAD` at the branch's head, recorded verbatim: git's own order (paths"
