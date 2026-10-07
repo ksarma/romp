@@ -553,9 +553,12 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
     alike, leaves that wait on a running shell until the shell exits, as subprocess.run's wait after its kill
     was. In three cases a KeyboardInterrupt ends the call with no further wait for the shell, as in
     subprocess.run: one after an earlier one in communicate has spent the quarter second (Popen allows it
-    once per run); one between the shell's start and the block's entry, which never reaches Popen.__exit__,
-    so the pipe stays open too; and a second one inside Popen.__exit__'s quarter-second wait, which ends that
-    wait."""
+    once per run); one between the shell's start and the block's entry, which never reaches Popen.__exit__
+    and leaves the shell running and unreaped: inside Popen's construction, where most of that window lies,
+    Popen.__init__ closes the pipe (and one at the fork-exec call itself, before Popen records the pid,
+    leaves Popen without the shell's pid), and in the few bytecodes between Popen()'s return and the block's
+    entry the pipe stays open too; and a second one inside Popen.__exit__'s quarter-second wait, which ends
+    that wait."""
     bound = HELPER_TIMEOUT_S if timeout_s is None else timeout_s
     try:
         with subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

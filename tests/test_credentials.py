@@ -8,8 +8,9 @@ kernel/credentials.py is the whole of romp's contact with API credentials, and t
     never sees the kernel's own environment, runs in a session of its own, and when the bound cuts it leaves
     no process of its group running (a process that left the group is the stated exception); the run's Popen
     block closes the pipe and attempts the shell's reap on its ways out, and the roads where it does not (a
-    KeyboardInterrupt before the block is entered, or one that finds the quarter second spent or lands in that
-    wait) or where it waits without a bound on a running shell are planted as stated;
+    KeyboardInterrupt before the block is entered, which leaves the shell running, and the pipe open too when it
+    lands between Popen()'s return and the block's entry; or one that finds the quarter second spent or lands in
+    that wait) or where it waits without a bound on a running shell are planted as stated;
   * the boot check stops the kernel on any retired provider line, the marker, or a key in the kernel's
     environment, naming variables and files only;
   * the judges launch keyless for a key-billed call (the first pass after boot like every later one) and
@@ -403,15 +404,17 @@ _EXIT_ROADS = (
     # no bound there and lasts until the shell exits on its own, 4 s in, past the bound and the drain (1 s and 2 s).
     ("cut-at-kill", "a lone shell that ends after 4 s", 1, "Cut", 1, 0, [], (3.9, 5.0)),
     ("refused-kill", "a lone shell that ends after 4 s", 1, "apiKeyHelper timed out after 1 s", 1, 0, [], (3.9, 5.0)),
-    # A KeyboardInterrupt that gets no wait for the shell. One raised from Popen.__enter__, after the shell has started
-    # and before the block is entered, never reaches Popen.__exit__: the pipe stays open and the shell runs on. One
-    # raised from Popen.__exit__'s quarter-second wait (after a first raised from os.killpg before the signal) ends
-    # that wait, and the shell runs on. And after a SIGINT in communicate while the shell runs has spent the quarter
-    # second, a second one just after os.killpg leaves the shell it signalled unreaped, and one before os.killpg leaves
-    # the shell running; the window shows that nothing waits after communicate's quarter second. The first two rows time
-    # from the event each measures, the KeyboardInterrupt raised from Popen.__enter__ and the one raised from os.killpg
-    # (when the bound has fired), so the spawn and a late wake past the bound stay out of the window, and a
-    # quarter-second wait after the injection would still read past the ceiling.
+    # A KeyboardInterrupt that gets no wait for the shell. One raised from Popen.__enter__, after Popen() has returned
+    # and before the block is entered, never reaches Popen.__exit__: the pipe stays open and the shell runs on. (One
+    # inside Popen's construction, once the shell has started, where most of the window before the block lies, leaves
+    # the shell running as well, but Popen.__init__ closes the pipe; no row raises there.) One raised from
+    # Popen.__exit__'s quarter-second wait (after a first raised from os.killpg before the signal) ends that wait, and
+    # the shell runs on. And after a SIGINT in communicate while the shell runs has spent the quarter second, a second
+    # one just after os.killpg leaves the shell it signalled unreaped, and one before os.killpg leaves the shell
+    # running; the window shows that nothing waits after communicate's quarter second. The first two rows time from the
+    # event each measures, the KeyboardInterrupt raised from Popen.__enter__ and the one raised from os.killpg (when the
+    # bound has fired), so the spawn and a late wake past the bound stay out of the window, and a quarter-second wait
+    # after the injection would still read past the ceiling.
     ("ki-in-enter", "a hung lone shell", 5, "KeyboardInterrupt", 0, None, ["shell"], (0.0, 0.25, "from the injection")),
     ("ki-in-exit", "a hung lone shell", 1, "KeyboardInterrupt", 1, None, ["shell"], (0.0, 0.2, "from the injection")),
     ("sigint-then-ki-after-kill", "a hung tree", 10, "KeyboardInterrupt", 1, None, [], (0.2, 0.45, "from the SIGINT")),
@@ -1043,8 +1046,9 @@ class HelperTimeoutEndsTheGroup(_Settings):
     # in two tests. Where the kill never signals the running shell (an exception other than KeyboardInterrupt from
     # os.killpg before the signal, or os.killpg and the fallback's os.kill both refused), Popen.__exit__'s wait has no
     # bound and the call ends only when the shell does. A KeyboardInterrupt gets no wait for the shell when it lands
-    # before the block is entered (the pipe stays open too), inside Popen.__exit__'s quarter-second wait, or after a
-    # first one in communicate has spent that quarter second.
+    # before the block is entered (the shell runs on; inside Popen's construction Popen.__init__ closes the pipe, and
+    # between Popen()'s return and the block's entry, where ki-in-enter raises, the pipe stays open too), inside
+    # Popen.__exit__'s quarter-second wait, or after a first one in communicate has spent that quarter second.
     def test_a_kill_that_never_signals_the_running_shell_leaves_an_unbounded_wait_on_it(self):
         self._check_exit_roads()
 
