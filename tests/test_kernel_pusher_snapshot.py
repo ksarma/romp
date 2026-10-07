@@ -11,15 +11,19 @@ SYNTHETIC fixtures only: placeholder UUIDs, invented names.
 """
 import collections
 import contextlib
+import copy
+import io
 import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
 from romp_load import load_source
 from pathlib import Path
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -203,9 +207,16 @@ class TimelineConnectReadsLivenessOnce(_CycleFixture):
     of about 2.05 s against about 0.33 s with the map lent. The push now lends its map to each of those builds
     (_serve_live), as the chat builds and _awaiting_items_payload already do, and the tests check that every
     lend has ended before the push sends a frame. The lend leaves an active scope alone, so the pusher's own
-    timeline stage reads exactly as before (the last test).
+    timeline stage reads exactly as before (the pusher-cycle test). The tests after it: a build that raises
+    inside each of the three lends leaves no scope on the handler thread; the lent map stays on its own thread
+    while a pusher cycle runs on another; and in a world whose rows change between two reads, each connect path
+    builds its lanes from the push's one read.
 
     SYNTHETIC: three invented live sessions over the fixture's world."""
+
+    class _BuildRaised(Exception):
+        """The raising-build tests' own exception: a build_timeline raises it inside a connect push's lend, so the
+        traceback _push logs can be told from any other "push build: " line."""
 
     FULL = {"type": "timeline", "now": 1,
             "sessions": [{"id": SID, "name": "web", "state": "working", "context": 10, "compactions": []}],
@@ -238,8 +249,8 @@ class TimelineConnectReadsLivenessOnce(_CycleFixture):
         km._built_timeline[:] = [("older",), self.FULL, 1.0, 1.0]   # built long ago under a view signature the world has
         km._views_dirty[0] = 0.0                                     #  since left: _timeline_cache_fresh says stale
         km.time = _HeldClock(time, float(int(time.time())))
-        self.reads = []
-        km.Sessions.live = lambda: (self.reads.append(1), dict(self.row))[1]
+        self.reads = []                                 # one entry per Sessions.live() call: the calling thread's name
+        km.Sessions.live = lambda: (self.reads.append(threading.current_thread().name), dict(self.row))[1]
         self.builds = []                                # (now, the handed map, with_bars, live_only, the scope's map at the call)
         real = self.real_build = km.build_timeline
 
@@ -334,7 +345,9 @@ class TimelineConnectReadsLivenessOnce(_CycleFixture):
         self._enter_world(reference)
         self.builds[:] = []
         n = len(self.reads)
-        unlent = lambda live_map: contextlib.nullcontext()          # the kernel before the fix: no build is lent a map
+        # The patch makes every _serve_live a null context, so no build and no nested helper is lent a map (the lend
+        # inside _awaiting_items_payload included) and every nested reader reads fresh.
+        unlent = lambda live_map: contextlib.nullcontext()
         ref_frames = []
         with mock.patch.object(km, "_serve_live", unlent):
             km._push([self._client(ref_frames, [])], connect=True)
@@ -366,6 +379,256 @@ class TimelineConnectReadsLivenessOnce(_CycleFixture):
         self.assertIs(scope, handed, "the rebuild ran under the cycle's snapshot, the same map the cycle handed down")
         self.assertIn(SID3, handed)
         self.assertIsNone(km._live_scope.snapshot, "the scope ends with the cycle")
+
+    # A lend must end however its build ends. _push catches a build that raises and logs it ("push build: "), and a lend
+    # that cleared only on a clean exit would leave the push's map on the handler thread, served to every later read there
+    # as if it were a cycle's snapshot. One test per lend: each lend is reached by a different build of the push.
+
+    def _raising_build(self, raise_at, why):
+        """Replace build_timeline (setUp's restore puts the original back) with one that records each call as setUp's
+        wrapper does, the scope this thread holds at the call included, and builds for real, except that call number
+        `raise_at` raises _BuildRaised(why) instead."""
+        real = self.real_build
+
+        def raising(now, live_map=None, with_bars=True, live_only=False):
+            self.builds.append((now, live_map, with_bars, live_only, getattr(km._live_scope, "snapshot", None)))
+            if len(self.builds) == raise_at:
+                raise self._BuildRaised(why)
+            return real(now, live_map, with_bars, live_only)
+        km.build_timeline = raising
+
+    def _connect_push_logged(self, frames):
+        """One connect push to a timeline client that records its frames in `frames`; returns what the push wrote to
+        stderr."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._push([self._client(frames, [])], connect=True)
+        return err.getvalue()
+
+    def test_a_stale_cache_lanes_build_that_raises_leaves_no_scope(self):
+        self.addCleanup(setattr, km._live_scope, "snapshot", None)   # a red here leaves no scope for later tests on this thread
+        why = "the stale-cache lanes build raised"
+        self._raising_build(1, why)
+        frames = []
+        err = self._connect_push_logged(frames)
+        self.assertEqual([b[2:4] for b in self.builds], [(False, False)], "the stale branch's lanes build ran, and raised")
+        _, handed, _, _, scope = self.builds[0]
+        self.assertIs(scope, handed, "the build that raised ran inside the lend: the push's map, lent at the call")
+        self.assertFalse([f for f in frames if json.loads(f)["type"] == "data"], "no lanes frame went out")
+        at = err.find("push build: ")
+        self.assertGreaterEqual(at, 0, "the raise reached _push's except branch, which logs it")
+        self.assertIn("_BuildRaised: " + why, err[at:], "the logged traceback is this build's raise")
+        self.assertIsNone(km._live_scope.snapshot, "the lend ended with the build that raised: the handler thread holds "
+                                                   "no scope")
+        n = len(self.reads)
+        got = km._live_map()
+        self.assertEqual(len(self.reads), n + 1, "the next read on the handler thread is a fresh one")
+        self.assertIsNot(got, handed, "and it is not the push's map")
+
+    def test_a_cold_lanes_build_that_raises_leaves_no_scope(self):
+        wake = km._producer_wake.is_set()
+        self.addCleanup(lambda: None if wake else km._producer_wake.clear())
+        self.addCleanup(setattr, km._live_scope, "snapshot", None)   # a red here leaves no scope for later tests on this thread
+        km._built_timeline[:] = [None, None, 0.0, 0.0]             # nothing built since the kernel started: the cold branch
+        why = "the cold live-only lanes build raised"
+        self._raising_build(1, why)
+        frames = []
+        err = self._connect_push_logged(frames)
+        self.assertEqual([b[2:4] for b in self.builds], [(False, True)], "the cold branch's lanes build ran, and raised")
+        _, handed, _, _, scope = self.builds[0]
+        self.assertIs(scope, handed, "the build that raised ran inside the lend: the push's map, lent at the call")
+        self.assertEqual(frames, [], "no frame went out: the lanes frame follows its build")
+        at = err.find("push build: ")
+        self.assertGreaterEqual(at, 0, "the raise reached _push's except branch, which logs it")
+        self.assertIn("_BuildRaised: " + why, err[at:], "the logged traceback is this build's raise")
+        self.assertIsNone(km._live_scope.snapshot, "the lend ended with the build that raised: the handler thread holds "
+                                                   "no scope")
+        n = len(self.reads)
+        got = km._live_map()
+        self.assertEqual(len(self.reads), n + 1, "the next read on the handler thread is a fresh one")
+        self.assertIsNot(got, handed, "and it is not the push's map")
+
+    def test_a_cold_bars_build_that_raises_after_the_lanes_frame_leaves_no_scope(self):
+        wake = km._producer_wake.is_set()
+        self.addCleanup(lambda: None if wake else km._producer_wake.clear())
+        self.addCleanup(setattr, km._live_scope, "snapshot", None)   # a red here leaves no scope for later tests on this thread
+        km._built_timeline[:] = [None, None, 0.0, 0.0]             # nothing built since the kernel started: the cold branch
+        why = "the cold live-only bars build raised"
+        self._raising_build(2, why)
+        frames = []
+        err = self._connect_push_logged(frames)
+        self.assertEqual([b[2:4] for b in self.builds], [(False, True), (True, True)],
+                         "the cold branch's lanes build, then its bars build, which raised")
+        _, handed, _, _, scope = self.builds[1]
+        self.assertIs(scope, handed, "the build that raised ran inside its own lend: the push's map, lent at the call")
+        self.assertEqual([json.loads(f)["type"] for f in frames], ["data"],
+                         "the lanes frame went out before the bars build raised, and no bars frame followed")
+        at = err.find("push build: ")
+        self.assertGreaterEqual(at, 0, "the raise reached _push's except branch, which logs it")
+        self.assertIn("_BuildRaised: " + why, err[at:], "the logged traceback is this build's raise")
+        self.assertIsNone(km._live_scope.snapshot, "the lend ended with the build that raised: the handler thread holds "
+                                                   "no scope")
+        n = len(self.reads)
+        got = km._live_map()
+        self.assertEqual(len(self.reads), n + 1, "the next read on the handler thread is a fresh one")
+        self.assertIsNot(got, handed, "and it is not the push's map")
+
+    def test_the_lent_map_stays_on_its_thread_while_a_pusher_cycle_runs(self):
+        """The lend uses the cycle's own slot (_live_scope.snapshot), which is thread-local. A connect push is held
+        inside its lent build while a pusher cycle opens and closes its own scope on a second thread. Each thread reads
+        liveness once, its own read, and the connect's lend is still in place when its build resumes. Were the slot
+        shared between threads, the pusher would be served the connect's map (no read of its own) and the end of its
+        cycle would clear the connect's lend in the middle of the build. The hold is a pair of events with bounded waits
+        and bounded joins, so a wedge fails on a bound instead of hanging."""
+        km._turn_notify_tick = lambda now, live_map: None
+        km._api_health_frame = lambda now, live_map: None
+        km._api_health_push = lambda frame: None
+        with km._clients_lock:   # the pusher's own timeline client: its cycle rebuilds the timeline under its own scope
+            km._clients[:] = [{"app": "timeline", "alive": True, "wid": "", "qbytes": 0, "send": lambda s: None,
+                               "sent": {}}]
+        entered, release = threading.Event(), threading.Event()
+        seen, errors = {}, []
+        recorded = km.build_timeline                    # setUp's wrapper: every build of either thread lands in self.builds
+
+        def held(now, live_map=None, with_bars=True, live_only=False):
+            if threading.current_thread().name == "connect-push" and "at_call" not in seen:
+                seen["handed"], seen["at_call"] = live_map, getattr(km._live_scope, "snapshot", None)
+                entered.set()
+                seen["released"] = release.wait(30)
+                seen["after_release"] = getattr(km._live_scope, "snapshot", None)
+            return recorded(now, live_map, with_bars, live_only)
+        km.build_timeline = held
+
+        def connect():
+            try:
+                km._push([self._client([], [])], connect=True)
+                seen["after_push"] = getattr(km._live_scope, "snapshot", None)
+            except BaseException as e:                  # surfaced on the main thread below
+                errors.append(e)
+            finally:
+                entered.set()                           # a push that never reached its build does not leave the wait to its bound
+
+        def pusher():
+            try:
+                km._pusher_cycle()
+            except BaseException as e:
+                errors.append(e)
+
+        connect_t = threading.Thread(target=connect, name="connect-push", daemon=True)
+        pusher_t = threading.Thread(target=pusher, name="pusher-cycle", daemon=True)
+        # on every exit path: release the hold, then join each of the two threads that started
+        self.addCleanup(join_started, release, [connect_t, pusher_t], 30)
+        connect_t.start()
+        self.assertTrue(entered.wait(30), "the connect push reached its lent build")
+        pusher_t.start()
+        pusher_t.join(30)
+        self.assertFalse(pusher_t.is_alive(), "the pusher cycle ran to its end while the connect push was held")
+        release.set()
+        connect_t.join(30)
+        self.assertFalse(connect_t.is_alive(), "the connect push ran to its end once released")
+        self.assertEqual(errors, [])
+        self.assertTrue(seen.get("released"), "the hold ended on the release, not on its bound")
+        self.assertIsNotNone(seen.get("handed"), "the connect push handed its build a map")
+        self.assertEqual(collections.Counter(self.reads), {"connect-push": 1, "pusher-cycle": 1},
+                         "each thread read liveness once, its own read: the pusher was not served the connect's lend")
+        self.assertIs(seen["at_call"], seen["handed"], "the connect's build was lent the push's map")
+        self.assertIs(seen.get("after_release"), seen["handed"],
+                      "the connect's lend was still in place after the pusher's cycle opened and closed its scope")
+        self.assertIsNone(seen.get("after_push", "unset"), "the lend ended with the connect push")
+        self.assertEqual(sorted(b[2:4] for b in self.builds), [(False, False), (True, False)],
+                         "the connect's stale-cache lanes build and the pusher's full rebuild, nothing else")
+        self.assertIsNone(km._live_scope.snapshot, "the main thread never held a scope")
+
+    TASK_DESC = "run the schema migration check"
+
+    def _task_row_world(self):
+        """The changing world of the two tests below: SID3's row carries one pending background command on the FIRST
+        Sessions.live() call and none on any later call, as if the command finished between two reads; SID's and
+        SID2's rows carry none. Installs that stub (each call counted in self.reads) and returns the first rows.
+
+        The liveness readers build_timeline can reach, derived from its call graph at this head (every function the
+        build can call through any chain that calls _live_map() itself, or reads liveness when no row is handed to it):
+          - _session_awaiting: its own row lookup, for every idle live lane (build_timeline calls it with no row);
+          - _owned_yield_why: calls _bg_live_norm with no row, for a live lane with no awaited rows (SID and SID2 here),
+            from build_timeline's _session_awaiting call and, in a bars build, from _session_chip's;
+          - _awaiting_task_descs: calls _bg_live_norm with no row, for a lane awaiting a task (SID3 here alone:
+            build_timeline calls it only when the lane's awaitingBg is set);
+          - _bg_live_norm: its own row lookup, reached through the two above.
+        This world reaches all four under the push's one read, on both connect paths. The static world of the other
+        tests reaches all but _awaiting_task_descs, since no lane there awaits a task. Reached but never reading on these
+        paths: _session_background_items (_awaiting_items_payload hands it the build's row), _awaiting_live_rows (it
+        takes its caller's row) and build_timeline's own read (the push always hands it a map). _push_session_now and
+        post_notice (with build_session, _reveal_msg and _notice_session_known under them) also read liveness, and sit in
+        the graph only through _sdk() and _codex(), which hand them to a backend as callbacks when they first build it;
+        none of the backend methods the build calls invokes them."""
+        task = {"toolUseId": "toolu-synthetic-1", "taskId": "task-synthetic-1", "desc": self.TASK_DESC,
+                "since": int(km.time.time()) - 60, "type": "local_bash"}
+        first, after = copy.deepcopy(self.row), copy.deepcopy(self.row)
+        first[SID3]["bgTasks"], after[SID3]["bgTasks"] = [task], []
+
+        def live():
+            self.reads.append(threading.current_thread().name)
+            return copy.deepcopy(first if len(self.reads) == 1 else after)
+        km.Sessions.live = live
+        return first
+
+    def _task_lane_checks(self, lanes_frame):
+        """SID3's lane in a lanes frame reads one moment: awaiting its command in every awaiting field."""
+        lane = {s["id"]: s for s in json.loads(lanes_frame)["data"]["sessions"]}[SID3]
+        self.assertEqual(lane["awaitingKind"], "task", "the lane awaits its background command")
+        self.assertEqual(lane["awaitingTasks"], [self.TASK_DESC], "the awaited task's description, read at the same moment")
+        self.assertEqual([it["label"] for it in lane["awaitingItems"]], [self.TASK_DESC],
+                         "the awaited row, read at the same moment")
+
+    def test_a_stale_cache_connect_push_reads_one_moment_when_a_task_ends_mid_push(self):
+        """A background command that finishes between two liveness reads. The push's own read sees SID3 awaiting it; a
+        nested reader that read again would see it gone, and the lane would mix two moments. Before the lend, a lane
+        here carried awaitingItems naming the command (from the push's map) beside awaitingKind null and awaitingTasks
+        [] (from the later reads). The lane must read the push's moment alone: equal to an unlent build over the first
+        rows. The world reaches every liveness reader build_timeline can reach (_session_awaiting, _owned_yield_why,
+        _awaiting_task_descs, _bg_live_norm; derived in _task_row_world's docstring), under the one-read pin."""
+        first = self._task_row_world()
+        frames = []
+        km._push([self._client(frames, [])], connect=True)
+        data = [f for f in frames if json.loads(f)["type"] == "data"]
+        self.assertEqual(len(data), 1, "the connect push sent one lanes frame")
+        self._task_lane_checks(data[0])
+        self.assertEqual(len(self.reads), 1, "one liveness read for the whole push, in a world where a second read differs")
+        self.assertEqual([b[2:4] for b in self.builds], [(False, False)], "the stale branch built the lanes fresh")
+        # the reference: the same clock, the rows held at the first moment, and no lend
+        now = self.builds[0][0]
+        km.Sessions.live = lambda: copy.deepcopy(first)
+        ref = self.real_build(now, copy.deepcopy(first), with_bars=False)
+        self.assertEqual(json.loads(data[0])["data"], json.loads(json.dumps(ref)),
+                         "the lanes equal an unlent build's over the first moment's rows")
+
+    def test_a_cold_live_first_connect_push_reads_one_moment_when_a_task_ends_mid_push(self):
+        """The cold live-first twin of the test above: the same changing world, through the lanes build and the bars
+        build of a cold connect. Before the lends, its lanes frame carried the same mixed lane. The frames must equal,
+        byte for byte, those of an unlent push over a copy of the world whose rows hold at the first moment. The world
+        reaches every liveness reader build_timeline can reach (_session_awaiting, _owned_yield_why,
+        _awaiting_task_descs, _bg_live_norm; derived in _task_row_world's docstring), under the one-read pin."""
+        reference = self._world_copy()
+        wake = km._producer_wake.is_set()
+        self.addCleanup(lambda: None if wake else km._producer_wake.clear())
+        km._built_timeline[:] = [None, None, 0.0, 0.0]             # nothing built since the kernel started: the cold branch
+        first = self._task_row_world()
+        frames = []
+        km._push([self._client(frames, [])], connect=True)
+        self.assertEqual([json.loads(f)["type"] for f in frames], ["data", "bars"], "the lanes frame, then the bars")
+        self._task_lane_checks(frames[0])
+        self.assertEqual(len(self.reads), 1, "one liveness read for the whole push, in a world where a second read differs")
+        self.assertEqual([b[2:4] for b in self.builds], [(False, True), (True, True)], "the cold branch's two builds")
+        # the reference: the same push over the world's copy (see the cold test above), the rows held at the first
+        # moment, and every _serve_live a null context, so nothing is lent and every nested reader reads fresh
+        self._enter_world(reference)
+        self.builds[:] = []
+        km.Sessions.live = lambda: copy.deepcopy(first)
+        ref_frames = []
+        with mock.patch.object(km, "_serve_live", lambda live_map: contextlib.nullcontext()):
+            km._push([self._client(ref_frames, [])], connect=True)
+        self.assertEqual([b[2:4] for b in self.builds], [(False, True), (True, True)], "the reference took the cold branch")
+        self.assertEqual(frames, ref_frames, "the frames equal, byte for byte, an unlent push's over the first moment")
 
 
 class OneDiscoverPerCycle(_CycleFixture):
