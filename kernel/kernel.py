@@ -37417,10 +37417,14 @@ def _task_outputs_for(reminders, path, index=None):
     empty answer is not kept, so the next reminder reads again, as the search did: a failed read folds to an empty
     answer (fold_records keeps nothing then), and so does a transcript with no task rows. The index holds commands,
     never rows, and lives only as long as the build. The difference from the search: an answer that changes after
-    the index is taken reached the build's later reminders under the search, and here waits for the next build.
-    That takes a change during the build: a record appended that a later reminder needs (a live-tail notification
-    whose launch reaches the transcript mid-build), the transcript rewritten or its fold state replaced, or a later
-    read failing (the search then read no command). None (a direct caller) runs the search per reminder."""
+    the index is taken reached the build's later reminders under the search, and here reaches a notification only
+    when a later build joins it again. The next build joins again every turn this build left unsealed (the last
+    turn, and a turn an undecided seam or a running agent's launch held open); a turn this build sealed into the
+    fold prefix keeps the build's first answer until a full build (a fold demotion, a restart), as a sealed turn
+    under the search keeps the answer it was joined with. That takes a change during the build: a record appended
+    that a later reminder needs (a live-tail notification whose launch reaches the transcript mid-build), the
+    transcript rewritten or its fold state replaced, or a later read failing (the search then read no command).
+    None (a direct caller) runs the search per reminder."""
     out = {}
     for r in reminders:
         note = _parse_task_notification("<task-notification>%s</task-notification>" % r)

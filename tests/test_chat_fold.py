@@ -847,8 +847,12 @@ class TaskOutputsOneScanPerBuild(_Fold):
     so every reminder takes that search, and the two whole payloads are compared, beside expected outputs
     written out from the fixture. Two scan counts per build: the every-task scans made inside
     _task_outputs_for (one per build: the index is taken there, at the first notification), and the build's
-    total over every caller, which must fall by exactly the scans saved inside, since the two builds differ
-    only in what _task_outputs_for is handed."""
+    total over every caller. Both are pinned as absolute figures, never only as a difference from the build
+    with the index dropped: the first three tests' builds make no every-task scan outside _task_outputs_for
+    (main's build of each scans there alone), so the total equals the inside count, and a scan added anywhere in
+    the build, directly or through a helper, moves the total of both builds alike, which a difference cannot
+    see. The last three tests hold the one difference from the search, an answer replaced during the build,
+    with the real trigger: a cold every-task fold healed by _heal_cold_folds after the index is taken."""
 
     A, B, C, D = "toolu_bgx_a", "toolu_bgx_b", "toolu_bgx_c", "toolu_bgx_d"
 
@@ -878,11 +882,12 @@ class TaskOutputsOneScanPerBuild(_Fold):
     def outputs(m):
         return [e["taskOutputs"] for e in m["events"] if e.get("taskOutputs")]
 
-    def build(self, main_path=False, fold=False):
+    def build(self, main_path=False, fold=False, after_first_scan=None):
         """One build, returned with (scans inside _task_outputs_for, scans over the whole build): a full build
         (the fold cleared) unless `fold`. main_path drops the build's index, so every reminder runs main's
-        search."""
-        inside, scans, total = [0], [0], [0]
+        search. after_first_scan(path), when given, runs once, right after the build's first scan inside
+        _task_outputs_for has answered, with the real scan back in place (so a refold it makes is not counted)."""
+        inside, scans, total, fired = [0], [0], [0], []
         orig_to, orig_scan = km._task_outputs_for, km._bg_scan_all_cached
         def to(reminders, path, *rest, **kw):
             inside[0] += 1
@@ -893,7 +898,15 @@ class TaskOutputsOneScanPerBuild(_Fold):
         def scan(path):
             total[0] += 1
             scans[0] += 1 if inside[0] else 0
-            return orig_scan(path)
+            rows = orig_scan(path)
+            if after_first_scan is not None and inside[0] and not fired:
+                fired.append(path)
+                km._bg_scan_all_cached = orig_scan
+                try:
+                    after_first_scan(path)
+                finally:
+                    km._bg_scan_all_cached = scan
+            return rows
         km._task_outputs_for, km._bg_scan_all_cached = to, scan
         try:
             if not fold:
@@ -921,9 +934,11 @@ class TaskOutputsOneScanPerBuild(_Fold):
             {C: {"command": "", "output": "c output"}, "toolu_bgx_unknown": {"command": "", "output": "u output"}},
             {A: {"command": "uv run pytest -q tests/test_search.py", "output": "a output"}}])
         self.assertEqual(scans[0], 1, "six task notifications in one build read the every-task scan once")
+        self.assertEqual(scans[1], 1, "and nothing else in the build reads it: main's build of this fixture scanned "
+                                      "only inside _task_outputs_for, six of six")
         m0, scans0 = self.build(main_path=True)
-        self.assertEqual(scans0[0], 6, "main's search scans once per task notification")
-        self.assertEqual(scans0[1] - scans[1], 5, "the build's total falls by the five scans saved, and no more")
+        self.assertEqual(scans0, (6, 6), "with the index dropped the search scans once per task notification, and "
+                                         "nothing else in the build scans")
         self.assertEqual(_dump(m), _dump(m0), "the build's payload is the one main's per-reminder search built")
 
     def test_no_task_notification_reads_no_scan(self):
@@ -934,8 +949,9 @@ class TaskOutputsOneScanPerBuild(_Fold):
                         u, s.last), aline(s.tick(), "Checked.", a, u)]); s.last = a
         m, scans = self.build()
         m0, scans0 = self.build(main_path=True)
-        self.assertEqual((self.outputs(m), scans[0], scans0[0]), ([], 0, 0))
-        self.assertEqual(scans[1], scans0[1], "with no task notification the build's scans are main's, one for one")
+        self.assertEqual(self.outputs(m), [])
+        self.assertEqual((scans, scans0), ((0, 0), (0, 0)), "a build with no task notification makes no every-task "
+                                                            "scan, inside _task_outputs_for or anywhere else")
         self.assertEqual(_dump(m), _dump(m0))
 
     def test_a_task_added_between_two_builds_is_seen_by_the_second(self):
@@ -954,9 +970,107 @@ class TaskOutputsOneScanPerBuild(_Fold):
                 {D: {"command": "npm run lint", "output": "d output"}}]
         self.assertEqual(self.outputs(m2), want, "the index is the build's own: a task launched since the last "
                                                  "build is in the next build's index")
-        self.assertEqual(scans[0], 1, "the second build reshapes D's notification turn and reads the scan once")
+        self.assertEqual(scans, (1, 1), "the second build reshapes D's notification turn and reads the scan once, "
+                                        "there and nowhere else")
         m0, _ = self.build(main_path=True)
         self.assertEqual(self.outputs(m0), want)
+
+    # The one difference from the search (the _task_outputs_for docstring), held with the real trigger: the
+    # every-task fold over the leaf holds a tail-only state, as a cold restore leaves it, and the settle's heal
+    # (_heal_cold_folds, the real function) replaces that state right after the build's first scan inside
+    # _task_outputs_for. A was launched before the restore's cut and B after it; B's notification is joined
+    # first, A's later.
+    CMD_A = "uv run pytest -q"
+
+    def tail_only_every_task_fold(self, cut):
+        """Leave the every-task fold over the leaf as a cold restore does: the cursor at the reader's entry, the
+        state folded from the records past `cut` alone, and the fold marked cold (reason "cold", as
+        _restored_cursor marks a document that carried a cursor without a state). Returns the path."""
+        em = km.em
+        path = str(self.s.tpath)
+        km._bg_scan_all_cached(path)                 # a whole entry, and this kernel's cursor dict named bgAll
+        self.addCleanup(km._bgall_cache.pop, path, None)
+        with em._JSONL_CACHE_LOCK:
+            ent = em._JSONL_CACHE[path]
+        st = em._bg_fresh(True)
+        for r in ent[4][cut:]:
+            st = em._bg_step(st, r)
+        km._bgall_cache[path] = (ent[5] + len(ent[4]), ent[6], st)
+        key = (path, "bgAll")
+
+        def uncold():                                # the heal pops both; this undoes them when a test fails first
+            with em._CKPT_LOCK:
+                em._COLD_FOLDS.discard(key)
+                em._COLD_REASONS.pop(key, None)
+        self.addCleanup(uncold)
+        with em._CKPT_LOCK:
+            em._COLD_FOLDS.add(key)
+            em._COLD_REASONS[key] = "cold"
+        return path
+
+    def a_event(self, m):
+        evs = [e for e in m["events"] if self.A in (e.get("taskOutputs") or {})]
+        self.assertEqual(len(evs), 1, "one event carries A's notification")
+        return evs[0]
+
+    def replaced_mid_build(self, main_path, heal_mid):
+        """Build 1 (full), build 2 (folded, one turn appended) and build 3 (full) over that world, each as
+        (A's event, A's command, scans); then build 2's fold record. heal_mid heals inside build 1, right after its
+        first scan inside _task_outputs_for; otherwise the heal runs between builds 1 and 2. main_path drops build
+        1's index."""
+        s, A, B = self.s, self.A, self.B
+        oa, ob = self.outfile("a"), self.outfile("b")
+        self.launch_turn([(A, self.CMD_A)])
+        s.append(s.turn(2))
+        cut = len(s.tpath.read_text().splitlines())           # the restore's cut: A's launch lies before it
+        self.launch_turn([(B, "npm run build")])
+        self.note_turn(task_note(B, ob))                       # the build's first notification
+        self.note_turn(task_note(A, oa))                       # a later one, which needs A's row
+        s.append(s.turn(9))
+        path = self.tail_only_every_task_fold(cut)
+        ids = lambda: [r.get("id") for r in km._bg_scan_all_cached(path)]
+        self.assertEqual(ids(), [B], "the every-task fold answers the tail past the cut alone")
+        healed = []
+        heal = lambda p: healed.extend(km._heal_cold_folds(p))
+        out = []
+        m, scans = self.build(main_path=main_path, after_first_scan=heal if heal_mid else None)
+        out.append((self.a_event(m), scans))
+        if not heal_mid:
+            heal(path)
+        self.assertEqual(healed, ["bgAll"], "the heal refolded the every-task fold whole")
+        self.assertEqual(ids(), [A, B], "and replaced its state with every task's")
+        s.append(s.turn(10))
+        m, scans = self.build(fold=True)
+        info = dict(km._chat_fold_last_info())
+        out.append((self.a_event(m), scans))
+        m, scans = self.build()
+        out.append((self.a_event(m), scans))
+        return [(ev, ev["taskOutputs"][A]["command"], sc) for ev, sc in out], info
+
+    def assert_sealed_in_build_2(self, b1, b2, info):
+        self.assertEqual((info.get("fold"), b2[2][0]), (1, 0), "build 2 folds and joins no notification again")
+        self.assertIs(b2[0], b1[0], "A's notification turn is in the prefix build 1 sealed")
+
+    def test_an_answer_replaced_mid_build_stays_on_a_sealed_turn_until_a_full_build(self):
+        (b1, b2, b3), info = self.replaced_mid_build(main_path=False, heal_mid=True)
+        self.assertEqual((b1[1], b1[2][0]), ("", 1), "build 1's index was taken before the heal: A reads no command")
+        self.assert_sealed_in_build_2(b1, b2, info)
+        self.assertEqual(b2[1], "", "the next build keeps build 1's first answer on the turn it sealed")
+        self.assertEqual(b3[1], self.CMD_A, "a full build joins it again")
+
+    def test_the_search_joined_the_replaced_answer_in_the_same_build(self):
+        (b1, b2, b3), info = self.replaced_mid_build(main_path=True, heal_mid=True)
+        self.assertEqual((b1[1], b1[2][0]), (self.CMD_A, 2), "the search scans again at A's notification, after "
+                                                             "the heal, and joins A's command")
+        self.assert_sealed_in_build_2(b1, b2, info)
+        self.assertEqual((b2[1], b3[1]), (self.CMD_A, self.CMD_A))
+
+    def test_a_sealed_turn_keeps_its_joined_answer_under_the_search_too(self):
+        (b1, b2, b3), info = self.replaced_mid_build(main_path=True, heal_mid=False)
+        self.assertEqual((b1[1], b1[2][0]), ("", 2), "both of build 1's scans answer before the heal")
+        self.assert_sealed_in_build_2(b1, b2, info)
+        self.assertEqual(b2[1], "", "a turn the search sealed keeps the answer it was joined with")
+        self.assertEqual(b3[1], self.CMD_A, "a full build joins it again")
 
 
 class DeepReplay(_Fold):
