@@ -55,18 +55,25 @@ reader on the directory's stat (`_boards()`), and code winning an id collision t
 
 **Decision: a pane is a definition in ONE schema; the shipped panes (six since the Artifacts pane, 2026-09-19) are code constants in that schema
 (an id the shell's derived element names already take, `tl`, `a` to `d`, `ghost`, `col`, or one beginning `chat-`, is refused at
-the door since 2026-09-21; a pane file already written under such an id is skipped at the next listing with one stderr line
-naming the file and the rule, the fail-loud convention, and its page is gone from the dashboards until it is re-defined under
-another id)
+the door since 2026-09-21; an id that is an `Object.prototype` own-property name matching the id rule, today `constructor`, is
+refused too, since a pane id is read as a plain-object key and the prototype answers for such a name even with no pane stored;
+and a title, id or source that is not one line of text (a control character, a line or paragraph separator (U+2028/U+2029) or
+an unpaired surrogate) is refused, naming the field, the cause and the offending position. A pane file already written under
+such an id, title or source is skipped at the next listing with one stderr line naming the file and the rule, the fail-loud
+convention, and its page is gone from the dashboards until it is re-defined; `romp pane remove <id>` still clears such a skipped
+file by its name)
 and every other pane is a JSON document in the same schema under the state root.** The renderer of the
 shell (the rail, the tabs, the markup, the CSS, the broadcast, the gear) is a function of the list.
 
 ```
 Pane {
-  id: string           // [a-z][a-z0-9_-]{0,31}; the shipped keys (chat, timeline, fleet, feed, files) and
-                       //   "settings" are reserved (a define of one is refused)
-  title: string        // <= 24 chars (a rail button, a phone tab, the palette's word); default: the id with
-                       //   its first letter upper-cased. Never a resting title bar (the docking plan, section 3)
+  id: string           // [a-z][a-z0-9_-]{0,31}, matched whole; the shipped keys (chat, timeline, fleet, feed,
+                       //   waiting, files, artifacts) and "settings" are reserved, the shell's derived names (tl,
+                       //   a to d, ghost, col, a chat- prefix) are taken, and "constructor" (an Object.prototype
+                       //   name) is refused; and one line of text (no control character, separator or surrogate)
+  title: string        // <= 24 chars, one line of text (no control character, line or paragraph separator or
+                       //   unpaired surrogate); a rail button, a phone tab, the palette's word; default: the id
+                       //   with its first letter upper-cased. Never a resting title bar (the docking plan, section 3)
   source: Source       // where the page comes from (below)
   on: boolean          // whether the pane is shown by default in a browser that has made no choice for it yet
                        //   (the rail's romp-panes default); default false

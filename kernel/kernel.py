@@ -68591,13 +68591,20 @@ def _pane_source_kind(src):
 
 
 def _one_line_offense(s):
-    """The index of the first character that keeps a string from being one line of text, or None when it is clean:
-    a control character (Unicode category Cc, newline and the rest), a line or paragraph separator (U+2028, U+2029),
-    or an unpaired surrogate (category Cs, a code point that does not encode to UTF-8). Ordinary letters, accents,
-    emoji and punctuation are one line of text and return None."""
+    """The first character that keeps a string from being one line of text, as (index, cause), or None when the string
+    is clean. The index is 0-based (the reason 1-bases it for the reader); the cause names the class found: "a control
+    character" (Unicode category Cc, the newline and the rest), "a line or paragraph separator" (U+2028 or U+2029), or
+    "an unpaired surrogate" (category Cs, a code point that does not encode to UTF-8). Ordinary letters, accents, emoji,
+    combining marks and punctuation are one line of text and return None. Each class is its own branch so a test can drop
+    one and see only that class's refusal go."""
     for i, c in enumerate(s):
-        if unicodedata.category(c) in ("Cc", "Cs") or c in ("\u2028", "\u2029"):
-            return i
+        if c in ("\u2028", "\u2029"):
+            return i, "a line or paragraph separator"
+        cat = unicodedata.category(c)
+        if cat == "Cc":
+            return i, "a control character"
+        if cat == "Cs":
+            return i, "an unpaired surrogate"
     return None
 
 
@@ -68624,16 +68631,18 @@ def _pane_check(defn, allow_reserved=False):
     if not isinstance(title, str) or not title.strip() or len(title) > _PANE_TITLE_MAX:
         return None, "title must be 1 to %d characters" % _PANE_TITLE_MAX
     # A title, the id and a source are each one line of text: refuse a control character, a line or paragraph
-    # separator (U+2028/U+2029), or an unpaired surrogate, naming the field and the first offending index. Such a
-    # title otherwise rode the shim's LABEL and the landing's title sinks, and a surrogate there broke _send's strict
+    # separator (U+2028/U+2029), or an unpaired surrogate, naming the field, the class found, the offending code point
+    # and the position (1-based: the first character is position 1, so a user can count to it). Such a title otherwise
+    # rode the shim's LABEL and the landing's title sinks, and an unpaired surrogate there broke _send's strict
     # body.encode('utf-8') so the whole landing served a 500; a newline in a title folded the bell row; a control
     # character or surrogate in a URL source rode the iframe's data-src the same way. The id is already confined to
     # [a-z][a-z0-9_-] above, so this never fires for it; it is held to the one rule in one place for defence in depth.
     for _field, _val in (("id", pid), ("title", title), ("source", defn.get("source"))):
         if isinstance(_val, str):
-            _bad = _one_line_offense(_val)
-            if _bad is not None:
-                return None, "%s must be one line of text (a control character or unpaired surrogate at position %d)" % (_field, _bad)
+            _off = _one_line_offense(_val)
+            if _off is not None:
+                _bad, _cause = _off
+                return None, "%s must be one line of text (%s, U+%04X, at position %d)" % (_field, _cause, ord(_val[_bad]), _bad + 1)
     src = defn.get("source")
     kind = _pane_source_kind(src)
     if kind is None:
@@ -68782,15 +68791,22 @@ def define_pane(defn):
 
 
 def remove_pane(pid):
-    """Remove a data-defined pane -> (ok, error): a shipped pane's id and an unknown id are refused by name."""
+    """Remove a data-defined pane -> (ok, error): a shipped pane's id and an unknown id are refused by name. A record
+    the current schema SKIPS (a title or source that is not one line of text, an id that is an Object.prototype name or
+    ends in a newline) is not in _panes_data(), so a snapshot-only gate could never clear it while its file stayed on
+    disk and was named on stderr at each listing; such a record is removed by its FILE instead: a pid with no path
+    separator whose <pid>.json is a file directly under the panes directory is unlinked even when the snapshot skipped
+    it. A pid holding a "/" (a traversal like "../x") never names a file here and stays refused as unknown."""
     pid = str(pid or "")
     if pid in _PANE_RESERVED:
         return False, "pane %r is a shipped pane and cannot be removed" % pid
     with _panes_lock:
-        if pid not in _panes_data():
+        fp = _pane_path(pid)
+        on_disk = "/" not in pid and fp.is_file()
+        if pid not in _panes_data() and not on_disk:
             return False, "no pane %r is defined (romp pane list names them)" % pid
         try:
-            _pane_path(pid).unlink()
+            fp.unlink()
         except OSError as e:
             return False, "could not remove the pane's file: %s" % e
     return True, None
