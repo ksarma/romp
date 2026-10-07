@@ -537,7 +537,7 @@ class TimelineConnectReadsLivenessOnce(_CycleFixture):
         self.assertIsNone(seen.get("after_push", "unset"), "the lend ended with the connect push")
         self.assertEqual(sorted(b[2:4] for b in self.builds), [(False, False), (True, False)],
                          "the connect's stale-cache lanes build and the pusher's full rebuild, nothing else")
-        self.assertIsNone(km._live_scope.snapshot, "the main thread never held a scope")
+        self.assertIsNone(getattr(km._live_scope, "snapshot", None), "the main thread never held a scope")
 
     TASK_DESC = "run the schema migration check"
 
