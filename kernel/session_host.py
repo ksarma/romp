@@ -581,7 +581,7 @@ def _cli_echo(obj: dict) -> bool:
     if isinstance(content, str):
         text = content
     elif isinstance(content, list):
-        text = " ".join(str(c.get("text") or "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+        text = " ".join(c["text"] for c in content if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str))
     else:
         return False
     origin = obj.get("origin")

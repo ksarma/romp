@@ -764,6 +764,130 @@ TURN_ROWS = {
 }
 
 
+# THE PARITY CLASS (2026-10-07): every user-row shape that the host's test (_cli_echo, on the raw row) or the kernel's
+# (sdk_backend._is_local_command_echo, on the parsed message) branches on, generated, so both ends are held to the same
+# verdict on each member. The axes are read off the two readers' branches:
+#   - the content: a string, a list, or anything else (both read a string and a list's text blocks, and nothing else);
+#   - a list item: an object or not (the host skips anything else, the kernel reads an object's text attribute and finds
+#     none);
+#   - a block's type: text, another type (a tool result, a tool use, an unknown type) or none (both read text blocks only);
+#   - a text block's text: a string, a non-string (a number, true, a list, an object, null) or missing (both keep a string
+#     only);
+#   - where the tag stands in the joined text: at the start (either tag, and after leading whitespace), past it, or
+#     nowhere (both anchor on the start);
+#   - a block's place: alone, or ahead of a text block that opens with the tag (a block kept ahead of it moves the tag off
+#     the start and a skipped one does not, so this is where the two readers' skips show);
+#   - the origin: none, an object with a string kind (the stamp the SDK keeps, an empty kind included), or a shape the
+#     SDK drops (an object whose kind is a number, an object with no kind, a string).
+# No row carries the isReplay key: the SDK drops it, so the key half of the host's test is outside the parity.
+_TAG_FIRST = "<local-command-stdout>x</local-command-stdout>"
+_PARITY_TEXTS = (("the tag first", _TAG_FIRST),
+                 ("the other tag first", "<local-command-stderr>x</local-command-stderr>"),
+                 ("the tag after leading whitespace", "\n  " + _TAG_FIRST),
+                 ("the tag past the start", "an invented preface " + _TAG_FIRST),
+                 ("no tag", "an invented prompt"))
+# Each block: (name, block, whether the SDK's parser refuses a row that holds it).
+_PARITY_BLOCKS = tuple(("a text block with %s" % n, {"type": "text", "text": t}, False) for n, t in _PARITY_TEXTS) + (
+    ("a text block whose text is a number", {"type": "text", "text": 123}, False),
+    ("a text block whose text is true", {"type": "text", "text": True}, False),
+    ("a text block whose text is a list holding the tag first", {"type": "text", "text": [_TAG_FIRST]}, False),
+    ("a text block whose text is an object holding the tag first", {"type": "text", "text": {"text": _TAG_FIRST}}, False),
+    ("a text block whose text is null", {"type": "text", "text": None}, False),
+    ("a text block with no text", {"type": "text"}, True),
+    ("a tool result whose content opens with the tag",
+     {"type": "tool_result", "tool_use_id": "toolu_invented", "content": _TAG_FIRST}, False),
+    ("a tool use whose input holds the tag first",
+     {"type": "tool_use", "id": "toolu_invented", "name": "Invented", "input": {"text": _TAG_FIRST}}, False),
+    ("a block of another type carrying a text that opens with the tag", {"type": "image", "text": _TAG_FIRST}, False),
+    ("a block with no type carrying a text that opens with the tag", {"text": _TAG_FIRST}, True),
+    ("a bare string that opens with the tag in place of a block", _TAG_FIRST, True),
+)
+# Each origin: (name, the row's origin, None for a row with no origin key).
+_PARITY_ORIGINS = (("no origin", None),
+                   ("an origin stamp", {"kind": "peer"}),
+                   ("an origin stamp with an empty kind", {"kind": ""}),
+                   ("an origin object whose kind is a number", {"kind": 5}),
+                   ("an origin object with no kind", {"from": "invented"}),
+                   ("an origin that is a string", "peer"))
+
+
+def _parity_contents():
+    """The content shapes of the parity class: (name, content, whether the SDK's parser refuses it)."""
+    out = [("string content with %s" % n, t, False) for n, t in _PARITY_TEXTS]
+    out += [("content that is a number", 5, False), ("content that is null", None, False),
+            ("content that is one text block outside a list", {"type": "text", "text": _TAG_FIRST}, False),
+            ("an empty block list", [], False)]
+    for n, b, refused in _PARITY_BLOCKS:
+        out.append(("[%s]" % n, [b], refused))
+        out.append(("[%s, then a text block with the tag first]" % n, [b, {"type": "text", "text": _TAG_FIRST}], refused))
+    return out
+
+
+def _parity_members():
+    """Every member of the parity class, one per content shape and origin: (name, row, whether the SDK's parser refuses
+    the row). Each row goes through JSON, as the host reads it off the CLI's stdout."""
+    return [("%s, %s" % (cn, on), json.loads(json.dumps(_echo_row(c, **({} if o is None else {"origin": o})))), refused)
+            for cn, c, refused in _parity_contents() for on, o in _PARITY_ORIGINS]
+
+
+class _TextBlock:
+    def __init__(self, text):
+        self.text = text
+
+
+class _ToolUseBlock:
+    def __init__(self, id, name, input):
+        self.id, self.name, self.input = id, name, input
+
+
+class _ToolResultBlock:
+    def __init__(self, tool_use_id, content, is_error):
+        self.tool_use_id, self.content, self.is_error = tool_use_id, content, is_error
+
+
+class _UserMessage:    # _turn_frame reads the class name with leading underscores stripped
+    def __init__(self, content, uuid, parent_tool_use_id, origin):
+        self.content, self.uuid, self.parent_tool_use_id, self.origin = content, uuid, parent_tool_use_id, origin
+        self.tool_use_result = None
+
+
+_SDK_REFUSES = object()
+
+
+def _parse_like_the_sdk(rec, dict_blocks=False):
+    """The SDK's parse of a user row, by hand (claude_agent_sdk 0.2.156, message_parser's user branch): the isReplay key is
+    gone, an origin is kept only as an object with a string kind, a list's blocks become objects (a text block keeps its
+    text whatever its type, a tool use and a tool result become theirs, a block of any other type is dropped), and any
+    other content is kept as it is. Returns _SDK_REFUSES where that branch raises: a list item that is not an object, a
+    block with no type, a text block with no text, a tool use or tool result missing a field it requires.
+    With dict_blocks the list's items are handed through as they are, the shape an SDK that passed raw blocks would give
+    the kernel, which reaches the kernel's dict-block branch. That form is never refused."""
+    o = rec.get("origin")
+    origin = o if isinstance(o, dict) and isinstance(o.get("kind"), str) else None
+    content = rec["message"]["content"]
+    if isinstance(content, list) and dict_blocks:
+        content = list(content)
+    elif isinstance(content, list):
+        blocks = []
+        for b in content:
+            if not isinstance(b, dict) or "type" not in b:
+                return _SDK_REFUSES
+            if b["type"] == "text":
+                if "text" not in b:
+                    return _SDK_REFUSES
+                blocks.append(_TextBlock(b["text"]))
+            elif b["type"] == "tool_use":
+                if not all(k in b for k in ("id", "name", "input")):
+                    return _SDK_REFUSES
+                blocks.append(_ToolUseBlock(b["id"], b["name"], b["input"]))
+            elif b["type"] == "tool_result":
+                if "tool_use_id" not in b:
+                    return _SDK_REFUSES
+                blocks.append(_ToolResultBlock(b["tool_use_id"], b.get("content"), b.get("is_error")))
+        content = blocks
+    return _UserMessage(content, rec.get("uuid"), rec.get("parent_tool_use_id"), origin)
+
+
 class ReplayedEchoes(unittest.TestCase):
     """A row the CLI writes for input it is not running opens no turn (2026-10-06). The host re-opened its turn count on ANY
     assistant or user row arriving at zero, so the echo a /model switch makes the CLI write (a user row flagged isReplay,
@@ -961,6 +1085,92 @@ class ReplayedEchoes(unittest.TestCase):
                 self.assertEqual(turn, not fn(keyless), name)
                 verdicts.add(turn)
         self.assertEqual(verdicts, {True, False}, "the parsed rows include echoes the kernel refuses and turns it counts")
+
+    def test_both_ends_give_the_same_verdict_on_every_shape_either_reader_branches_on(self):
+        """PARITY AS A CLASS (2026-10-07): for every member of the generated class (_parity_members, whose comment derives
+        the axes from both readers' branches), the kernel counts a turn exactly when the host's test, on the raw row, says
+        it is no echo. The kernel's verdict is read in two forms: on the hand-written SDK parse (_parse_like_the_sdk)
+        wherever the SDK's parser accepts the row, and on the same message with its list items handed through as the raw
+        objects, which reaches the kernel's dict-block branch. A row the SDK's parser refuses (a list item that is not an
+        object, a block with no type, a text block with no text) never reaches the kernel as a message, so only the second
+        form reads it. The host used to join every text block's text coerced to a string, while the kernel keeps only
+        string texts, so a row with a truthy non-string text ahead of a tag-first text block split them: the host read no
+        echo and the kernel an echo. The next case holds the hand-written parse to the real parser."""
+        fn = getattr(sh, "_cli_echo", None)
+        self.assertIsNotNone(fn, "the host's predicate")
+
+        class Other:
+            pass
+
+        members = _parity_members()
+        rows = {n: rec for n, rec, _ in members}
+        self.assertEqual(len(rows), len(members), "each member has a name of its own")
+        self.assertEqual(len(members), len(_parity_contents()) * len(_PARITY_ORIGINS), "one member per content shape and origin")
+        self.assertIn([{"type": "text", "text": 123}, {"type": "text", "text": _TAG_FIRST}],
+                      [rec["message"]["content"] for rec in rows.values()], "the class holds the row that split the two ends")
+        # The three members that reach the kernel's dict-block branch with a verdict each of its conditions decides.
+        for name, turn in (("[a text block with the tag first], no origin", False),
+                           ("[a tool result whose content opens with the tag], no origin", True),
+                           ("[a block of another type carrying a text that opens with the tag], no origin", True)):
+            with self.subTest(dict_blocks=name):
+                self.assertIn(name, rows)
+                self.assertEqual(sb.SdkSession._turn_frame(_parse_like_the_sdk(rows[name], dict_blocks=True), Other, Other, Other),
+                                 turn, "the kernel's dict-block branch on: %s" % name)
+        split, refused, seen = [], set(), {"parse": set(), "dict blocks": set()}
+        for name, rec, _ in members:
+            host = not fn(rec)
+            forms = {"dict blocks": _parse_like_the_sdk(rec, dict_blocks=True)}
+            msg = _parse_like_the_sdk(rec)
+            if msg is _SDK_REFUSES:
+                refused.add(name)
+            else:
+                forms["parse"] = msg
+            for form, m in forms.items():
+                turn = sb.SdkSession._turn_frame(m, Other, Other, Other)
+                seen[form].add(turn)
+                if turn != host:
+                    split.append("%s [%s]: the host reads %s, the kernel %s"
+                                 % (name, form, "a turn" if host else "an echo", "a turn" if turn else "an echo"))
+        if split:
+            self.fail("the two ends split on %d verdicts over %d members:\n%s" % (len(split), len(members), "\n".join(split)))
+        self.assertEqual(refused, {n for n, _, r in members if r}, "the double refuses exactly the rows the SDK's parser refuses")
+        self.assertEqual(seen, {"parse": {True, False}, "dict blocks": {True, False}}, "each form reads both echoes and turns")
+
+    def test_the_real_sdk_parse_of_every_shape_in_the_class_gets_the_kernel_the_hosts_verdict(self):
+        """The parity class through the real parser (claude_agent_sdk._internal.message_parser.parse_message): it refuses
+        (MessageParseError) exactly the members the hand-written parse refuses, and on every member it parses, the kernel's
+        verdict equals the host's verdict on the raw row. So the double the case above reads is held to the real parser,
+        and a later SDK that parses one of these shapes another way fails here. Skipped where the SDK does not import,
+        and a failure under ROMP_SDK_REQUIRE=1, which CI's pytest step sets after it installs the pinned SDK."""
+        if importlib.util.find_spec("claude_agent_sdk") is None:
+            if os.environ.get("ROMP_SDK_REQUIRE") == "1":
+                self.fail("ROMP_SDK_REQUIRE=1: this run requires the SDK, and claude_agent_sdk does not import")
+            self.skipTest("claude_agent_sdk does not import in this interpreter (CI installs the pinned SDK)")
+        fn = getattr(sh, "_cli_echo", None)
+        self.assertIsNotNone(fn, "the host's predicate")
+        import claude_agent_sdk as sdk
+        from claude_agent_sdk._errors import MessageParseError
+        from claude_agent_sdk._internal.message_parser import parse_message
+        members = _parity_members()
+        split, refused, seen = [], set(), set()
+        for name, rec, _ in members:
+            try:
+                msg = parse_message(rec)
+            except MessageParseError:
+                refused.add(name)
+                continue
+            if type(msg).__name__ != "UserMessage":
+                split.append("%s: parsed as %s" % (name, type(msg).__name__))
+                continue
+            host = not fn(rec)
+            turn = sb.SdkSession._turn_frame(msg, sdk.AssistantMessage, sdk.ResultMessage, sdk.SystemMessage)
+            seen.add(turn)
+            if turn != host:
+                split.append("%s: the host reads %s, the kernel %s" % (name, "a turn" if host else "an echo", "a turn" if turn else "an echo"))
+        if split:
+            self.fail("the two ends split on %d of %d members:\n%s" % (len(split), len(members), "\n".join(split)))
+        self.assertEqual(refused, {n for n, _, r in members if r}, "the real parser refuses exactly the rows the double refuses")
+        self.assertEqual(seen, {True, False}, "the parsed members include echoes the kernel refuses and turns it counts")
 
 
 # ── the host as a process, this test as the kernel ─────────────────────────────────────────────
