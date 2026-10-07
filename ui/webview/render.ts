@@ -124,6 +124,8 @@ import { apiErrorReason } from "./api-error-reason";
 import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows, the held Billing readings and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
+import { onMathSettled, mathPendingIn, mathFailedIn } from "./math";   // the math renderer's arrival: the reader's place kept around the swap (onMathSettled below rerenderAll)
+import { captureReadingPoint, readingPointShift, type ReadingPoint } from "./reading-point";   // the reader's line inside their anchor turn, for the math swap and the reload record (captureReadingAnchor)
 import { setTip, pruneTip } from "./tip";
 import { MetaKind, MetaHooks, metaButton as buildMetaButton, syncMetaControls as syncMetaControlsWith, ctxBar as buildCtxBar, setCtxBar as setCtxBarWith,
   metaColor, modeIconSvg, riskyMode, prettyMode, prettyFast, fastAvailable, metaCurrent, metaDots, rampOn } from "./status-controls";   // the status line's controls, one renderer for the chat's line, the popovers and the settings card's preview (T415 part two)
@@ -1412,6 +1414,16 @@ function revealProgressTick(scrolled: boolean, attAnchor: string | null): void {
 // around it), then restore it to this y instead of calling landOn. Sticks with pendingAnchor across
 // render-pass retries, like pendingAnchorIntent.
 let pendingAnchorKeepY: number | null = null;
+// …and the reader's LINE inside that row, when the keep is a page reload's whose record carries one (reading-point.ts; the review of iOS
+// item 6, round two): the record is taken over laid-out formulas and the row lands over formulas still waiting for the math renderer, so
+// the row's top alone puts the line off by their growth, and the swap then keeps the wrong line in place. Set with pendingAnchorKeepY,
+// cleared wherever it is cleared; null for every keep that carries no line (a scroll-back's, a rebuild's).
+let pendingAnchorKeepAt: ReadingPoint | null = null;
+// …and whether the keep is the reload restore's (landActive: the reader's place saved in the last page life), the one keep whose landing
+// re-bases the boxes-above observer (rebaseBoxesAbove), since it writes a place captured in another layout. Every other keep restores a place
+// captured in this layout (keepPlaceAcrossWindow's over a re-render, a scroll-back's), where the observer's move for a growth it has not yet
+// heard of is right. Set with pendingAnchorKeepY, cleared wherever it is cleared; true only at the reload restore's arm.
+let pendingAnchorKeepReload = false;
 let flashedAnchor: string | null = null; // the anchor already flashed THIS navigation — a deep anchor
 // re-lands once per older-history fetch round, and each re-land used to pulse again (the user
 // 2026-08-15: "pulsating way too many times"). A NEW navigation (setActive with an anchor) re-arms.
@@ -1439,7 +1451,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; followRebuilt?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; followRebuilt?: boolean; leaveLine?: ReadingAnchor | null; lineMoved?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // leaveLine: the reader's line when the tab was left with a formula waiting for the math renderer, and lineMoved: the renderer laid the formulas out while the tab was hidden (setActive, onMathSettled, landActive); working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -1555,14 +1567,27 @@ function postalRepoFor(ev: { direction: "in" | "out"; peer: string; peerHost?: s
   return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer, postalSenderHost(ev.peerHost, localSelfHost, cardHost));
 }
 
+// The bodies highlight() has dressed: a reply, a tool's output, a report, a mail or notice body. The math arrival gives a failed
+// load's source block its Copy button only inside one of them, as highlight() gives one to every source block it meets; a bubble of
+// your own, a queued message and a romp notice are never highlighted, and no block in them has the button (the review of iOS item 6,
+// round 1). Elements, held weakly: a body that leaves the page leaves the set.
+const highlightedBodies = new WeakSet<Element>();
+/** Whether `n` sits inside a body highlight() has dressed (highlightedBodies). */
+function inHighlightedBody(n: Element): boolean {
+  for (let e: Element | null = n; e; e = e.parentElement) if (highlightedBodies.has(e)) return true;
+  return false;
+}
+
 function highlight(container: HTMLElement, lineNos = true) {
+  highlightedBodies.add(container);
   container.querySelectorAll("pre code").forEach((node) => {
     const code = node as HTMLElement;
     const raw = code.textContent || "";   // capture BEFORE we rewrite innerHTML: line-wrapping drops the \n joins, so the on-screen markup's textContent is NOT copy-safe
     // The math fill's source fallback (math.ts MATH_SOURCE_CLASS: a formula shown as its TeX because it passed a bound) is
     // not code: it keeps the Copy button and nothing else. Auto-detection over 20,000 characters of TeX cost 250 ms and
     // dressed the fallback in the tokens of whichever grammar it guessed, where the sheet dresses it as unrendered source
-    // (review round 3). Spelled here, not imported: render.ts imports nothing from math.ts (render-math.test.ts pins both).
+    // (review round 3). Spelled here, not imported: render.ts takes only the arrival's hook and the two tests from math.ts
+    // (onMathSettled, mathPendingIn, mathFailedIn), so the class is spelled (render-math.test.ts pins both).
     if (code.classList.contains("md-math-src")) { const host = code.parentElement; if (host && host.tagName === "PRE") addCopyBtn(host as HTMLElement, raw); return; }
     const lang = (code.className.match(/language-([\w-]+)/) || [])[1];
     try {
@@ -7810,9 +7835,10 @@ function showSelectionMenu(e: MouseEvent) {
   const mk = (labelText: string, fn: () => void) => { items.push({ label: labelText, pick: fn }); };
   // Comment first, Quote second (the user 2026-08-23): Comment is the primary act — a side thread
   // about the passage — and Quote is the lighter one. Comment only when the selection sits in a real
-  // transcript turn (transcriptSelection's uuid) on a real session.
+  // transcript turn (transcriptSelection's uuid) on a real session, and meets no formula whose text the
+  // math renderer's arrival will change (selectionMeetsChangingMath).
   const q = transcriptSelection();
-  if (q?.uuid && activeId && !isProvisionalId(activeId) && liveSession(activeId)) {
+  if (q?.uuid && activeId && !isProvisionalId(activeId) && liveSession(activeId) && !selectionMeetsChangingMath(sel)) {
     const sid = activeId, uuid = q.uuid, qtext = q.text;
     mk("Comment", () => openCommentComposer(sid, uuid, qtext, e.clientX, e.clientY));
   }
@@ -13125,6 +13151,11 @@ function scrollToAnchor(uuid: string): boolean {
       const working = s.status.state === "working" || s.status.state === "compacting";
       figures = figuresBefore(v);
       renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: landOn puts the target under the reader
+      // The window's marks, branch chips and fork spots go on now, before any landing reads the layout (syncView's wrapper does the same
+      // after every sync). Applied after the landing, by the payload's re-apply or the math renderer's arrival, a fork spot under each
+      // response above the target grew the rows above it with no write, and the reader landed about 8 px off per response (the review of iOS
+      // item 6, round two: a reload into a long transcript with two responses above the reader ended 16 px off, at the base already).
+      applyCommentMarks(activeId);
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
       // unhydrated postal turn (whose message ids live only in data-mids) could be found in the events,
       // have its window rendered — and then still honest-fail "pointer-not-rendered" on the re-query.
@@ -13210,13 +13241,19 @@ function scrollToAnchor(uuid: string): boolean {
   // like a deep-link. Routing it through landOn was what yanked a reader off the summary they had just
   // jumped to and onto the head of the resident tail (an old Bash card); see chatHead.
   if (pendingAnchorKeepY != null) {
-    const keepY = pendingAnchorKeepY;
-    pendingAnchorKeepY = null;
+    const keepY = pendingAnchorKeepY, keepAt = pendingAnchorKeepAt, fromReload = pendingAnchorKeepReload;
+    pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false;
     landTrail.push("pointer-keep-offset");
     const content = document.getElementById("content");
     if (content) {
       const yNow = target.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-      writeScroll(content, yNow - keepY, "keep-offset");
+      // the reader's line when the keep carries one and the row holds it (a reload into a row outside the fresh page's window, the
+      // restore's own road for a row inside it), else the row's top: one write either way
+      const dy = keepAt && v ? readingLineShift(content, v, { uuid, y: keepY, at: keepAt }) : null;
+      writeScroll(content, dy !== null ? content.scrollTop + dy : yNow - keepY, "keep-offset");
+      // the reload restore's keep, a place saved in the last page life, is written in the layout just measured, the boxes above at their
+      // heights now, so the box-resize observer measures from here; any other keep was captured in this layout and leaves the baseline alone
+      if (fromReload) rebaseBoxesAbove();
     }
     return true;
   }
@@ -14711,6 +14748,62 @@ function rerenderAll(): void {
   schedulePrebuild(); // rebuild every off-screen view in idle under the new setting, so switches stay instant
 }
 
+// The math renderer's arrival (math.ts: KaTeX is an on-demand chunk, and until it is in a formula shows its TeX in the pending
+// dress). math.ts's fill over the document then swaps every waiting formula for KaTeX's layout IN PLACE, so a formula above the
+// reader changes the transcript's height under them. Chromium's scroll anchoring cannot absorb it (its anchor node is often the
+// placeholder the fill replaces, and the turn restore below writes over it) and the phone's WebKit has none, so the place is
+// kept by hand: the reader's LINE read before the fill and put back at its offset after it (captureReadingAnchor,
+// restoreReadingLine: the first line of text at the viewport top that no formula owns, inside the anchor turn), and a reader
+// at the bottom written to the new bottom. The line and not the turn, because a reply's formulas usually sit in the same turn
+// the reader is partway down: keeping that turn's top let its formulas push the text being read down by their growth (the
+// review of iOS item 6, 2026-10-02: about 133 px on a phone for eight short display formulas). A turn whose visible part holds
+// no such line keeps its top, as before. A view not on screen when the renderer lands has its formulas laid out unseen, so it is marked
+// (lineMoved) and its next show lands the line its reader was on when they left the tab (setActive keeps it while a formula waits,
+// landActive lands it; the review of iOS item 6, round two). A failed load takes the same road, each formula becoming its source,
+// and a later success takes it again: a view holding a formula the failure showed as its source (mathFailedIn) counts as one that
+// held a waiting formula, since the success lays those out in place too (math.ts restoreFailedFormulas; round 1 of the PR's
+// review, which ruled that a failed load is retried). Then the comment
+// marks go back on every view that held a waiting formula, unwrapped and searched again over the laid-out text (a mark on math
+// pairs with the rendered .katex root, applyCommentMarks), and a queued group whose cached node held one is marked changed, so
+// its next render rebuilds the node's children with the renderer in (renderPendingGroup).
+onMathSettled(() => {
+  const content = document.getElementById("content");
+  const av = activeId ? views.get(activeId) : null;
+  const live = !!(content && av && av.shown && content.clientHeight > 0);
+  const from = content ? content.scrollTop : 0;
+  const bottom = live && atBottom(content!);
+  const keep = live && !bottom ? captureReadingAnchor(content!, av!) : null;
+  const held = Array.from(views.entries()).filter(([, v]) => mathPendingIn(v.el) || mathFailedIn(v.el)).map(([sid]) => sid);
+  for (const sid of held) { const hv = views.get(sid)!; if (!(live && hv === av)) hv.lineMoved = true; }   // a hidden view's formulas grow unseen: its next show lands the line read when it was left
+  for (const g of pendingGroupNode.values()) if (mathPendingIn(g.node) || mathFailedIn(g.node)) g.sig = "";
+  return () => {
+    if (live && content && av) {
+      if (bottom) writeScroll(content, content.scrollHeight, "math-fill", true, from);
+      else if (keep && !restoreReadingLine(content, av, keep, from)) restoreScrollAnchor(content, av, keep, from);
+      av.scrollTop = content.scrollTop;   // the per-view saved position follows
+    }
+    for (const sid of held) {
+      // Every mark in the view comes off first, after the fill, and the pass puts each thread back over the text as it now
+      // reads: a mark placed while a formula waited was cut at the formula (its text then was the TeX, and the fill dropped any
+      // segment inside the placeholder), and applyCommentMarks searches again only for a thread with no mark in its turn, so
+      // without the unwrap the passage stayed cut after the arrival (the review of iOS item 6, round 1). Every arrival does it:
+      // a success, a late one, a retry's, and the failure.
+      const hv = views.get(sid)!;
+      for (const m of Array.from(hv.el.querySelectorAll("mark.cmt-hl"))) unwrapCommentMark(m as HTMLElement);
+      applyCommentMarks(sid);
+      // A display formula a failed load showed as its source is a code block the highlighter never saw (it was a placeholder when
+      // the message rendered), so it takes here the Copy button a source block has in a body the highlighter dresses, and only in
+      // such a body (inHighlightedBody): your own bubble, a queued message or a romp notice keeps it bare, as it keeps its fences.
+      // Never through highlight() itself, which has no already-done check and would rewrite the block's lines. addCopyBtn skips a
+      // block that has one (the review of iOS item 6, round 1).
+      for (const code of Array.from(hv.el.querySelectorAll("pre > code.md-math-src"))) {
+        const pre = code.parentElement as HTMLElement;
+        if (inHighlightedBody(pre)) addCopyBtn(pre, code.textContent || "");
+      }
+    }
+  };
+});
+
 // Index of the last human-prompt event = start of the current turn, where any
 // in-place mutations (a tool's output arriving, etc.) live. 0 if none.
 function lastTurnStart(events: ChatEvent[]): number {
@@ -15681,11 +15774,11 @@ function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: stri
   const figures = figuresBefore(v);   // what the take below takes, given back when neither restore has a row to put back
   if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   if (restoreScrollAnchor(content, v, keep)) return true;
-  pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y;
+  pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false;
   relandAsk = true;
   let landed = false;
   try { landed = scrollToAnchor(keep.uuid); } finally { relandAsk = false; }
-  if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }   // an older-history fetch keeps them armed for chatHead's re-land
+  if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false; }   // an older-history fetch keeps them armed for chatHead's re-land
   // the double miss: the row that was under the viewport top, back at its offset over the take; with that row gone too (the attempt's window
   // build replaced the rows) nothing can be put back and nothing is written, so the take is undone and the figures wait (untakeMeasure; the
   // maintainer's round 3 ruling B: until then the take stood under a reader nothing had placed)
@@ -15759,6 +15852,12 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   const figures = figuresBefore(v);   // what the take below takes, given back by the fallback when it has no row to put back
   if (!saved && applyMeasure(v)) redrawGapUnits(v);
   sizeSpacers(v);
+  // A tab left with a formula waiting for the math renderer and shown again after the renderer laid it out unseen (onMathSettled marked it):
+  // its saved scrollTop was taken over the waiting formulas, so the saved road lands the line read when the tab was left (setActive) instead
+  // (the review of iOS item 6, round two: the raw write put the text being read 133 px off in a phone-sized Chromium). Consumed by this show,
+  // whatever its road.
+  const moved = saved && v.lineMoved ? v.leaveLine ?? null : null;
+  v.leaveLine = null; v.lineMoved = false;
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
   // user cancels, or the backstop fires — never hijacking a scroll-back keep-offset restore.
   if (!pendingAnchor && pendingAnchorT == null && pendingAnchorKeepY == null && seek && seek.sid === activeId) {
@@ -15797,7 +15896,7 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   // unanchorable — so they honest-fail with a toast rather than a clock-nearest guess (which often landed on
   // an unrelated turn anyway — the 'retry'-message bug). The old time tier-2 (scrollToNearestT) is GONE: the
   // last time-based navigation removed, per "no time heuristics". WORK/REPLY intent never had a tier-2 either.
-  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; pendingAnchorClick = false;
+  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false; pendingAnchorClick = false;
   // Diagnostics: log every landing attempt; a deep-link that couldn't resolve announces itself loudly
   // instead of impersonating a successful jump.
   if (att.anchor || att.t != null) {
@@ -15831,14 +15930,14 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
       pendingReloadScroll = null;
       v.stick = rs.stick;
       if (rs.stick) writeScroll(content, content.scrollHeight, "reload-restore", true);
-      else if (!(rs.anchor && restoreScrollAnchor(content, v, rs.anchor))) {
+      else if (!(rs.anchor && (restoreReadingLine(content, v, rs.anchor) || restoreScrollAnchor(content, v, rs.anchor)))) {   // the reader's line when the fresh turn holds it (a record taken over laid-out formulas lands right over waiting ones), else the turn
         // the anchor turn is not in the fresh page's window (the reader was above the tail window): the raw
         // scrollTop was measured in a differently windowed DOM, so land it now as the first guess and arm the
         // deep-link land, whose window-around-unit and fetch-older paths bring the anchor turn back to its exact
         // offset (review find, 2026-09-08)
         writeScroll(content, rs.top, "reload-restore");
         if (rs.anchor) {
-          pendingAnchor = rs.anchor.uuid; pendingAnchorKeepY = rs.anchor.y;
+          pendingAnchor = rs.anchor.uuid; pendingAnchorKeepY = rs.anchor.y; pendingAnchorKeepAt = rs.anchor.at ?? null; pendingAnchorKeepReload = true;   // the row's offset and the reader's line in it, the reload's own keep
           // …and run that land NOW (T374, the verifier of 2026-09-12 executed the gap on both heads): this pass made its own
           // landing attempt above, before the restore armed anything, and the next pass comes only with a frame that changes
           // the run, which an idle session never sends, so a saved row outside the fresh window (mid-run: its raw top not in
@@ -15846,18 +15945,24 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
           // outside the run → asks its window here (chatWindow lands it on arrival, the arm stays for that reply).
           landTrail = [];
           const landedNow = scrollToAnchor(rs.anchor.uuid);
-          if (landedNow || !anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }
+          if (landedNow || !anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false; }
         }
       }
+      // the place saved in the last page life is written in this layout, the boxes above at their heights now: a growth of theirs whose
+      // notice has not arrived is in the landing already, so the box-resize observer measures from here (rebaseBoxesAbove)
+      rebaseBoxesAbove();
     }
     else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
     // an armed land that missed: the row the saved place held goes back at its offset over the spacers the take re-sized; the raw write
-    // whenever the restore has no row to put back: nothing armed (nothing taken: the saved scrollTop is exact), no row at the saved
+    // whenever the restore has no row to put back: nothing armed (nothing taken: the saved scrollTop is exact unless formulas grew while the
+    // tab was hidden, the `moved` road below), no row at the saved
     // place, or the captured row gone with the attempt's window build (the maintainer's round 2 ruling; the third road named by the
     // author's own verifiers after pass 3, executed in land-active-keep.test.ts). On the two roads after a take the take is undone first
     // (untakeMeasure), so the saved scrollTop lands in the layout it was saved in and the figures wait, as on the nothing-armed road (the
     // maintainer's round 3 ruling B)
-    else if (!(held && restoreScrollAnchor(content, v, held))) { untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
+    // A tab whose formulas were laid out while it was hidden (`moved`, the saved road: nothing was taken) lands the line read when it was left,
+    // else that turn's top, at their offsets; the raw write when neither is still rendered.
+    else if (!(held && restoreScrollAnchor(content, v, held)) && !(moved && (restoreReadingLine(content, v, moved) || restoreScrollAnchor(content, v, moved)))) { untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
   }
   v.shown = true;
   scheduleRailSticky();
@@ -15897,7 +16002,7 @@ function persistScrollForReload(): void {
   const v = activeId ? views.get(activeId) : null;
   if (!content || !v || !v.shown || content.clientHeight <= 0) return;
   const stick = content.scrollHeight - content.scrollTop - content.clientHeight <= 2;   // the true bottom
-  const rec = reloadScrollRecord(activeId, content.scrollTop, stick, stick ? null : captureScrollAnchor(content, v));
+  const rec = reloadScrollRecord(activeId, content.scrollTop, stick, stick ? null : captureReadingAnchor(content, v));   // the anchor turn and the reader's line in it
   try { if (rec) sessionStorage.setItem(RELOAD_SCROLL_KEY, JSON.stringify(rec)); } catch { /* ignore */ }
 }
 // The warning toasts on screen when the CORE reloads the page. A toast is DOM only and lives 12 s, and the core's restart
@@ -15945,6 +16050,34 @@ function restoreScrollAnchor(content: HTMLElement, v: View, a: { uuid: string; y
   // origin the write moved nothing, filed no row and set no marker, and the clamp's event filed as a gesture (see writeScroll)
   writeScroll(content, yNow - a.y, "anchor-restore", false, from);   // the anchor turn keeps its exact on-screen offset
   return true;
+}
+
+// The anchor turn with the reader's LINE inside it (reading-point.ts), for a change that can reshape the text above the reader
+// within that turn: the math renderer's arrival (onMathSettled) and a page reload, whose record is taken over laid-out formulas
+// and landed over formulas still waiting for the renderer (persistScrollForReload, landActive's reload restore). `at` is absent
+// when the turn's visible part holds no line of text outside a formula; the turn's top is then the anchor, as everywhere else.
+type ReadingAnchor = { uuid: string; y: number; at?: ReadingPoint };
+function captureReadingAnchor(content: HTMLElement, v: View): ReadingAnchor | null {
+  const a = captureScrollAnchor(content, v);
+  if (!a) return null;
+  const turn = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;   // the element the restores find (restoreScrollAnchor's lookup)
+  const at = turn ? captureReadingPoint(content, turn) : null;
+  return at ? { uuid: a.uuid, y: a.y, at } : a;
+}
+/** The reader's line back at its offset, one write by its displacement; false, writing nothing, when no line was recorded or the
+ *  turn no longer holds it, and the caller then restores the turn (restoreScrollAnchor). `from` as restoreScrollAnchor's. */
+function restoreReadingLine(content: HTMLElement, v: View, a: ReadingAnchor | null, from?: number): boolean {
+  const dy = readingLineShift(content, v, a);
+  if (dy === null) return false;
+  writeScroll(content, content.scrollTop + dy, "anchor-restore", false, from);   // the line keeps its exact on-screen offset
+  return true;
+}
+/** How far the anchor's line has moved since it was taken (readingPointShift inside the anchor turn), or null when no line was recorded or
+ *  the turn no longer holds it. Writes nothing: restoreReadingLine and scrollToAnchor's keep-offset landing write by it. */
+function readingLineShift(content: HTMLElement, v: View, a: ReadingAnchor | null): number | null {
+  if (!a || !a.at) return null;
+  const turn = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;
+  return turn ? readingPointShift(content, turn, a.at) : null;
 }
 
 // Live tail-append to the ACTIVE view. At the bottom → follow it. Scrolled UP reading → keep the viewport
@@ -16318,13 +16451,30 @@ if (typeof ResizeObserver === "function") {
 // up by Δ to cancel it), so the line being read stays fixed on screen. Symmetric on shrink (Δ negative).
 // Skipped when stuck to the bottom (that view follows the tail anyway) or when the pane is hidden
 // (clientHeight 0).
+// THE BASELINE a notice is measured from (boxAboveH, by box id) is the box's height at its last notice, or at the last LANDING of a
+// place saved in the last page life: a page reload's restore writes the reader's saved place into the layout as it stands, the boxes
+// above at their heights then, whether landActive lands it in the restore's own pass or scrollToAnchor's keep-offset branch lands the keep
+// the restore armed (pendingAnchorKeepReload: in that pass, or in a later one when the reader's row came in on the older wire), and each
+// re-bases every measured box to those heights (rebaseBoxesAbove). A growth whose notice had not arrived when the landing wrote is in the
+// landing already; before the re-base the late notice added it a second time (PR 961's CI, a reload into a long transcript on a
+// phone-sized Chromium: the tab strip filled in, 32 px, after the observer's first notice and before the landing, and its late notice
+// moved the line read 32 px; 1 px when the first notice had caught the strip one pixel short). A restore of a place captured in the SAME
+// layout (an anchor-restore over a re-render, keepPlaceAcrossWindow's and a scroll-back's keep-offset landings, the line kept across the
+// math renderer's swap) leaves the baseline alone: it returns the row to where it stood in that layout, and a growth the observer has not
+// yet been told of still moved that row on screen, which the compensation cancels. Both sides read the border box (boxAboveHeight), so a
+// notice and a re-base agree whatever the box's padding and border.
+const boxAboveH = new Map<string, number>();
+function boxAboveHeight(box: HTMLElement): number { return box.getBoundingClientRect().height; }
+function rebaseBoxesAbove(): void {
+  boxAboveH.forEach((_, id) => { const box = document.getElementById(id); if (box) boxAboveH.set(id, boxAboveHeight(box)); });
+}
 if (typeof ResizeObserver === "function") {
   for (const boxId of ["tabbar", "ledger"]) {
     const box = document.getElementById(boxId);
     if (!box) continue;
-    let lastH = -1;                                           // -1 = not yet measured (observe fires once on attach)
-    const tro = new ResizeObserver((entries) => {
-      const h = entries[0]?.contentRect?.height ?? 0;
+    const tro = new ResizeObserver(() => {
+      const h = boxAboveHeight(box);
+      const lastH = boxAboveH.get(boxId) ?? -1;               // -1 = not yet measured (observe fires once on attach)
       const content = document.getElementById("content");
       // follow mode: an off-bottom reader's line stays still
       if (content && lastH >= 0 && h !== lastH && content.clientHeight > 0 && !atBottom(content)) {
@@ -16332,7 +16482,7 @@ if (typeof ResizeObserver === "function") {
         const v = activeId ? views.get(activeId) : null;
         if (v) v.scrollTop = content.scrollTop;               // keep the per-view saved position in sync
       }
-      lastH = h;
+      boxAboveH.set(boxId, h);
     });
     tro.observe(box);
   }
@@ -16673,7 +16823,7 @@ function cancelLanding(): void {
   if (gv) for (const g of Array.from(gv.el.querySelectorAll(".tx-gap.tx-gap-loading")) as HTMLElement[]) { if (!gapHasAsk(sid, { lo: Number(g.dataset.lo), hi: Number(g.dataset.hi) })) g.classList.remove("tx-gap-loading"); }
   landTrail.push("cancelled");
   vscodeApi?.postMessage({ type: "locateDiag", id: sid, ok: false, trail: landTrail.slice(), anchor: target ?? mark?.uuid ?? pendingAnchor ?? undefined, anchorT: mark?.t ?? pendingAnchorT ?? undefined, kind: mark?.kind ?? pendingAnchorKind ?? undefined, cancelled: true });
-  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false; anchorPendingOlder = false;
   clearSeek();
 }
 /** The view jumps STRAIGHT to where the target will be (the user 2026-09-12): the anchor's time against the runs' times picks the
@@ -19666,6 +19816,24 @@ function seedEditorQuote(id: string, quote: string, src?: string): void {
   persistDrafts();
   if (id === activeId) renderComposerChips(id);
 }
+// The formulas whose text the math renderer's arrival changes (math.ts): one WAITING for it (its placeholder, .md-math-inline or
+// .md-math-display, holding the TeX as text) or SHOWING A FAILED LOAD'S SOURCE (the fallback the failure marked, data-math-failed,
+// which a later success lays out). A comment thread anchored across either records the TeX as its passage, and once the formula is
+// laid out its mark covers only the prose before it, or nothing, at that arrival and every later page life's (the review of iOS
+// item 6, round 2, regression-1). A laid-out formula (.katex: the fill unwraps the placeholder) and a refused one (code.md-math-src
+// with no mark: its source for good) keep their text, and Comment over them. Spelled here, not imported: render.ts takes only the
+// arrival's hook and the two tests from math.ts (render-math.test.ts holds the spelling to math.ts's own names).
+const MATH_CHANGING_SEL = ".md-math-inline, .md-math-display, [data-math-failed]";
+/** Whether the selection's newest range, the one Comment anchors (transcriptSelection), lies inside or across such a formula. */
+function selectionMeetsChangingMath(sel: Selection): boolean {
+  if (!sel.rangeCount) return false;
+  const r = sel.getRangeAt(sel.rangeCount - 1);
+  const c = r.commonAncestorContainer;
+  const host = c instanceof Element ? c : c.parentElement;
+  if (!host) return false;
+  if (host.closest(MATH_CHANGING_SEL)) return true;                                   // inside one
+  return Array.from(host.querySelectorAll(MATH_CHANGING_SEL)).some((n) => r.intersectsNode(n));   // across one
+}
 // The current selection when (and only when) it qualifies as transcript text — both endpoints inside
 // `.turn` elements, non-collapsed, non-empty. Shared by the selectionchange seeding below and the
 // Enter-to-reply shortcut (window keydown), so the two can never disagree on what counts.
@@ -19891,7 +20059,13 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   const content = document.getElementById("content");
   if (content && activeId && activeId !== id) {
     const cur = views.get(activeId);
-    if (cur) { cur.scrollTop = content.scrollTop; cur.stick = atBottom(content); }   // the leaving tab's follow mode: the true bottom
+    if (cur) {
+      cur.scrollTop = content.scrollTop; cur.stick = atBottom(content);   // the leaving tab's follow mode: the true bottom
+      // …and, while a formula in it waits for the math renderer (or shows the source a failed load left, which a later success lays out),
+      // the reader's line: the renderer can arrive while the tab is hidden, and the saved scrollTop then puts the text being read off by
+      // the formulas' growth (onMathSettled marks the view, landActive lands the line)
+      cur.leaveLine = !cur.stick && content.clientHeight > 0 && cur.el.style.display !== "none" && (mathPendingIn(cur.el) || mathFailedIn(cur.el)) ? captureReadingAnchor(content, cur) : null;
+    }
   }
   // Stash the leaving tab's draft; show the entering tab's own (usually empty).
   const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
@@ -20943,7 +21117,7 @@ function chatHead(msg: any) {
     const m = mark && mark.uuid === anchorUuid ? mark : null;
     pendingAnchor = anchorUuid; pendingAnchorIntent = null; pendingAnchorT = m ? m.t : null; pendingAnchorKind = m ? m.kind : null;
     flashedAnchor = null;                  // ditto: this path is also a user navigation
-    pendingAnchorKeepY = keepY ?? null;
+    pendingAnchorKeepY = keepY ?? null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false;   // a scroll-back's keep carries no line and is no reload's
   }
   showActive();
   // the prepend RESTORES the row itself (round ten, low 1): a landing that already filed its row does not re-land on the re-render, so a
@@ -21129,7 +21303,7 @@ function chatWindow(msg: any) {
       if (!cancelled) { landTrail.push("window-unplaced"); vscodeApi?.postMessage({ type: "locateDiag", id: msg.id, ok: false, trail: landTrail.slice(), anchor: anchorUuid, kind: "unplaced" }); }
       const seekCovers = !!seek && seek.sid === msg.id && seek.uuid === anchorUuid;
       if (!cancelled && anchorUuid && ask.nav && !seekCovers && (olderOnServer(s) || loadingOlder.has(msg.id))) {
-        pendingAnchor = anchorUuid; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+        pendingAnchor = anchorUuid; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false; anchorPendingOlder = false;
         showActive();
       }
     }
@@ -21143,7 +21317,7 @@ function chatWindow(msg: any) {
   // flight, so that mark cannot be the key); the notice's click stands the landing down and the window appears in place instead
   if (target && ask.nav && !cancelled) {
     // the landing re-armed on the window's anchor, so the click's time and kind ride through (T386: the landing row keeps the datum that ties it to the click)
-    pendingAnchor = target; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+    pendingAnchor = target; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false; anchorPendingOlder = false;
     showActive();
     return;
   }
@@ -22247,7 +22421,9 @@ function remarkMentions(): void {
 // fill): the reader sees who was meant, and a hover says how that session is doing. The token as typed
 // rides data-token, so what was SENT is still on the element; a word that names nothing stays plain
 // text, and the chip carries no link behaviour. Text nodes only, never
-// inside code, a fenced block, a link or a chip already made, so a path or an email address is left
+// inside code, a fenced block, a link, a chip already made or a formula still waiting for the math renderer
+// (math.ts's placeholder: the renderer reads the TeX back from its text, and a chip there, which reads as the bare
+// name, cost the formula its @ for good; the review of iOS item 6, round 1), so a path or an email address is left
 // alone. The same boundary rule as the composer's trigger (composer-mention.ts mentionSegments). Exact
 // names only: postal's direct match is exact, so a hand-typed "@API" for the session "api" is not a name
 // its mail tools would take, and the chip must not say it is. The user's own bubbles: the landed one and
@@ -22256,7 +22432,7 @@ function markMentions(root: HTMLElement): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts: Text[] = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if ((n.nodeValue || "").includes("@") && !n.parentElement?.closest("code, pre, a, .mention-chip")) texts.push(n as Text);
+    if ((n.nodeValue || "").includes("@") && !n.parentElement?.closest("code, pre, a, .mention-chip, .md-math-inline, .md-math-display")) texts.push(n as Text);
   }
   if (!texts.length) return;
   root.dataset.mentions = "1";   // a bubble remarkMentions revisits when a new name joins the roster

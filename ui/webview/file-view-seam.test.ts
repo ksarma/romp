@@ -2346,7 +2346,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /\nexport const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, or the file may be mid-write or truncated";\n/, "the svg sentence's export line, the guide's pin (tests/test_guide_files_failures.py)");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify; no fallback stands between them since Slice 7 of
   // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
+  assert.match(VIEW, /const block = rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   // code only (codeOnly, below): the order is read off the statements, so a comment quoting the pinned lines above an adopt-first
   // body cannot satisfy it (the fork PR review's pre-answer record built that reversion and every raw-text pin passed on the comment)
@@ -2670,7 +2670,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // compiler erases is a judgement this census need not make, and file-view.ts itself re-enters the set through file-comments.ts's
 // type import of the viewer's action type, which brings every module file-view.ts imports along. What the walk does not read,
 // stated so a green here is read for what it covers: the npm packages a reached module imports (PACKAGE_IMPORTS, derived and
-// pinned: marked, DOMPurify, KaTeX, and highlight.js's core with its grammars), whose own code is not the viewer's; the sanitizer's and the highlighter's
+// pinned: marked, DOMPurify, and highlight.js's core with its grammars), whose own code is not the viewer's; the sanitizer's and the highlighter's
 // parses run before the adoption over `clean` (pinned above), and a write a package makes onto an element handed to it is that
 // caller's site, judged where the caller is. The verbs are the HTML-parsing entry points an element or a document offers, the
 // string-serializing reads a write can round-trip through, and a template element, whose content is parsed markup: innerHTML and
@@ -2724,10 +2724,14 @@ const GLOBAL_CALLS = ["Number", "URL", "decodeURIComponent", "parseInt"];
  *  specifier that is not a string literal refuses); paths relative to
  *  ui/webview, a suffix kept as written (`.js` for the two JavaScript modules) and `.ts` supplied where the import has none.
  *  A new import widens this list first. authored-file-caps.ts and file-cap.ts joined with main's cap pass (PR 919: file-view.ts
- *  imports both, and url-links.ts imports file-cap.ts); each computes strings and attributes and holds no re-parse site. */
-const REACHED_MODULES = ["../../vendor/track-changents/engine.js", "actions.ts", "anchor-map.ts", "authored-file-caps.ts", "backend-names.ts", "capped-read.ts", "card-layout.ts", "code-block.ts", "commands.ts", "comments.ts", "ctx-color.ts", "docreview.ts", "fence-source.ts", "figure-gate.ts", "file-cap.ts", "file-comments-model.ts", "file-comments-regions.ts", "file-comments.ts", "file-trail.ts", "file-view-links.ts", "file-view.ts", "gesture-clock.js", "host-prefix.ts", "icons.ts", "keybindings.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-literal-tags.ts", "md-sanitize.ts", "media.ts", "path-links.ts", "pdf-cap.ts", "pick-held.ts", "pinch.ts", "preview.ts", "reader-place.ts", "region-geometry.ts", "session-badge.ts", "settings.ts", "status-widgets.ts", "tab-state.ts", "tab-widgets.ts", "url-links.ts", "viewer-grammars.ts", "widget-prefs.ts"];
-/** The npm packages the reached modules import (derived below), which the walk does not read (the header says why). */
-const PACKAGE_IMPORTS = ["dompurify", "highlight.js/lib/core", "highlight.js/lib/languages/bash", "highlight.js/lib/languages/c", "highlight.js/lib/languages/css", "highlight.js/lib/languages/diff", "highlight.js/lib/languages/go", "highlight.js/lib/languages/ini", "highlight.js/lib/languages/java", "highlight.js/lib/languages/javascript", "highlight.js/lib/languages/json", "highlight.js/lib/languages/markdown", "highlight.js/lib/languages/python", "highlight.js/lib/languages/rust", "highlight.js/lib/languages/sql", "highlight.js/lib/languages/typescript", "highlight.js/lib/languages/xml", "highlight.js/lib/languages/yaml", "katex", "marked"];
+ *  imports both, and url-links.ts imports file-cap.ts); each computes strings and attributes and holds no re-parse site.
+ *  chunk-url.ts joined with KaTeX on demand (iOS item 6: math.ts imports it to derive the math chunk's URL from the page's own
+ *  bundle tag); it reads a script element's attributes and holds no re-parse site. */
+const REACHED_MODULES = ["../../vendor/track-changents/engine.js", "actions.ts", "anchor-map.ts", "authored-file-caps.ts", "backend-names.ts", "capped-read.ts", "card-layout.ts", "chunk-url.ts", "code-block.ts", "commands.ts", "comments.ts", "ctx-color.ts", "docreview.ts", "fence-source.ts", "figure-gate.ts", "file-cap.ts", "file-comments-model.ts", "file-comments-regions.ts", "file-comments.ts", "file-trail.ts", "file-view-links.ts", "file-view.ts", "gesture-clock.js", "host-prefix.ts", "icons.ts", "keybindings.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-literal-tags.ts", "md-sanitize.ts", "media.ts", "path-links.ts", "pdf-cap.ts", "pick-held.ts", "pinch.ts", "preview.ts", "reader-place.ts", "region-geometry.ts", "session-badge.ts", "settings.ts", "status-widgets.ts", "tab-state.ts", "tab-widgets.ts", "url-links.ts", "viewer-grammars.ts", "widget-prefs.ts"];
+/** The npm packages the reached modules import (derived below), which the walk does not read (the header says why). katex left
+ *  the list with KaTeX on demand (iOS item 6): math.ts imports no KaTeX, which ships in its own chunk, math-chunk.js, that no
+ *  reached module imports. */
+const PACKAGE_IMPORTS = ["dompurify", "highlight.js/lib/core", "highlight.js/lib/languages/bash", "highlight.js/lib/languages/c", "highlight.js/lib/languages/css", "highlight.js/lib/languages/diff", "highlight.js/lib/languages/go", "highlight.js/lib/languages/ini", "highlight.js/lib/languages/java", "highlight.js/lib/languages/javascript", "highlight.js/lib/languages/json", "highlight.js/lib/languages/markdown", "highlight.js/lib/languages/python", "highlight.js/lib/languages/rust", "highlight.js/lib/languages/sql", "highlight.js/lib/languages/typescript", "highlight.js/lib/languages/xml", "highlight.js/lib/languages/yaml", "marked"];
 /** The re-parse sites RE_PARSE finds in the reached modules other than file-view.ts (judged by its whole-file count below):
  *  per module, each matching code line (comment-stripped, trimmed) with the judgement that lets it stand. A module absent here
  *  holds none; a new line, a moved one or a module gaining one is red until it is judged here. */

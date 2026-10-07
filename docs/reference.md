@@ -8673,9 +8673,10 @@ A browser cannot read that file, which is why the link `romp` prints carries the
 token in it. Opening the link signs the browser in: it gets a year-long session
 cookie and a key the page keeps in the site's storage, neither of which is the
 token, so the bare `http://127.0.0.1:29855/` works from then on. The cookie on
-its own opens only the page's code; the page sends the key with each request
-for data or an action, and puts a per-file capability in each file address it
-builds ([SECURITY.md](https://github.com/romp-on/romp/blob/main/SECURITY.md)
+its own opens only the dashboard's pages and the static files; the page sends
+the key with each request for data or an action, and puts a per-file capability
+in each file address it builds
+([SECURITY.md](https://github.com/romp-on/romp/blob/main/SECURITY.md)
 states what each value authenticates). A browser can lose the site's storage while it
 keeps the cookie (cleared site data, a private window, a browser that clears a
 site's storage after a week without a visit); it then lands on the sign-in page.

@@ -84,7 +84,7 @@ test("render.ts: the #content scroll listener keeps the active view's saved spot
   // place held when an armed land missed and took (PR E, the maintainer's round 2 ruling), the raw write when that restore has no row to
   // put back: nothing armed, no row at the saved place, or the row gone with the attempt's window build, the take given back first on the
   // two roads after one (the maintainer's round 3 ruling B; land-active-keep.test.ts executes the three)
-  assert.match(RENDER, /if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/);   // (T262: every #content write rides writeScroll)
+  assert.match(RENDER, /if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\) && !\(moved && \(restoreReadingLine\(content, v, moved\) \|\| restoreScrollAnchor\(content, v, moved\)\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/);   // (T262: every #content write rides writeScroll; the moved road: a tab whose formulas were laid out while hidden lands the line read when it was left, land-active-keep.test.ts)
 });
 
 test("render.ts: showActive keeps the reader's place across a re-show of the view already on screen, on both build paths", () => {

@@ -446,7 +446,7 @@ key the page keeps in the site's storage, so the bare `http://127.0.0.1:29855/`
 works from then on. For a new browser, or one that has lost its sign-in,
 `romp url` prints the link again.
 
-The cookie on its own opens only the page's code; the page sends the key with
+The cookie on its own opens the dashboard's pages; the page sends the key with
 each request for data or an action. Together they are a credential in their own
 right, so treat a machine holding them as signed in.
 

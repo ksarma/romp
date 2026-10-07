@@ -28,6 +28,40 @@
 // Files pane and the feed (Slice 4, decision 1; before it files.js and feed.js had neither the grammar nor the
 // fill nor KaTeX).
 //
+// KaTeX itself is not in those bundles (iOS item 6, 2026-10-02): it ships as its own on-demand bundle,
+// dist/math-chunk.js (math-chunk.ts), and this module types the part it calls structurally and imports no
+// KaTeX, not even a type (math-lazy.test.ts reads every import and every bundle's inputs). The grammar, the
+// bounds and the fill stay here and need no KaTeX until a formula is about to be laid out. With the engine
+// loaded the fill runs synchronously, exactly as before. Without it a formula that passes every bound stays
+// as its placeholder, the TeX as text in the sheets' quiet pending dress (styles.css and feed.css, the
+// .md-math-inline and .md-math-display rule), stamped with its call's group so the arrival can charge the
+// per-message budget per message, and the fill asks for the chunk: one script tag, its URL and nonce taken
+// from the page's own bundle tag (chunk-url.ts), added once the document has loaded (a tag added before its load
+// event joins it, and a stalled chunk would hold the page's load), while the two common KaTeX faces load beside it (the sheet
+// declares them font-display: block, so laying out before they arrive would show a blank formula). When the
+// chunk has run and the faces have settled, the settle handlers run (onMathSettled: the chat keeps the
+// reader's place around the swap, the viewer repaints a paint it held) and then one fill over the whole
+// document renders every pending placeholder still in it. The fill lays out with KaTeX only once the load has
+// SETTLED as a success: a chunk that has registered while its faces still load, or one that lands after the load
+// failed, lays nothing out early (the review of iOS item 6, round 1: a formula met in either window was laid
+// out at once, past the face wait and the viewer's hold). A load that fails, registers nothing or has not
+// settled within MATH_CHUNK_BACKSTOP_MS is a failure: every pending formula becomes the source fallback with
+// a title naming the failure, marked as one the failure made (MATH_FAILED_ATTR, with its call's group), the
+// console says so once per failed attempt, and later formulas take the same fallback at once: nothing waits
+// on a retry, so the chat shows the TeX and the viewer paints. A failed load is retried, and only events arm
+// a retry, since renders repeat on every streaming delta and kernel push and must not be what asks: the page
+// life's first failure, the shim's reconnect (romp:wsup) and the window's `online` each set one flag (it does
+// not stack), and the next fill that meets a formula uses it up (not the failure's own fill, the arrival's
+// fill over the document or the viewer's repaint the settle decided on, which run inside the settle, the
+// repaint as if inside it when a press on the card parks it until the release: asSettleFill). So a chunk that
+// 404s for good costs at most two requests per page life, plus one per reconnect or online event, at any render rate (the
+// review of iOS item 6, round 1; the editor and PDF loaders retry the same way since 2026-09-06, on a gesture). A page
+// with no bundle tag to derive the URL from fails the same way every time and arms nothing. Whichever attempt
+// succeeds first, a retry or an earlier attempt landing after its backstop (the chunk, or the faces), runs the
+// arrival, once: the marked fallbacks become placeholders again and the fill over the document lays out every
+// formula, those included, while the chat keeps its reader's line; the viewers' bodies (MATH_REPAINT_ATTR) are left
+// to their own settle handlers, which paint the note again, its place kept, once any press on the card is released.
+//
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
 // single-tilde del rule once did (render.ts). Code spans and fences are already safe: marked
@@ -44,9 +78,9 @@
 // \( \) / \[ \] / $$ $$ carry no real ambiguity and pass through with only a non-blank
 // content check. Escaped \$ needs nothing: the walker meets the backslash first and marked's
 // escape tokenizer consumes both characters before any math rule sees the $.
-import katex from "katex";
 import type { TokenizerAndRendererExtension, Tokens } from "marked";
 import { frameOf, memoBlockStart, type Frame } from "./md-block-start";
+import { chunkScript } from "./chunk-url";
 
 type MathToken = Tokens.Generic & { text: string; display: boolean };
 
@@ -298,6 +332,267 @@ export const MATH_ERROR_COLOR = "var(--math-err)";
  *  pins the option): under it no TeX command mints a link, an image or an HTML attribute of the author's choosing. */
 const KATEX_OPTIONS = { output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR } as const;
 
+/** The part of KaTeX the fill calls, typed here by its shape: KaTeX belongs to the on-demand chunk (math-chunk.ts), which
+ *  registers it as `globalThis.__rompKatex`, and nothing in this module imports it, a type included. */
+type MathEngine = {
+  render(tex: string, el: HTMLElement, options: object): void;
+  ParseError: new (...args: never[]) => Error;
+};
+
+/** KaTeX once the chunk has run (or a test bundle imported math-chunk.ts for its side effect), else null. */
+function engine(): MathEngine | null {
+  const k = (globalThis as { __rompKatex?: MathEngine }).__rompKatex;
+  return k && typeof k.render === "function" ? k : null;
+}
+
+/** The attribute a formula waiting for the engine carries: the number of the fill call that met it, so the fill that renders
+ *  it later charges MATH_TEX_BUDGET_CHARS per original call (one message, one note) and not over everything pending in a view
+ *  at once. Set after the sanitizer, which keeps no data-* attribute an author wrote (md-sanitize.ts ALLOW_DATA_ATTR: false),
+ *  so no author picks a group. */
+export const MATH_CALL_ATTR = "data-math-call";
+const PLACEHOLDER_SEL = "." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS;
+
+/** How long the chunk may take to load, with the two common faces, before the load counts as failed: ui/CLAUDE.md's loading
+ *  rule's backstop. The viewer holds its loader over a note with math until the engine arrives (file-view.ts holdOverBody puts
+ *  it over what the body showed), and a chunk fetch that stalls without erroring fires no event at all, so this is the one end
+ *  that has none. It counts from the chunk's request, and the request waits for the page's load event (attempt): before that
+ *  event nothing bounds the wait, and the viewer's Raw view, or closing the viewer, is the way out. The size follows the PDF
+ *  renderer's (file-view.ts PDF_RENDER_BACKSTOP_MS, twice the pane loader's 30 s that has never fired, because the wait
+ *  includes a fetch), and it never fires in the load path: the chunk is about 86 KB served. */
+export const MATH_CHUNK_BACKSTOP_MS = 60_000;
+
+/** The attribute a source fallback carries when the load's failure made it, and not one of the fill's bounds: the formula's
+ *  mode ("display" or "inline"), beside MATH_CALL_ATTR for its call's group, so a later success puts the placeholder back as it
+ *  was and lays it out with the rest (restoreFailedFormulas). Set by the fill alone: the sanitizer keeps no data-* attribute an
+ *  author wrote, so no author marks a code element of theirs as a formula. */
+export const MATH_FAILED_ATTR = "data-math-failed";
+const FAILED_SEL = "[" + MATH_FAILED_ATTR + "]";
+
+/** The attribute a root carries when its owner repaints it at the renderer's arrival: both viewers' bodies (file-view.ts), whose
+ *  settle handlers paint the note again from its text. The arrival leaves the failure's marked fallbacks under such a root as they
+ *  are, so nothing in it moves before its owner's one repaint, which a press on the viewer's card holds until the release (the
+ *  review of iOS item 6, round 2: re-filled in place under a press, a formula's growth moved the line under the still pointer, and
+ *  the release clicked the paragraph instead of the link it pressed). The chat and the feed carry none: the arrival re-fills their
+ *  fallbacks in place, and the chat keeps its reader's line around that. Set by the owner on its own element; the sanitizer keeps
+ *  no data-* attribute an author wrote, so no author's markup opts out. */
+export const MATH_REPAINT_ATTR = "data-math-repaints";
+const REPAINTED_SEL = "[" + MATH_REPAINT_ATTR + "]";
+
+let mathCalls = 0;                                        // the group numbers handed out so far
+// The load, for the page's life: idle until the first formula, loading while the first attempt's chunk and faces are out, ready
+// once an attempt has settled as a success, failed after a failure (until a success; a retry runs while the state stays failed,
+// so nothing waits on it). The fill lays out with KaTeX only while idle (a bundle that imported the chunk for its side effect
+// asks for nothing) or ready.
+let engineLoad: "idle" | "loading" | "ready" | "failed" = "idle";
+let engineFailure = "";                                   // what went wrong last, for the fallback's title
+let failures = 0;                                         // attempts that have failed in this page life: the first arms a retry
+let retryArmed = false;                                   // one retry, armed by an event, used by the next fill that meets a formula
+let retryable = true;                                     // false once the page proved to have no bundle tag to derive the URL from
+let settling = 0;                                         // inside engineSettled, or a viewer's parked repaint it decided on (asSettleFill): its fills use no retry
+let leaving = false;                                      // the page is going: a reload through the reload core (latchOnLeave)
+let leaveHooked = false;                                  // latchOnLeave's hooks are on (once per page life)
+const settleHandlers: Array<() => (() => void) | void> = [];
+
+/** Arm one retry of a failed load, the flag set and not counted (a second event before the next formula changes nothing). The
+ *  events that arm it are the page life's first failure (in attemptFailed) and the two below, both a sign the network may be
+ *  back: the pane shim's reconnect, romp:wsup, on a kernel page (the shim dispatches it at every reopen of the page's socket;
+ *  a page without the shim, the VS Code webview, has the second only), and the window's `online`. A load that is not failed,
+ *  or a page with no bundle tag to derive the URL from, arms nothing. */
+function armRetry(): void {
+  if (engineLoad === "failed" && retryable) retryArmed = true;
+}
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("romp:wsup", armRetry);
+  window.addEventListener("online", armRetry);
+}
+
+/** A page that is leaving cancels a chunk request in flight, and WebKit fires the tag's error as the navigation starts: that is no
+ *  failed load (the review of iOS item 6, round 2, extra5-1: the dying page logged a false failure line and turned every waiting
+ *  formula into its source for the whole provisional load). The latch is set by a reload through the reload core: its fire step
+ *  (kernel.py _RELOAD_CORE_JS fire) runs persist, which calls each window's __rompShimPersist, then location.reload, and the pane shim
+ *  defines that hook on every kernel page that loads this module (the chat, the feed, the Files pane, Waiting and Artifacts); this chains onto it.
+ *  That hook is the one sign of a reload romp started. A beforeunload sets nothing (the review's round 3, extra5-1): iOS Safari does not
+ *  fire it, and one that no unload follows (a navigation started from the browser's own controls that never commits: a download or a
+ *  204, in Chromium and in WebKit on the desktop alike, or a cancelled one) left the latch set for the rest of the page life, so a real
+ *  load failure showed only at the backstop, under the backstop's reason. While the latch is set a tag's error fails nothing and the
+ *  attempt's backstop stays its end, in case the page does not unload after all; pageshow, the page shown again from the back-forward
+ *  cache, clears it. Hooked when the first attempt sends its request, after the page's load event, so the shim's hook exists by then; a
+ *  page without the shim (the VS Code webview) has no reload core to latch on. What stays, in WebKit on iOS and on the desktop alike: a
+ *  reload that does not go through the fire step still logs one false line on the dying page, the browser's own reload control and
+ *  romp's direct location.reload() calls alike (kernel.py: the pane shim's Reload on its connection and build bars, the shell's
+ *  stale-connection Reload with no offer standing, the update wait's and the boot poll's reloads; render.ts: the chat's
+ *  federation-failure Reload); and a reload through the fire step that the browser refuses leaves the latch set (no pageshow follows),
+ *  so a later attempt's tag error in that page life waits for its backstop. */
+function latchOnLeave(): void {
+  if (leaveHooked || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  leaveHooked = true;
+  const w = window as unknown as { __rompShimPersist?: (...a: unknown[]) => unknown };
+  const shim = w.__rompShimPersist;
+  if (typeof shim === "function") w.__rompShimPersist = function (this: unknown, ...a: unknown[]) { leaving = true; return shim.apply(this, a); };
+  window.addEventListener("pageshow", () => { leaving = false; });
+}
+
+/** Whether `root` holds a formula still waiting for the engine: after a fill, a placeholder that is left is one. */
+export function mathPendingIn(root: ParentNode): boolean {
+  return !!root.querySelector(PLACEHOLDER_SEL);
+}
+
+/** Whether `root` holds a formula the load's failure showed as its source, which the arrival of a later success lays out
+ *  (restoreFailedFormulas): the chat's settle handler counts such a view with the ones that held a waiting formula, and the
+ *  viewer repaints a paint that holds one, so the success keeps the reader's line and the viewer's place as a first arrival
+ *  does. Never true before the load's first failure. */
+export function mathFailedIn(root: ParentNode): boolean {
+  return !!root.querySelector(FAILED_SEL);
+}
+
+/** Run `handler` when the engine's load settles, either way, BEFORE the fill over the document renders what is pending (or
+ *  shows it as source); a function it returns runs AFTER that fill. The chat reads the reader's place before and writes it
+ *  back after; the viewer repaints a paint it held. Returns the function that removes the handler. */
+export function onMathSettled(handler: () => (() => void) | void): () => void {
+  settleHandlers.push(handler);
+  return () => { const i = settleHandlers.indexOf(handler); if (i >= 0) settleHandlers.splice(i, 1); };
+}
+
+/** Run a repaint a settle handler decided on, later, as a fill inside that settle: it uses no retry (settling, requestEngine). The
+ *  viewers park the repaint their settle handler decides on while a press holds the card (file-view.ts mathHold) and run it at the
+ *  release, outside engineSettled, so a failure met under a press spent the retry the failure armed at the release: a second
+ *  request and a second console line, where the same failure with no press asks for nothing (the check of the round-2 pass of the
+ *  review of iOS item 6). A retry an event arms meanwhile stays armed for the next fill after it. */
+export function asSettleFill(run: () => void): void {
+  settling++;
+  try { run(); } finally { settling--; }
+}
+
+/** The two faces nearly every formula uses, loaded beside the chunk: katex.min.css declares every KaTeX face
+ *  font-display: block, so a formula laid out before its face arrives is blank for the font's block period (a few seconds)
+ *  and then drawn in a fallback face until its own lands. Settled either way, never thrown. */
+function katexFaces(): Promise<unknown> {
+  const faces = (document as { fonts?: { load(font: string): Promise<unknown> } }).fonts;
+  if (!faces || typeof faces.load !== "function") return Promise.resolve();
+  return Promise.all(["1em KaTeX_Main", "italic 1em KaTeX_Math"].map((f) => faces.load(f).catch(() => null)));
+}
+
+/** Ask for the chunk when the fill meets a formula it cannot lay out: the page life's first attempt (idle), or a retry while the
+ *  load is failed and a retry is armed, which this uses up. A fill inside the settle (the failure's own fill over the document,
+ *  the arrival's, a viewer's repaint in a settle handler, or that repaint parked under a press and run at the release through
+ *  asSettleFill) uses none, so a failure cannot re-arm itself through its own render,
+ *  and a persistent 404 costs the first request, the one retry the failure arms, and one per later event, at any render rate. */
+function requestEngine(): void {
+  if (typeof document === "undefined") return;
+  if (engineLoad === "idle") engineLoad = "loading";
+  else if (engineLoad === "failed" && retryArmed && settling === 0) retryArmed = false;
+  else return;
+  attempt();
+}
+
+/** One attempt: a script tag beside the page's bundle (chunk-url.ts), the faces in parallel. A retry while an earlier attempt is
+ *  still out (stalled past its backstop) adds a fresh tag all the same, as the PDF loader does, and whichever attempt succeeds first
+ *  runs the arrival. Whether that tag is a fresh request depends on the engine, as measured under Playwright's routing (the leg's
+ *  stalled-first scene asserts the two tags and reports the request count per engine, math-chunk-leg.ts): Chromium serves a script
+ *  URL already in flight from that one fetch, so there the retry waits on the stalled answer, while WebKit and Firefox send a new
+ *  request. After an error or a 404 the first fetch is over, and the retry is a new request in every engine. Every end settles
+ *  asynchronously, never inside the fill that asked, so a fill is never re-entered by its own attempt. The attempt fails once, at its
+ *  first failure end (an error, a load that registered nothing, its backstop), and a later failure end of it is silent; an answer of
+ *  it that SUCCEEDS after that (the chunk, or the faces, landing after the backstop) is a success all the same. A tag's error while
+ *  the page is leaving is no failure end (latchOnLeave). */
+function attempt(): void {
+  const tag = chunkScript("math-chunk.js");
+  if (!tag) {
+    retryable = false;                                    // no URL now means no URL later: nothing a retry could change
+    queueMicrotask(() => attemptFailed("no bundle script on this page to derive the math renderer's URL from"));
+    return;
+  }
+  let failed = false, done = false;
+  let backstop: ReturnType<typeof setTimeout> | undefined;
+  const fail = (why: string): void => {
+    if (failed || done) return;
+    failed = true;
+    clearTimeout(backstop);
+    attemptFailed(why);
+  };
+  const succeed = (): void => {
+    if (done) return;
+    done = true;
+    clearTimeout(backstop);
+    if (engineLoad !== "ready") engineSettled(null);      // the first success runs the arrival; a second is a no-op
+  };
+  const request = (): void => {
+    latchOnLeave();
+    const faces = katexFaces();
+    backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
+    const sc = document.createElement("script");
+    sc.src = tag.src;
+    if (tag.nonce) sc.nonce = tag.nonce;
+    // a load that registers nothing (a script cut short, an engine too old to run it) is a failure, like an error
+    sc.onload = () => { if (!engine()) fail("the math renderer loaded but registered nothing"); else void faces.then(succeed); };
+    // an error while the page is leaving is the navigation's cancel, not a failed load: the backstop stays the end (latchOnLeave)
+    sc.onerror = () => { if (!leaving) fail("the math renderer failed to load"); };
+    (document.head || document.documentElement).appendChild(sc);
+  };
+  // The chunk and the two faces wait for the document's own load, an exact event: a script tag added before it joins that load,
+  // so a chunk that stalled held the page's load event, on which the shell keys its pane steps (the review of iOS item 6,
+  // round 1: Firefox lost that race in 4 of 6 page lives). The backstop is armed in the deferred step, so its 60 s count from
+  // the request. The formulas wait in the pending dress meanwhile, as they do for the request itself.
+  if (document.readyState === "complete") request();
+  else window.addEventListener("load", request, { once: true });
+}
+
+/** An attempt failed (once: attempt's `fail`). Said on the console, one line per failed attempt, unless an attempt has already
+ *  succeeded, which a stale failure does not contradict. The page life's first failure arms a retry, and the first failure of the
+ *  load as a whole (from loading) settles it: the waiting formulas become their source, marked. A retry's failure finds nothing
+ *  waiting (the fill shows the source at once while the load is failed), so it settles nothing. */
+function attemptFailed(why: string): void {
+  if (engineLoad === "ready") return;
+  failures++;
+  engineFailure = why;
+  if (failures === 1 && retryable) retryArmed = true;   // the page life's first failure arms one retry
+  const next = !retryable ? "" : failures === 1 ? "; the next formula asks for the renderer again" : "; a formula after the connection comes back asks for it again";
+  console.error("math: " + why + "; formulas are shown as their TeX source" + next);
+  if (engineLoad === "loading") engineSettled(why);
+}
+
+/** Each source fallback the load's failure made under `root` back to the placeholder it was (its tag, its mode, its TeX and its
+ *  call's group), for the fill that follows a success to lay out. A fallback for one of the fill's bounds carries no mark and
+ *  stays, and so does one under a root its owner repaints (MATH_REPAINT_ATTR: the viewers' bodies). */
+function restoreFailedFormulas(root: ParentNode): void {
+  root.querySelectorAll(FAILED_SEL).forEach((node) => {
+    const shown = node as HTMLElement;
+    if (shown.closest(REPAINTED_SEL)) return;              // its owner paints it again from its text (the viewers' settle handlers)
+    const code = shown.tagName === "CODE" ? shown : shown.querySelector("code." + MATH_SOURCE_CLASS);
+    if (!code) return;
+    const ph = shown.ownerDocument.createElement(shown.tagName === "PRE" ? "div" : "span");
+    ph.className = shown.getAttribute(MATH_FAILED_ATTR) === "display" ? MATH_DISPLAY_CLASS : MATH_INLINE_CLASS;
+    ph.textContent = code.textContent || "";
+    const call = shown.getAttribute(MATH_CALL_ATTR);
+    if (call) ph.setAttribute(MATH_CALL_ATTR, call);
+    shown.replaceWith(ph);
+  });
+}
+
+/** The load is over, as a failure (the first of the page life's load) or a success (the first, whichever attempt it was): the
+ *  handlers, then one fill over the document (each pending formula rendered, or shown as source on a failure), then what the
+ *  handlers returned. A success after a failure first puts the failure's fallbacks back as placeholders (restoreFailedFormulas; not
+ *  under a root its owner repaints, MATH_REPAINT_ATTR),
+ *  so the fill lays out every formula, those included. The fills inside use no retry (settling, requestEngine). */
+function engineSettled(failure: string | null): void {
+  engineLoad = failure === null ? "ready" : "failed";
+  if (failure === null) retryArmed = false;
+  settling++;
+  try {
+    const after: Array<() => void> = [];
+    for (const h of settleHandlers.slice()) {
+      try { const a = h(); if (typeof a === "function") after.push(a); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
+    }
+    if (failure === null) restoreFailedFormulas(document);
+    renderMathPlaceholders(document);
+    for (const a of after) {
+      try { a(); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
+    }
+  } finally {
+    settling--;
+  }
+}
+
 // Closing punctuation allowed right after the closing $ (plus whitespace / end-of-text).
 // Includes markdown emphasis/strike markers so **$O(n)$** works, and the common CJK stops.
 const AFTER_CLOSE = "[\\s.,;:!?)\\]}\"'*_~\\-、。，；：！？）】」]";
@@ -466,8 +761,10 @@ export const mathInline: TokenizerAndRendererExtension = {
  *  (the div a display paragraph of its own becomes) turns into a code block; a span, display mode or not, into a code
  *  span, so the paragraph it sits in survives the serialization to innerHTML (a <pre> inside a <p> splits the paragraph
  *  when the HTML is parsed again). The code element wears MATH_SOURCE_CLASS, the hook for the sheets' dress and the
- *  highlighter's exemption, whichever shape it takes; the title sits on the outer element, the whole of what is shown. */
-function showSource(el: HTMLElement, tex: string, why: string): void {
+ *  highlighter's exemption, whichever shape it takes; the title sits on the outer element, the whole of what is shown. A
+ *  fallback the load's failure made (`failedCall`, its call's group) is marked on the outer element with the formula's mode
+ *  and that group (MATH_FAILED_ATTR, MATH_CALL_ATTR), so a later success can lay it out; a bound's fallback is not. */
+function showSource(el: HTMLElement, tex: string, why: string, failedCall?: string): void {
   const doc = el.ownerDocument;
   const code = doc.createElement("code");
   code.className = MATH_SOURCE_CLASS;
@@ -475,6 +772,10 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
   let shown: HTMLElement = code;
   if (el.tagName === "DIV") { shown = doc.createElement("pre"); shown.appendChild(code); }
   shown.setAttribute("title", why);
+  if (failedCall !== undefined) {
+    shown.setAttribute(MATH_FAILED_ATTR, el.classList.contains(MATH_DISPLAY_CLASS) ? "display" : "inline");
+    shown.setAttribute(MATH_CALL_ATTR, failedCall);
+  }
   el.replaceWith(shown);
 }
 
@@ -494,7 +795,8 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  Four bounds stand ahead of the one katex.render
  *  call, each shown as the source with its reason (showSource): a formula longer than MATH_TEX_MAX_CHARS;
  *  a formula that would take the call's rendered total past MATH_TEX_BUDGET_CHARS (the running total is
- *  this call's, so it is one message's or one note's; a shorter formula after it still renders while it
+ *  this call's, so it is one message's or one note's, and a formula that waited for the engine is charged to
+ *  the call that first met it, its MATH_CALL_ATTR group; a shorter formula after it still renders while it
  *  fits); a formula whose macro definitions repeat an argument; a formula that defines a body with `\edef`
  *  or `\xdef`, which KaTeX stores expanded (macroBounds; the two cases no expansion count over the bodies
  *  as written can bound). The call itself runs under maxSize and a maxExpand computed from the formula's
@@ -506,12 +808,23 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  again with throwOnError: false, KaTeX's own flagged text (span.katex-error, the TeX in the theme's error
  *  ink, MATH_ERROR_COLOR) as on main; a residual throw (an internal error)
  *  takes the belt, the source the same way and a word on the console once per call, so a formula can never
- *  blank a message. A second run over the same root is a no-op: no placeholder survives the first. Plain
- *  and exported: md-config.ts registers it as sanitizeMd's post-pass, and the tests call it directly. */
+ *  blank a message. Until the load has settled as a success, a formula that passes the four bounds is left as
+ *  its placeholder, stamped with this call's group, and the chunk is asked for (requestEngine); the fill over
+ *  the document at the engine's arrival renders it, and after a failed load the fill shows it as source at once
+ *  with the failure in its title, marked with its group so a later success lays it out (showSource), and uses
+ *  an armed retry (requestEngine). With the
+ *  engine loaded, a second run over the same root is a no-op: no placeholder survives the first. Plain and
+ *  exported: md-config.ts registers it as sanitizeMd's post-pass, the arrival runs it over the document, and
+ *  the tests call it directly. */
 export function renderMathPlaceholders(root: ParentNode): void {
-  let rendered = 0;          // characters of TeX handed to KaTeX so far in this call: the budget's meter
+  // KaTeX only once the load has settled as a success: while the chunk or the faces are out, or after a failure, an engine the
+  // chunk has registered is not used (a formula would skip the face wait and the viewer's hold, or render beside the failure's
+  // fallbacks); idle with an engine is a bundle that imported the chunk for its side effect, which renders at once
+  const katex = engineLoad === "loading" || engineLoad === "failed" ? null : engine();
+  const meters = new Map<string, number>();   // characters of TeX handed to KaTeX so far, per call group: the budget's meters
+  let group = "";            // this call's own group number, minted when its first formula waits for the engine
   let reported = false;      // the belt's console report, once per call
-  root.querySelectorAll("." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS).forEach((node) => {
+  root.querySelectorAll(PLACEHOLDER_SEL).forEach((node) => {
     const el = node as HTMLElement;
     const display = el.classList.contains(MATH_DISPLAY_CLASS);
     const tex = el.textContent || "";
@@ -520,6 +833,8 @@ export function renderMathPlaceholders(root: ParentNode): void {
       showSource(el, tex, "Not rendered: " + tex.length + " characters of TeX; the limit is " + MATH_TEX_MAX_CHARS + ".");
       return;
     }
+    const call = el.getAttribute(MATH_CALL_ATTR) || "";   // the call that first met this formula; "" for this one
+    let rendered = meters.get(call) || 0;                 // that call's meter: one message's or one note's total
     if (rendered + tex.length > MATH_TEX_BUDGET_CHARS) {
       showSource(el, tex, "Not rendered: the formulas above already total " + rendered + " characters of TeX; the limit for one message or note is " + MATH_TEX_BUDGET_CHARS + ".");
       return;
@@ -534,6 +849,19 @@ export function renderMathPlaceholders(root: ParentNode): void {
       return;
     }
     rendered += tex.length;
+    meters.set(call, rendered);
+    if (!katex) {
+      if (engineLoad === "failed") {
+        // the failure's fallback, at once (nothing waits on a retry), marked so a later success lays it out; an armed retry is
+        // used here, by a fill that meets a formula outside the settle (requestEngine)
+        showSource(el, tex, "Not rendered: " + engineFailure + ".", call || group || (group = String(++mathCalls)));
+        requestEngine();
+        return;
+      }
+      if (!call) el.setAttribute(MATH_CALL_ATTR, group || (group = String(++mathCalls)));
+      requestEngine();
+      return;
+    }
     const maxExpand = maxExpandFor(tex, bounds);
     try {
       try {

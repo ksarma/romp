@@ -59,3 +59,6 @@ out-tests/ui/webview/file-view-figure-floor-browser.test.js
 out-tests/ui/webview/file-view-figure-recent-browser.test.js
 out-tests/ui/webview/file-view-figure-shapes-browser.test.js
 out-tests/ui/webview/file-view-figure-state-browser.test.js
+out-tests/ui/webview/math-chunk-load-browser.test.js
+out-tests/ui/webview/file-view-math-hold-browser.test.js
+out-tests/ui/webview/reading-point-browser.test.js

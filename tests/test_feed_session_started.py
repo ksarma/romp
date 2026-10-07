@@ -96,16 +96,24 @@ class _Feed(unittest.TestCase):
             {"rompUuid": SID, "seq": len(nodes), "lastNode": last, "nodes": nodes, "placements": {}, "status": status or {}}))
 
     def _feed(self):
-        """One build_feed, with err holding everything the build wrote to stderr. The kernel's SdkBackend singleton
-        is built first, outside the capture: build_feed reaches _sdk() through _alive_sessions, and the first _sdk()
-        call in a process constructs the backend, which logs its one-time boot lines to stderr (the SDK import
-        verdict, the credential-shaped names it finds, and the cli-scope verdict that conftest's ROMP_CLI_SCOPE=0
-        forces). Inside the capture those lines landed in err for whichever test of this module built the feed first
-        in its process, so a test asserting err == "" failed alone, and under xdist whenever a worker's first test
-        here was one of those. The construction is not the feed path. Built here, it leaves the capture holding
-        build_feed alone, and every stderr write build_feed makes, a later _sdk() call's included, still reaches err
-        (pinned by FeedCaptureHoldsTheBuildAlone below)."""
+        """One build_feed, with err holding everything the build wrote to stderr. The kernel's two session backend
+        singletons are built first, outside the capture. build_feed reaches _sdk() through _alive_sessions, and the
+        first _sdk() call in a process constructs the SdkBackend, which logs its one-time boot lines to stderr (the SDK
+        import verdict, the credential-shaped names it finds, and the cli-scope verdict that conftest's
+        ROMP_CLI_SCOPE=0 forces). Inside the capture those lines landed in err for whichever test of this module built
+        the feed first in its process, so a test asserting err == "" failed alone, and under xdist whenever a worker's
+        first test here was one of those. build_feed reaches _codex() as well, through _feed_session_key
+        (Sessions.backend_for asks the Codex backend about every session the SDK backend does not own, this module's
+        included), and the first _codex() call in a process loads codex_backend.py and constructs the CodexBackend.
+        That construction writes nothing today: the constructor logs only about an existing registry (an unreadable
+        file, a malformed or unknown-mode row, a live row whose names file is missing), and the state root it is built
+        over has none. But _codex() writes "codex-backend unavailable" and a traceback when loading or
+        constructing the backend raises, and a one-time line the constructor gains later would reach err the way the
+        SDK backend's did. Neither construction is the feed path. Built here, they leave the capture holding
+        build_feed alone, and every stderr write build_feed makes, a later _sdk() or _codex() call's included, still
+        reaches err (pinned by FeedCaptureHoldsTheBuildAlone below)."""
         km._sdk()
+        km._codex()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             f = km.build_feed(NOW)
@@ -458,38 +466,47 @@ class HostsCurrentAtTheMint(_Feed):
 
 
 class FeedCaptureHoldsTheBuildAlone(_Feed):
-    """_feed's err holds every stderr write build_feed makes and nothing else: the backend's one-time construction
-    stays out of it (the first _sdk() call, made before the capture opens), and a write from inside the build still
-    reaches it. A test here cannot rely on being the process's first to build the real backend, so each test replaces
-    one function build_feed calls with a stand-in that wraps the real one and writes a line of its own, then reads
-    where each line went. Calls from other threads go straight to the real function: the backend's threads may call _sdk()
-    while a test runs, and their lines are not this test's."""
+    """_feed's err holds every stderr write build_feed makes and nothing else: the backends' one-time constructions
+    stay out of it (the first _sdk() and _codex() calls, made before the capture opens), and a write from inside the
+    build still reaches it. A test here cannot rely on being the process's first to build the real backends, so each
+    test replaces one function build_feed calls with a stand-in that wraps the real one and writes a line of its own,
+    then reads where each line went. Calls from other threads go straight to the real function: the backends' threads
+    may call _sdk() or _codex() while a test runs, and their lines are not this test's."""
 
     def _ask_only(self):
         ask = SID + ":g1"
         self._store({ask: self._node(ask, "Add retries to the notes-api client", promptUuid="u1", askAnchor="human")})
 
-    def test_the_first_sdk_call_logs_outside_the_capture_and_every_later_one_inside(self):
+    def _first_call_outside(self, name, label):
+        """km.<name> replaced by a stand-in that writes a line per call made on this thread, the feed built under an outer
+        capture: the first call, _feed's own (the one that builds the singleton), writes outside err, and err holds the
+        line of every call build_feed made and nothing else."""
         self._ask_only()
-        outer, calls, me, real = io.StringIO(), [], threading.get_ident(), km._sdk   # calls: (index, outside the capture)
+        outer, calls, me, real = io.StringIO(), [], threading.get_ident(), getattr(km, name)   # calls: (index, outside the capture)
 
         def recorder():
             if threading.get_ident() == me:
                 i = len(calls)
                 calls.append((i, sys.stderr is outer))
-                sys.stderr.write("sdk-backend: %s (synthetic)\n" % ("construction" if i == 0 else "call %d" % i))
+                sys.stderr.write("%s: %s (synthetic)\n" % (label, "construction" if i == 0 else "call %d" % i))
             return real()
 
-        km._sdk = recorder
-        self.addCleanup(setattr, km, "_sdk", real)
+        setattr(km, name, recorder)
+        self.addCleanup(setattr, km, name, real)
         with contextlib.redirect_stderr(outer):
             feed, err = self._feed()
         inside = [i for i, out in calls if not out]
-        self.assertTrue(calls and calls[0][1], "the first _sdk() call, the one that builds the singleton, runs outside the capture")
-        self.assertTrue(inside, "build_feed calls _sdk() inside the capture, so this test tells the two apart")
-        self.assertEqual(err, "".join("sdk-backend: call %d (synthetic)\n" % i for i in inside),
-                         "err holds the line of every _sdk() call build_feed made, and not the construction call's")
-        self.assertIn("sdk-backend: construction (synthetic)\n", outer.getvalue())
+        self.assertTrue(calls and calls[0][1], "the first %s() call, the one that builds the singleton, runs outside the capture" % name)
+        self.assertTrue(inside, "build_feed calls %s() inside the capture, so this test tells the two apart" % name)
+        self.assertEqual(err, "".join("%s: call %d (synthetic)\n" % (label, i) for i in inside),
+                         "err holds the line of every %s() call build_feed made, and not the construction call's" % name)
+        self.assertIn("%s: construction (synthetic)\n" % label, outer.getvalue())
+
+    def test_the_first_sdk_call_logs_outside_the_capture_and_every_later_one_inside(self):
+        self._first_call_outside("_sdk", "sdk-backend")
+
+    def test_the_first_codex_call_logs_outside_the_capture_and_every_later_one_inside(self):
+        self._first_call_outside("_codex", "codex-backend")
 
     def test_a_stderr_write_from_inside_build_feed_reaches_err(self):
         self._ask_only()

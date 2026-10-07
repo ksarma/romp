@@ -140,7 +140,7 @@ function liftWorld(): (hooks: Hooks, mod: typeof MOD, doc: ReturnType<typeof fak
   const fetch = liftBetween("function fetchOlderForAnchor(sid: string, uuid: string): boolean {", "// Ask the kernel for the chunk of history just before the resident tail.");
   const prelude = `
     let sessions = new Map(), views = new Map(), activeId = "A";
-    let pendingAnchor = null, pendingAnchorIntent = null, pendingAnchorT = null, pendingAnchorKind = null, pendingAnchorKeepY = null, flashedAnchor = null;
+    let pendingAnchor = null, pendingAnchorIntent = null, pendingAnchorT = null, pendingAnchorKind = null, pendingAnchorKeepY = null, pendingAnchorKeepAt = null, flashedAnchor = null;
     let anchorPendingOlder = false;
     let seek = null;
     let landingNoticeSid = null;   // the one notice's sid (T386 stage 2): chatHead brings the older wire's wait down by it (2026-09-19); never set in this world

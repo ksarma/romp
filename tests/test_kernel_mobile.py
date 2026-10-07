@@ -6,6 +6,7 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2480,6 +2481,558 @@ class MobileBellExecutes(unittest.TestCase):
         js = km._LANDING_MOBILE_JS
         self.assertIn("var B=bar.querySelectorAll('button[data-pane]')", js)
         self.assertNotIn("bar.querySelectorAll('button'),", js)
+
+
+_BELLS = ("mbell", "rail-bell")
+_NAMES_A_BELL = re.compile(r"(?<![\w-])(?:mbell|rail-bell)(?![\w-])")
+
+
+# The attribute name an attribute selector starts with, past any whitespace and a namespace prefix (`*|`, `|`); the caller compares
+# it case-insensitively, as a browser matches attribute names in an HTML page. `[lang|=en]` reads as `lang`: no name follows its |.
+_ATTR_NAME = re.compile(r"\[\s*(?:(?:[\w-]*|\*)\|)?([\w-]+)")
+
+# The at-rules whose prelude can hold a selector, compared case-insensitively, as CSS compares at-rule and function names: @scope
+# (its root and limit are selectors) and @custom-selector by name, and the selector() test any condition can carry (@supports, @when,
+# @else). @import's supports() is refused with every @import by served_css, and @page's page selectors name pages, not elements.
+_AT_HOLDS_A_SELECTOR = re.compile(r"@(scope|custom-selector)(?![\w-])", re.I)
+_SELECTOR_TEST = re.compile(r"(?<![\w-])selector\s*\(", re.I)
+_QUOTED = re.compile(r"\"[^\"]*(?:\"|\Z)|'[^']*(?:'|\Z)")   # a quoted string, to its closing quote or the end, in text with no escape
+# An unquoted url(), to its ) or the end: one token to a browser. Past `url(` a browser skips CSS whitespace (space, tab, newline, CR
+# and FF), then reads a quote as the start of a quoted url and any other character as the start of an unquoted one. Python's \s is
+# wider: with it here, `url(` and a no-break space, a vertical tab or an em space before a quote read as a quoted url, which a browser
+# reads as unquoted, the quote and any brace after it included (the light check of the closing check's url() fix, 2026-10-06).
+_URL = re.compile(r"(?<![\w-])url\([ \t\n\r\f]*(?![ \t\n\r\f\"'])([^)]*)", re.I)
+
+
+def _bell_rule_classes(html):
+    r"""{bell id: classes} that the served shell's CSS rules name on the bell: every class in a compound that carries the bell's id,
+    inside :not() and the other functional pseudo-classes as well (`#mbell:not(.on) .bell-slash` names `on` on #mbell), read from the
+    parsed rules (served_css.rules). Two over-reads follow, each turning the census red, the safe side, and no served rule makes
+    either. A class the bell's markup gives it counts too, since served_css reads no attributes of other elements, so a rule naming one
+    on a bell by id (`#mbell.mact`) reads as a class no script sets. And every class in a compound that excludes or nests a bell reads
+    as named on the bell, the ones a browser tests on another element included: `button:not(#mbell).busy`, `.wrap:has(#mbell) .x`,
+    `#mbell:has(.bell-slash)`, `:is(.wrap #mbell).on` and `#mbell:not(.wrap .x)`; BellStateClassCensus pins those red.
+
+    The census reads the forms it models and refuses the ones it does not, each by its own assertion anywhere in the served CSS, so a
+    rule spelled past the read fails the census instead of passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}`
+    planted in the phone block had passed; review round 1, the same day: `@scope (#mbell){:scope.busy{opacity:.45}}` and
+    `#mbell/**/.busy{opacity:.45}` had passed too, and so had, at that round's fix, `#mtabs #mbell{&.busy{opacity:.45}` left open at the
+    end of a style element, `#mtabs #mbell:not([title=")] "]).busy{opacity:.45}` and
+    `@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}`, and at its closing check
+    `@media (x:;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}` and, with that refused,
+    `@media (x:url(]);@font-face url([) ), all{...}`, and at the check of that refusal
+    `#x{a:url(\u00a0"q"}@font-face{{)}#mtabs #mbell.busy{opacity:.45}}`, where `\u00a0` is a no-break space, and the same with a
+    vertical tab or an em space in its place). It models a style rule's own selector, a bell's id written there
+    plainly as `#mbell` or `#rail-bell`, and the attribute selectors whose name it can read, over served_css's parse, which reads every
+    brace as a block's edge, every `;` outside a declaration block as a statement's end, and every `/*` outside a quoted string as a
+    comment's start. It refuses an id attribute selector in any compound, whatever its case, spacing, namespace prefix, operator,
+    quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute selector in a compound that carries a bell's id; a `[` that starts
+    no attribute name this read can parse; a comment inside a selector; a quoted string in a selector that holds a bracket or paren,
+    which this read's compound split counts as nesting; a selector whose parentheses or brackets do not balance, which served_css leaves
+    when it cuts a rule at a brace a browser keeps inside them (`#mbell:is([x={}],*).busy`); a selector character outside printable
+    ASCII, which can continue a class or id name past this read (a class `on` followed by a middle dot is not `on` to a browser); a `{`
+    inside a style rule's block, a nested rule, which served_css reads as the outer rule's declarations when the outer brace is left
+    off; anywhere in a style element, a CSS escape (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a brace or a
+    newline, and an unquoted url() that holds a brace, a quote, a `/*`, a paren or a bracket (a url() is unquoted unless a quote
+    follows its paren past CSS whitespace, which is space, tab, newline, CR and FF, so a no-break space, a vertical tab or an em space
+    after the paren starts one), since a browser reads a brace inside an escape, a string or a url(), and a `/*` inside an escape or a
+    url(), as text, and ends a string at a newline, where served_css reads structure and reads on to the closing quote, and a browser
+    reads a url() as one token, where this read's prelude and selector counts read each paren and bracket in its body (a url() holding
+    an opener a browser does not push can balance the text served_css leaves when it cuts at a `;` or brace a browser keeps inside a
+    url(), parentheses or brackets, as in `#mbell:is(.x}@font-face url([) ,*).busy`); an at-rule whose prelude can hold a selector:
+    @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test (@supports, @when, @else); and
+    an at-rule prelude that holds a quote, or parentheses or brackets that do not balance (a close before its open included), since
+    served_css ends a prelude at a `;` or a brace a browser keeps inside a string, parentheses or brackets and can then record no rule
+    for the block a browser applies (in `@media (x:;@font-face ), all{...}` it skips that block as @font-face's), and a `}` inside a
+    selector's parentheses under an at-rule leaves the at-rule name after it a prelude that closes a paren it never opened
+    (`#mbell:is(.x}@font-face ,*).busy`).
+    The comment is refused rather than read because served_css blanks a comment to spaces, which this read takes as a descendant
+    combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
+    the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
+    @custom-selector statement, or an @scope block holding only declarations, leaves served_css no rule to carry one. BellRuleReader
+    pins each refusal. A class a rule tests on a bell through a compound that does not carry the bell's id is not read here, a stated
+    limit: a rule that reaches a bell with no id at all (through a tag, a markup class such as `.mact`, or another attribute), or a
+    class tested on the bell from inside another compound's :has() (`#mtabs:has(> .busy) > #mbell`). A stylesheet a served script writes
+    at run time (a style element's textContent, insertRule, replace or replaceSync, adoptedStyleSheets) is a second stated limit, since
+    this read sees only the style elements the page is served with. Measured over the shell's 26 script elements (2026-10-05): the 22
+    that hold code write none (a grep of it: none creates or selects a style or link element, writes `<style` or `<link` into markup, or
+    names insertRule, deleteRule, replaceSync, adoptedStyleSheets, CSSStyleSheet, styleSheets, cssRules or `.sheet`, and each of their 7
+    `.replace(` calls passes two arguments, a string's replace); of the 4 that load a bundle by src, palette-main.js writes two, the
+    command palette's and the shortcuts card's, each when it first opens (ui/webview/palette.ts and shortcuts-modal.ts: a style element
+    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write. A third stated
+    limit: the census reads rules as written and does not check that a browser accepts them, so a rule a browser drops, or reads as a
+    different selector, can read as live. Each of these reads as naming `on`, a class the scripts set, and passes, where Chromium 151
+    and WebKit 26.5 apply it to no bell: `#mtabs #mbell.on` with a no-break space, a vertical tab or an em space at either end, which
+    served_css strips (it strips Python's whitespace from a selector's ends, a wider set than CSS's, before the printable ASCII refusal
+    above reads the selector), where a browser drops the rule at a vertical tab and reads a no-break space or an em space as a name
+    character; a misspelled at-rule or pseudo-class (`@mdia all{#mtabs #mbell.on{opacity:.45}}`,
+    `#mtabs #mbell.on:hoverr{opacity:.45}`); and a selector list ending in a comma (`#mtabs #mbell.on,{opacity:.45}`). With `busy`
+    in place of `on`, each still turns the census red. served_css is shared with the other censuses, so its strip stays.
+
+    Some refusals read more than a browser does, the safe side; the served CSS trips none of them, and BellRuleReader pins each beside
+    what an author writes instead. The escape refusal reads every backslash in a style element, so an escape inside a string
+    (`content:"\2022"`) or a backslash in a comment is refused: write the character itself, and word the comment without one. The url()
+    refusal reads the element's raw text, so `url(` written in a comment or a string reads as an unquoted url() running to the next `)`,
+    refused when that text holds a brace, a quote, a `/*`, a paren or a bracket: `/* see url(it's) */`, `/* see url([x]) */`,
+    `content:"url(a/*b)"`, `content:"url(a(b)"`, and a `url(` a comment leaves unclosed, which runs on past the comment's end
+    (`/* a url( note */`); quote a real url (`url("it's.png")`, `url("a[1](2).png")`), and close or reword a `url(` in a comment or a
+    string. The at-rule refusals read every `@`, strings and url()s included, so
+    `content:"mail@scope.example"` is refused as an @scope rule, and `content:"a@b"` and `url(mailto:a@b)` as preludes that hold a quote
+    or close a paren they never opened: write `%40` in a url, and put text that holds an `@` in the markup (`content:attr(data-mail)`).
+    And a prelude that quotes a value is refused (`@namespace svg "http://www.w3.org/2000/svg"`, `@charset "utf-8"`): write a namespace
+    as a url() (`@namespace svg url(http://www.w3.org/2000/svg)`), and leave out @charset, which a style element ignores."""
+    blocks = served_css.style_blocks(html)
+    for _, css in blocks:
+        code = served_css.css_code(css)   # the element's text, its comments blanked
+        for at in re.finditer(r"@[^{};]*", code):   # every at-rule's prelude, up to its block or its ;
+            prelude = at.group(0).strip()
+            name = _AT_HOLDS_A_SELECTOR.match(prelude)
+            assert not name, ("an @%s rule (%r) holds a selector in its prelude, which can reach a bell past this census; it reads "
+                              "rules' own selectors only" % (name.group(1).lower(), prelude))
+            assert not _SELECTOR_TEST.search(prelude), "an at-rule prelude holds a selector() test (%r); this census reads rules' own selectors only" % prelude
+            # served_css ends a prelude at the first ; or brace, inside a string, parentheses or brackets too, where a browser reads on,
+            # and the text after the break can leave it no rule for a block a browser applies (review round 1's closing check, 2026-10-05)
+            depth = low = 0
+            for c in prelude:
+                depth += (c in "([") - (c in ")]")
+                low = min(low, depth)
+            assert depth == low == 0 and not re.search(r"[\"']", prelude), (
+                "an at-rule prelude holds a quote or unbalanced parentheses or brackets (%r): served_css ends a prelude at a ; or a brace a "
+                "browser keeps inside a string, parentheses or brackets, and can then record no rule for a block a browser applies" % prelude)
+        # served_css reads every brace as a block's edge and every /* outside a quoted string as a comment's start, and runs a string to
+        # its closing quote; a browser reads a brace inside an escape, a url() or a string, and a /* inside an escape or a url(), as
+        # text, and ends a string at a newline. And a browser reads a url() as one token, to its ), where the prelude count
+        # above and the selector count below read each paren and bracket in its body (the check of review round 1's closing check
+        # fixes, 2026-10-05); the body ends at the first ), so a ) is never in it
+        k = css.find("\\")
+        assert k < 0, "a style element holds a CSS escape (%r); this census reads plain spellings only" % css[max(0, k - 40):k + 40]
+        for url in _URL.finditer(css):
+            assert not re.search(r"[{}\"'(\[\]]|/\*", url.group(1)), (
+                "an unquoted url() holds a brace, a quote, a /*, a paren or a bracket (%r), which a browser reads as part of "
+                "the url" % url.group(0)[:80])
+        for q in _QUOTED.findall(code):
+            assert not re.search(r"[\n\r\f]", q), "a quoted string holds a newline (%r), where a browser ends the string" % q[:80]
+            assert not re.search(r"[{}]", q), "a quoted string holds a brace (%r), which served_css reads as a block's edge" % q[:80]
+    rules, bare = served_css.rules(html), []
+    for _, css in blocks:   # each style element's rules again, its comments removed where served_css blanks them to spaces
+        kept, at = "", 0
+        for s, e in served_css.css_comment_spans(css):
+            kept, at = kept + css[at:s], e
+        bare += served_css.rules("<!doctype html><style>%s</style>" % (kept + css[at:]))
+    assert len(bare) == len(rules), "the served CSS parses to %d rules with its comments blanked and %d with them removed" % (len(rules), len(bare))
+    named = {b: set() for b in _BELLS}
+    for rule, plain in zip(rules, bare):
+        assert rule.selector == plain.selector, ("a rule's selector holds a comment (%r, read here as %r): served_css blanks it to spaces, "
+                                                 "a descendant combinator, where a browser drops it" % (plain.selector, rule.selector))
+        assert re.fullmatch(r"[\t\n\f\r\x20-\x7e]*", rule.selector), ("a selector holds a character outside printable ASCII (%r), which "
+                                                                     "can continue a class or id name past this census's read" % rule.selector)
+        assert "{" not in rule.declarations, ("a rule's block holds a { (%r {%r}): a nested rule, which served_css reads as this rule's "
+                                              "declarations; this census reads rules' own selectors only" % (rule.selector, rule.declarations[:80]))
+        for q in _QUOTED.findall(rule.selector):
+            assert not re.search(r"[()\[\]]", q), ("a quoted string in a selector holds a bracket or paren (%r), which this census's "
+                                                   "compound split counts as nesting" % rule.selector)
+        depth = low = 0
+        for c in rule.selector:
+            depth += (c in "([") - (c in ")]")
+            low = min(low, depth)
+        assert depth == low == 0, ("a selector's parentheses or brackets do not balance (%r): served_css cut the rule at a brace inside "
+                                   "them, which a browser reads as part of the selector" % rule.selector)
+        for member in served_css.members(rule.selector):
+            for comp in served_css._split_top(re.sub(r"\s*([>+~])\s*", r"\1", member), " >+~"):
+                attrs = [_ATTR_NAME.match(comp, m.start()) for m in re.finditer(r"\[", comp)]
+                assert all(attrs), "a rule's attribute selector starts no attribute name this census reads (%r)" % rule.selector
+                attrs = {a.group(1).lower() for a in attrs}
+                assert "id" not in attrs, ("a rule selects by the id attribute (%r), which can reach a bell without #mbell or #rail-bell; "
+                                           "name a bell by its #id" % rule.selector)
+                for b in _BELLS:
+                    if re.search(r"#%s(?![\w-])" % re.escape(b), comp):
+                        assert "class" not in attrs, "a rule selects #%s by its class attribute (%r); read it into this census" % (b, rule.selector)
+                        named[b] |= set(re.findall(r"\.([\w-]+)", re.sub(r"\[[^\]]*\]", "", comp)))
+    return named
+
+
+# The executed half of the census below: _BELL_HARNESS's stub shell, with every DOM write that can put a class on a bell recorded,
+# then the scripts the census hands over (SCRIPTS, in the page's order) driven through every bell transition this driver knows.
+_BELL_CLASS_DRIVER = r"""
+process.on('uncaughtException', (e) => { console.error(e && e.stack || e); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error(e && e.stack || e); process.exit(1); });
+const settle = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); };
+const SET = {};
+for (const b of [mbell, railBell]) {
+  const got = SET[b.id] = new Set(), cl = b.classList, add = cl.add, toggle = cl.toggle, setA = b.setAttribute.bind(b);
+  const tokens = (v) => String(v).split(/[ \t\n\f\r]+/).filter(Boolean);   // the DOM splits a class value on ASCII whitespace alone
+  cl.add = (...cs) => cs.forEach((c) => { got.add(c); add(c); });
+  cl.toggle = (c, f) => { const on = toggle(c, f); if (on) got.add(c); return on; };
+  cl.replace = (a, c) => { if (!cl.contains(a)) return false; cl.remove(a); got.add(c); add(c); return true; };
+  Object.defineProperty(b, 'className', { set(v) { tokens(v).forEach((c) => { got.add(c); add(c); }); }, get() { return ''; } });
+  b.setAttribute = (k, v) => { if (String(k).toLowerCase() === 'class') tokens(v).forEach((c) => { got.add(c); add(c); }); setA(k, v); };
+}
+// the kernel's answers: ok by default; FAIL refuses a POST with a 500, and REFUSED records the path of each refused POST whose body
+// the script read, which its post() does only for an answer that is not ok (the refusal path); HOLD keeps a POST pending until released
+let FAIL = new Set(), HOLD = false;
+const HELD = [], REFUSED = [], answered = global.fetch;
+global.fetch = (path, init) => {
+  const post = !!(init && init.method === 'POST');
+  if (post && HOLD) { POSTS.push([path, JSON.parse(init.body)]);
+    return new Promise((res) => HELD.push(() => res({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }), text: () => Promise.resolve('{}') }))); }
+  if (post && FAIL.has(path)) { POSTS.push([path, JSON.parse(init.body)]);
+    return Promise.resolve({ ok: false, status: 500, json: () => Promise.reject(new Error('not json')),
+      text: () => { REFUSED.push(path); return Promise.resolve('refused in the lab'); } }); }
+  return answered(path, init);
+};
+const ws = () => WSS[WSS.length - 1];
+const frame = (m) => ws().onmessage({ data: JSON.stringify(m) });
+const post = (m) => (WIN.message || []).forEach((f) => f({ data: m }));
+const pane = (k) => bar.querySelector('button[data-pane=' + k + ']');
+(async () => {
+  for (const js of SCRIPTS) (0, eval)(js);
+  await settle();
+  const opened = [];
+  mbell.fire('click'); opened.push(!back.hidden); mbell.fire('click'); opened.push(!back.hidden);       // the phone bell opens it, a second tap closes it
+  railBell.fire('click'); opened.push(!back.hidden); back.fire('click'); opened.push(!back.hidden);    // the rail bell opens it, an outside tap closes it
+  pane('feed').fire('click'); post({ romp: 'reveal', pane: 'chat' }); frame({ type: 'reveal', pane: 'timeline' });
+  frame({ type: 'notifyAll', on: false }); frame({ type: 'notifyTurns', on: true }); frame({ type: 'notifyAll', on: true }); frame({ type: 'notifyTurns', on: false });
+  mbell.fire('click');
+  for (const k of ['all', 'all', 'turns', 'turns', 'dev', 'dev']) { rows[k].fire('click'); await settle(); }   // every row, answered
+  pop.querySelector('[data-act=test]').fire('click'); await settle();
+  FAIL = new Set(['/notify-all', '/notify-turns', '/push/subscribe', '/push/unsubscribe']);
+  for (const k of ['all', 'turns', 'dev', 'dev']) { rows[k].fire('click'); await settle(); }                    // every row, refused
+  FAIL = new Set(); HOLD = true;
+  for (const k of ['all', 'turns', 'dev']) rows[k].fire('click');                                              // every row, pending
+  await settle();
+  const pending = ['all', 'turns', 'dev'].filter((k) => rows[k].classList.contains('busy'));
+  HOLD = false; HELD.splice(0).forEach((f) => f()); await settle();
+  Notification.permission = 'denied'; frame({ type: 'notifyAll', on: false }); frame({ type: 'notifyAll', on: true });
+  back.fire('click');
+  process.stdout.write(JSON.stringify({ set: Object.fromEntries(Object.entries(SET).map(([k, v]) => [k, [...v].sort()])),
+    opened, pending, posts: POSTS.map((p) => p[0]), refused: REFUSED, held: HELD.length }) + '\n');
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+class BellStateClassCensus(unittest.TestCase):
+    """Every state class the served CSS names on a bell is one a served script sets on that bell (T10, 2026-10-05). The shell kept
+    `#mtabs #mbell.busy{opacity:.45}` and `.rail-acts #rail-bell.busy{opacity:.45}`, under a comment calling the dim the tap's
+    acknowledgement while the subscribe request ran, after the popover took over the tap (2026-09-05). Before it, a bell tap
+    subscribed this device and the script put `busy` on both bells until the request answered; since then a tap only opens or closes
+    the popover, `setBusy` dims the popover's rows, and no script puts `busy` on a bell, so the rules described a state the page never
+    shows. Both halves come from the served shell (km._landing()). The rule half is _bell_rule_classes. The script half runs the
+    served scripts that name a bell, with the phone bar's own script before them in the page's order (its pane switcher once wrote
+    the bell's class through every bar button, MobileBellExecutes above), on _BELL_HARNESS's stub shell, and records every class a
+    DOM write puts on each bell (classList add, toggle and replace, className, setAttribute) through the bells' taps, the kernel's
+    frames, and every popover row answered, refused and left pending. A writer this run does not reach (a script that finds a bell
+    through a generic selector, a transition the driver does not make) reads as unset, which can turn the census red and never
+    green; either half coming back empty for a bell fails it."""
+
+    @classmethod
+    def setUpClass(cls):
+        html = km._landing()
+        cls.rule_classes = _bell_rule_classes(html)
+        scripts = served_css.scripts(html)
+        cls.writers = [js for js in scripts if _NAMES_A_BELL.search(js)]
+        bar_script = served_css.js_code(_mobile_js())
+        assert scripts.count(bar_script) == 1, "the phone bar's script is not served exactly once as written"
+        cls.ran = [js for js in scripts if js in cls.writers or js == bar_script]
+        cls.out = cls._drive(cls.ran)
+        cls.script_classes = {b: set(cls.out["set"].get(b, [])) for b in _BELLS}
+
+    @staticmethod
+    def _drive(scripts):
+        """_BELL_CLASS_DRIVER's record of a run of these scripts, in this order, on _BELL_HARNESS's stub shell."""
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(_BELL_HARNESS + "const SCRIPTS=%s;" % json.dumps(scripts) + _BELL_CLASS_DRIVER)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the shell scripts threw: " + r.stderr[:1200]
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_every_class_a_rule_names_on_a_bell_is_one_a_served_script_sets_there(self):
+        self.assertTrue(self.writers, "no served script names a bell, so there is nothing to execute")
+        for b in _BELLS:
+            self.assertTrue(self.rule_classes[b], "no served rule names a state class on #%s: the census has nothing to check there" % b)
+            self.assertTrue(self.script_classes[b], "the run set no class on #%s: the driver did not reach the bell's writer" % b)
+        self.assertEqual(self._dead(self.rule_classes), {}, "the served CSS names these classes on the bells, and no served script sets "
+                         "them there (the scripts set %s): remove the rules, or wire the state and drive it here" % {b: sorted(self.script_classes[b]) for b in _BELLS})
+
+    def _dead(self, rule_classes):
+        """The census's verdict on a rule read: {bell id: sorted classes} a rule names on the bell that no served script set there."""
+        return {b: sorted(rule_classes[b] - self.script_classes[b]) for b in _BELLS if rule_classes[b] - self.script_classes[b]}
+
+    def test_a_compound_that_excludes_or_nests_a_bell_turns_the_census_red(self):
+        # the over-read stated beside #mbell.mact in _bell_rule_classes (review round 1, 2026-10-05): every class in such a compound reads
+        # as named on the bell, so a rule spelled this way turns the census red, the safe side; no served rule is spelled so
+        cases = (
+            ("#mtabs button:not(#mbell).busy", {"mbell": ["busy"]}),       # excludes the bell: a browser dims the other busy buttons
+            (".wrap:has(#rail-bell) .x", {"rail-bell": ["wrap"]}),         # the bell inside an ancestor's :has()
+            ("#mbell:has(.bell-slash)", {"mbell": ["bell-slash"]}),        # a class on the bell's own child, inside its :has()
+            (":is(.wrap #mbell).on", {"mbell": ["wrap"]}),                 # a class on an ancestor, behind a combinator inside :is()
+            ("#rail-bell:not(.wrap .x)", {"rail-bell": ["wrap", "x"]}),    # the same inside :not()
+        )
+        for sel, dead in cases:
+            with self.subTest(sel=sel):
+                self.assertEqual(self._dead(BellRuleReader._read(sel + "{opacity:.45}")), dead)
+
+    def test_a_selector_end_python_strips_and_css_keeps_is_read_past(self):
+        # one instance of the third stated limit in _bell_rule_classes (the census does not check that a browser accepts a rule, so a
+        # rule a browser drops, or reads as a different selector, can read as live), its green plant (the check of the url()
+        # whitespace pins, 2026-10-06): served_css strips Python's whitespace from both ends of a selector before the printable ASCII
+        # refusal reads it, so a rule that ends or starts with a no-break space, a vertical tab or an em space reads as naming `on`
+        # on the bell, a class the scripts set, and passes, where Chromium 151 and WebKit 26.5 apply the rule to no bell (they keep
+        # either space in the selector as a name character and drop the rule at the vertical tab); with `busy` in place of `on` the
+        # census still turns red
+        for ch in ("\u00a0", "\x0b", "\u2003"):   # a no-break space, a vertical tab, an em space
+            for at, form in (("end", "#mtabs #mbell.%s" + ch), ("start", ch + "#mtabs #mbell.%s")):
+                with self.subTest(ch="U+%04X" % ord(ch), at=at):
+                    on = BellRuleReader._read(form % "on" + "{opacity:.45}")
+                    self.assertEqual(on, {"mbell": {"on"}, "rail-bell": set()})
+                    self.assertEqual(self._dead(on), {})
+                    self.assertEqual(self._dead(BellRuleReader._read(form % "busy" + "{opacity:.45}")), {"mbell": ["busy"]})
+
+    def test_a_class_value_splits_on_the_doms_whitespace_alone(self):
+        # the script half splits a className or class attribute value where the DOM does, at space, tab, LF, FF and CR. With JavaScript's
+        # \s there it also split at a no-break space, a vertical tab or an em space, so a script writing `x`, one of those, then `busy`
+        # was recorded as setting busy on the bell, where Chromium 151 and WebKit 26.5 read one class and no busy (the check of the
+        # url() whitespace pins, 2026-10-06). The served scripts run first, as in setUpClass, so each transition the driver makes still
+        # finds its writer.
+        odd = ("\u00a0", "\x0b", "\u2003")   # a no-break space, a vertical tab, an em space
+        values = [("x%sbusy" % ch, "y%sbusy" % ch) for ch in odd] + [("a1 a2\ta3\na4\fa5\ra6", "b1 b2\tb3\nb4\fb5\rb6")]
+        js = "(function(){var m=document.getElementById('mbell'),r=document.getElementById('rail-bell');%s})();" % "".join(
+            "m.className=%s;r.setAttribute('class',%s);" % (json.dumps(m), json.dumps(r)) for m, r in values)
+        got = self._drive(self.ran + [js])["set"]
+        want = {"mbell": ["x%sbusy" % ch for ch in odd] + ["a%d" % i for i in range(1, 7)],
+                "rail-bell": ["y%sbusy" % ch for ch in odd] + ["b%d" % i for i in range(1, 7)]}
+        for b in _BELLS:
+            with self.subTest(bell=b):
+                self.assertEqual(sorted(set(got[b]) - self.script_classes[b]), sorted(want[b]),
+                                 "the classes this script adds on #%s beyond the served run's: a value splits at ASCII whitespace "
+                                 "alone, so a value with no ASCII whitespace before busy records no busy" % b)
+
+    def test_the_run_reached_every_transition_it_drives(self):
+        self.assertEqual(self.out["opened"], [True, False, True, False], "each bell opens the popover, a second tap or an outside tap closes it")
+        self.assertEqual(self.out["held"], 0, "every pending request was answered before the run ended")
+        self.assertEqual(self.out["pending"], ["all", "turns", "dev"], "each row with its request pending wears its own busy")
+        for path in ("/notify-all", "/notify-turns", "/push/subscribe", "/push/unsubscribe", "/push/test"):
+            self.assertIn(path, self.out["posts"], "the run sent %s" % path)
+        # the refused leg ran: the answered leg alone sends every path above (review round 1, 2026-10-05)
+        self.assertEqual(self.out["refused"], ["/notify-all", "/notify-turns", "/push/unsubscribe", "/push/subscribe"],
+                         "each row's request was refused once: the master, the turn-finished switch, then This device off and back on")
+
+
+class BellRuleReader(unittest.TestCase):
+    """The census's rule half (_bell_rule_classes) on synthetic sheets: a plain spelling is read, plain attribute selectors pass,
+    and each spelling that could reach a bell, or put a class on one, past the plain read is refused by its own assertion (T10's
+    fix pass, 2026-10-05). The first case is the plant that had passed the census when it sat in the served shell's phone block."""
+
+    @staticmethod
+    def _read(css):
+        return _bell_rule_classes("<!doctype html><html><head><style>%s</style></head><body></body></html>" % css)
+
+    def test_a_plain_spelling_is_read_and_plain_attribute_selectors_pass(self):
+        self.assertEqual(self._read("#mtabs #mbell.busy{opacity:.45}"
+                                    ".rail-acts>#rail-bell:not(.on) svg{opacity:1}"
+                                    "#mtabs button[data-pane=feed][hidden],:lang(en) [lang|=en],[*|title]{display:none}"
+                                    "body.x #mtabs button[data-pane=\"chat\"],#mbell[title='a b']{display:none}"),
+                         {"mbell": {"busy"}, "rail-bell": {"on"}})
+
+    def test_each_spelling_past_the_plain_read_is_refused_by_its_own_assertion(self):
+        cases = (
+            ("[id=mbell].busy", "id attribute"),          # the plant that had passed the census
+            ('#mtabs [id="rail-bell"].busy', "id attribute"),
+            ("[ID='mbell' i].busy", "id attribute"),
+            ("[ id = mbell ].busy", "id attribute"),
+            ("[*|id=mbell].busy", "id attribute"),
+            ("[id$=bell].busy", "id attribute"),
+            (":is([id=mbell]).busy", "id attribute"),
+            ("#mbell[class~=busy]", "class attribute"),
+            ("#mbell[CLASS~=busy]", "class attribute"),
+            ("#mbell[ class ~= busy ]", "class attribute"),
+            ("#mbell[=busy]", "starts no attribute name"),
+            (r"[\69 d=mbell].busy", "CSS escape"),
+            (r"#mbell.bu\73 y", "CSS escape"),
+            (r"#\6d bell.busy", "CSS escape"),
+        )
+        for sel, why in cases:
+            with self.subTest(sel=sel), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(sel + "{opacity:.45}")
+
+    def test_a_comment_in_a_selector_and_an_at_rule_holding_a_selector_are_refused_by_name(self):
+        # each passed this reader unrefused before review round 1's fix (2026-10-05); the first five are that round's plants, each a rule
+        # a browser applies to the bell as #mbell.busy, the @scope ones unread in a prelude and the comment read as a descendant combinator
+        cases = (
+            ("@scope (#mbell){:scope.busy{opacity:.45}}", "an @scope rule"),
+            ("@scope ([id=mbell]){:scope.busy{opacity:.45}}", "an @scope rule"),
+            (r"@scope (#\6d bell){:scope.busy{opacity:.45}}", "an @scope rule"),
+            ("#mtabs #mbell/**/.busy{opacity:.45}", "holds a comment"),
+            (".busy/**/#mbell{opacity:.45}", "holds a comment"),
+            ("@scope (#mbell){&.busy{opacity:.45}}", "an @scope rule"),
+            ("@scope (#mbell.busy){opacity:.45}", "an @scope rule"),    # declarations straight in the block: served_css records no rule
+            ("@media (max-width:640px){@SCOPE (#mtabs) to (.x){#mbell.busy{opacity:.45}}}", "an @scope rule"),
+            ("@custom-selector :--bell #mbell;:--bell.busy{opacity:.45}", "an @custom-selector rule"),
+            ("@supports selector(#mbell.busy){#mtabs .x{opacity:.45}}", "selector() test"),
+            (r"@\73 cope (#mbell){:scope.busy{opacity:.45}}", "CSS escape"),
+            ("#mtabs #mbell/* the dim */.busy,#rail-bell{opacity:.45}", "holds a comment"),
+        )
+        for css, why in cases:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+
+    def test_a_nested_rule_and_a_quoted_bracket_or_paren_in_a_selector_are_refused_by_name(self):
+        # each passed this reader, neither read nor refused, at review round 1's fix (the round's check, 2026-10-05): a nested rule left
+        # open at the end of a style element, which served_css reads as the outer rule's declarations, and a quoted bracket or paren,
+        # which the compound split counts as nesting, so busy lands in a compound without the bell's id
+        cases = (
+            ("#mtabs #mbell{&.busy{opacity:.45}", "block holds a {"),
+            ("#mtabs #mbell{opacity:1;&.busy{opacity:.45}", "block holds a {"),
+            ("@media (max-width:640px){#mbell{&.busy{opacity:.45}}", "block holds a {"),
+            ("#mtabs{#mbell.busy{opacity:.45}", "block holds a {"),
+            ("#mtabs{& #mbell.busy{opacity:.45}", "block holds a {"),
+            ("#mbell{.wrap &.busy{opacity:.45}", "block holds a {"),
+            ('#mtabs #mbell:not([title=")] "]).busy{opacity:.45}', "bracket or paren"),
+            ('#mtabs #mbell[title="] "].busy{opacity:.45}', "bracket or paren"),
+            ('#mtabs #mbell[title=") "].busy{opacity:.45}', "bracket or paren"),
+            ('#mtabs #mbell[title*=")>"].busy{opacity:.45}', "bracket or paren"),
+            ("#mtabs #mbell[title='] '].busy{opacity:.45}", "bracket or paren"),
+        )
+        for css, why in cases:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+
+    def test_a_brace_or_comment_marker_a_browser_reads_as_text_and_a_non_ascii_selector_are_refused_by_name(self):
+        # The first seven passed this reader unrefused with its nesting and quoted bracket refusals in place (review round 1's fix,
+        # 2026-10-05): a brace inside an escape, a string, a url() or a selector's brackets or parentheses, which served_css reads as
+        # structure, and a /* inside a url(), which it reads as a comment's start, each left a rule unread that Chromium applies to a
+        # busy bell; a class name that runs past this read's \w was read as plain `on`. The last four pin the other clauses by name.
+        cases = (
+            (r"@media (max-width:640px){#mtabs #mbell:not(.x\}).busy{opacity:.45}", "CSS escape"),
+            ('@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}', "a quoted string holds a brace"),
+            ("#x{background:url(/*)}#mtabs #mbell.busy{opacity:.45}#y{background:url(*/)}", "an unquoted url()"),
+            ("@font-face{src:url(a{b)}#mtabs #mbell.busy{opacity:.45}}", "an unquoted url()"),
+            ("@media (max-width:640px){#mtabs #mbell:is(.x},*).busy{opacity:.45}", "do not balance"),
+            ("#mtabs #mbell:is([x={}],*).busy{opacity:.45}", "do not balance"),
+            ("#mtabs #mbell.on\u00b7{opacity:.45}", "outside printable ASCII"),
+            ('#x{content:"}{" #mbell.busy{opacity:.45}', "a quoted string holds a brace"),
+            ('#x{content:"a\n}#mtabs #mbell.busy{opacity:.45}', "a quoted string holds a newline"),
+            ('#x{background:url(a"b)}#mtabs #mbell.busy{opacity:.45}', "an unquoted url()"),
+            ("#mtabs #mbell:is(#y{},*).busy{opacity:.45}", "do not balance"),
+        )
+        for css, why in cases:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+
+    def test_an_at_rule_prelude_holding_a_quote_or_unbalanced_parentheses_or_brackets_is_refused_by_name(self):
+        # Each passed this reader, neither read nor refused, at review round 1's closing check (2026-10-05), and Chromium dims a busy
+        # bell under each: served_css ends the prelude at a ; or brace kept inside a string, parentheses or brackets, then skips the
+        # next block as a declaration at-rule's (@font-face, @page, @counter-style, @property) or reads it as an at-rule's block. A }
+        # inside a selector's parentheses under an at-rule leaves the at-rule name after it a prelude that closes a paren it never
+        # opened. The last four hold, inside the skipped block, a form refused on its own: the skip had bypassed those refusals too.
+        cases = (
+            "@media (x:;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}",
+            '@media (x:"; @font-face "), all{#mtabs #mbell.busy{opacity:.45}}',
+            "@media (x:{}@font-face ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@supports (x:;@page ) or (display:block){#mtabs #mbell.busy{opacity:.45}}",
+            "@media [;@font-face ], all{#mtabs #mbell.busy{opacity:.45}}",
+            '@media "a;@font-face ", all{#mtabs #mbell.busy{opacity:.45}}',              # a quote and no parentheses: the quote clause alone
+            "@media url(;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:;@counter-style ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:;@property ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:;@page ), all{.rail-acts #rail-bell.busy{opacity:.45}}",
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@font-face ,*).busy{opacity:.45}",   # a } kept in :is(), then a close before its open
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@page ,*).busy{opacity:.45}",
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@media ,*).busy{opacity:.45}",
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@layer ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x}@foo ,*).busy{opacity:.45}",
+            "@media (x:;@font-face ), all{[id=mbell].busy{opacity:.45}}",
+            "@media (x:;@font-face ), all{#mtabs #mbell/**/.busy{opacity:.45}}",
+            "@media (x:;@font-face ), all{#mtabs #mbell{&.busy{opacity:.45}}}",
+            "@media (x:;@font-face ), all{#mbell[class~=busy]{opacity:.45}}",
+        )
+        # then each half of the count alone, on sheets that name no bell: a prelude left open, and one that closes before it opens
+        for css in cases + ("@font-face (;#x{color:red}", "@font-face ) (;#x{color:red}"):
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape("an at-rule prelude holds a quote or unbalanced")):
+                self._read(css)
+
+    def test_a_paren_or_bracket_inside_an_unquoted_url_is_refused_by_name(self):
+        # Each passed this reader, neither read nor refused, with the prelude refusal above in place (the check of review round 1's
+        # closing check fixes, 2026-10-05), and Chromium and WebKit dim a busy bell under each. A browser reads an unquoted url() as
+        # one token, to its ), while the prelude and selector counts read each paren and bracket in its body, so a url() holding an
+        # opener a browser does not push can balance the text served_css leaves when it cuts at a ; or brace a browser keeps inside a
+        # url(), parentheses or brackets. The first five are the prelude shape, and the next six the selector shape (a } inside a
+        # selector's parentheses), two of them with no at-rule after the }, where the url() balances the selector count alone; the
+        # last two are the nested shape, whose outer rule served_css ends at the } inside :is().
+        cases = (
+            "@media (x:url(]);@font-face url([) ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:url(]);@page url([) ), all{.rail-acts #rail-bell.busy{opacity:.45}}",
+            "@media [url(]);@font-face url([) ], all{#mtabs #mbell.busy{opacity:.45}}",
+            "@supports (x:url(]);@page url([) ) or (display:block){#mtabs #mbell.busy{opacity:.45}}",
+            "@media url(];@font-face [), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media all{#mtabs #mbell:is(.x}@font-face url([) ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x}@foo url([) ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x}@font-face url(() ,*).busy{opacity:.45}",
+            "@supports (display:block){@media all{#mtabs #mbell:is(.x}@font-face url([) ,*).busy{opacity:.45}}",
+            "@media all{#mtabs #mbell:is(.x} url([x) ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x} url(() ,*).busy{opacity:.45}",
+            "html{& :is(#mtabs #mbell.busy, .x}url([x) ){opacity:.45}",
+            "html{& :is(#mtabs #mbell.busy, .x}url(() ){opacity:.45}",
+        )
+        # then each character alone, on sheets that name no bell
+        for css in cases + ("#x{background:url(a(b)}", "#x{background:url(a[b)}", "#x{background:url(a]b)}"):
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape("an unquoted url() holds")):
+                self._read(css)
+
+    def test_a_url_opened_by_a_character_python_reads_as_whitespace_and_css_does_not_is_refused_by_name(self):
+        # Each passed this reader, neither read nor refused, with the url() refusal above in place (the light check of the closing
+        # check's url() fix, 2026-10-06), and Chromium 151 and WebKit 26.5 dim a busy bell under each. _URL skipped Python's \s after
+        # `url(`, so a no-break space, a vertical tab or an em space before a quote read as a quoted url and no url() at all, where a
+        # browser, whose whitespace there is space, tab, newline, CR and FF, reads an unquoted url() to the first ), the quote and the
+        # braces included; served_css ends #x's block at the } inside it and skips the next block, the bell's rule in it, as @font-face's.
+        for ch in ("\u00a0", "\x0b", "\u2003"):   # a no-break space, a vertical tab, an em space
+            with self.subTest(ch="U+%04X" % ord(ch)), self.assertRaisesRegex(AssertionError, re.escape("an unquoted url() holds")):
+                self._read('#x{a:url(%s"q"}@font-face{{)}#mtabs #mbell.busy{opacity:.45}}' % ch)
+        # and a quote past any of CSS's five whitespace characters still opens a quoted url, read clean
+        for ch in " \t\n\r\f":
+            with self.subTest(ch="U+%04X" % ord(ch)):
+                self.assertEqual(self._read('#x{background:url(%s"it\'s.png")}' % ch), {"mbell": set(), "rail-bell": set()})
+        # and so does a single quote, with or without any of the five before it: _URL's lookahead names both quotes, and without the
+        # apostrophe there `url('a.png')` reads as an unquoted url() that holds a quote, refused (the check of the whitespace pins,
+        # 2026-10-06)
+        for ch in ("",) + tuple(" \t\n\r\f"):
+            with self.subTest(single="U+%04X" % ord(ch) if ch else "none"):
+                self.assertEqual(self._read("#x{background:url(%s'a.png')}" % ch), {"mbell": set(), "rail-bell": set()})
+        # and _URL skips each of the five before an unquoted body, so a brace in that body is refused. A skip that left one out read no
+        # url() there and kept the cases above green, where Chromium 151 and WebKit 26.5 read an unquoted url() and dim a busy bell
+        # under it (the check of the whitespace fix, 2026-10-06)
+        for ch in " \t\n\r\f":
+            with self.subTest(skip="U+%04X" % ord(ch)), self.assertRaisesRegex(AssertionError, re.escape("an unquoted url() holds")):
+                self._read('#x{a:url(%sx}@font-face{{)}#mtabs #mbell.busy{opacity:.45}}' % ch)
+
+    def test_each_stated_over_refusal_is_refused_and_what_an_author_writes_instead_is_read(self):
+        # the over-refusals _bell_rule_classes states, the safe side (the coordinator's call 2 at review round 1's head and that round's
+        # closing check, 2026-10-05), on sheets that name no bell, then each alternative the docstring gives, read clean
+        refused = (
+            (r'#x{content:"\2022"}', "CSS escape"),
+            (r"/* C:\path */#x{color:red}", "CSS escape"),
+            ("/* see url(it's) */#x{color:red}", "an unquoted url()"),
+            ("/* see url([x]) */#x{color:red}", "an unquoted url()"),
+            ('#x{content:"url(a/*b)"}', "an unquoted url()"),
+            ('#x{content:"url(a(b)"}', "an unquoted url()"),
+            ("/* a url( note */#y{color:red}", "an unquoted url()"),
+            ('#x{content:"mail@scope.example"}', "an @scope rule"),
+            ('#x{content:"a@b"}', "an at-rule prelude holds a quote"),
+            ("#x{background:url(mailto:a@b)}", "an at-rule prelude holds a quote"),
+            ('@namespace svg "http://www.w3.org/2000/svg";#x{color:red}', "an at-rule prelude holds a quote"),
+            ('@charset "utf-8";#x{color:red}', "an at-rule prelude holds a quote"),
+        )
+        for css, why in refused:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+        for css in ('#x{content:"\u2022"}', "/* C:/path */#x{color:red}", "#x{background:url(\"it's.png\")}", "/* see it's */#x{color:red}",
+                    '#x{background:url("a[1](2).png")}', "/* a url(x) note */#y{color:red}", "#x{background:url(mailto:a%40b)}",
+                    "#x::after{content:attr(data-mail)}", "@namespace svg url(http://www.w3.org/2000/svg);#x{color:red}"):
+            with self.subTest(css=css):
+                self.assertEqual(self._read(css), {"mbell": set(), "rail-bell": set()})
 
 
 # A node stand-in for the phone with the shell socket in view: the fit harness's window plus a mutable copy of the

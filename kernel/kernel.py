@@ -4741,8 +4741,8 @@ def _ct_eq(a, b):
 
 # ── browser sessions: the login cookie holds a session id, never the serve token ──────────────────
 # The browser's login cookie carries a per-kernel SESSION ID. The kernel accepts that id, on its own,
-# for the PAGE class (the page documents) and the STATIC class (/dist, /media, /sw.js): code, no
-# session data. Every other request needs a second value the cookie never carries. For the full and
+# for the PAGE class (the page documents) and the STATIC class (/dist, /media, /sw.js). Every other
+# request needs a second value the cookie never carries. For the full and
 # socket classes that is the PAGE KEY K, held in this origin's localStorage and presented as the
 # X-Romp-Key header (or as k= on a socket dial). For a header-less /file load that is a per-file CAP
 # in the URL. The four values are domain-separated HMACs, each under a DISTINCT FIXED LABEL so a value
@@ -80169,15 +80169,15 @@ def _landing():
             # horizontal-only so the bar's height and every tap height stay exactly as they were
             "#mtabs button.mact{flex:0 0 auto;padding:6px 7px;color:#7d848b;font-size:17px;line-height:1}"
             "#mtabs button.mact svg{display:block}"
-            # the push bell's states: on = the romp accent (a selected toggle, not a status); busy =
-            # dimmed, the immediate tap acknowledgement while the subscribe round-trip runs. The
+            # the push bell's state: on = the romp accent (a selected toggle, not a status), lit when the
+            # master switch is on and, where the Push API exists, this browser is subscribed. A tap only
+            # opens or closes the popover, whose rows show their own busy state while their requests run. The
             # [hidden] rule matters: the #mtabs button display:flex above outspecifies the UA's
-            # [hidden]{display:none}, so without it the capability-gated bell would always show.
+            # [hidden]{display:none}, so without it a pane tab the gear turned off, or the bell before the
+            # push script reveals it, would show.
             "#mtabs button[hidden]{display:none}"
             "#mtabs #mbell.on{color:var(--accent)}"
-            "#mtabs #mbell.busy{opacity:.45}"
             ".rail-acts #rail-bell.on{color:var(--accent)}"
-            ".rail-acts #rail-bell.busy{opacity:.45}"
             "}"
             # default Chat + Feed + Timeline shown, Fleet off (the user 2026-06-25); the rail toggles + ?panes=
             # reconcile in _LANDING_COLLAPSE_JS.
@@ -80217,9 +80217,15 @@ def _landing():
             "#rerr-x{background:none;border:none;color:#9aa0a6;font-size:16px;line-height:1;cursor:pointer;padding:0 2px}"
             "#rerr-x:hover{color:#fff}"
             "#rerr-list{overflow-y:auto;padding:4px 0;flex:1 1 auto}"
-            # grid rows (the user 2026-07-28): a fixed 96px chip column — wider than the widest chip
-            # ("follow-up failed") — so every message starts at the SAME x, left-aligned past the chips.
-            ".rerr-row{display:grid;grid-template-columns:96px 1fr auto auto;align-items:baseline;"
+            # The chip column's width, declared once for two rules (2026-10-04): the entry rows' chip column just below and the
+            # floor of the filter grid's columns (#rerr-fgrid). Both sit inside the panel, and both read this one property, so a
+            # chip label too wide for it is fixed here once and the two widths cannot drift apart. 96px holds the widest chip,
+            # "follow-up failed", in Inter, the panel's font (the #rerr-fgrid comment below gives the fallback font's width).
+            # tests/test_error_center.py pins that both rules read it and that nothing else declares it.
+            "#rerr-panel{--rerr-chip-col:96px}"
+            # grid rows (the user 2026-07-28): a fixed chip column, wider than the widest chip ("follow-up failed"), so every
+            # message starts at the SAME x, left-aligned past the chips.
+            ".rerr-row{display:grid;grid-template-columns:var(--rerr-chip-col) 1fr auto auto;align-items:baseline;"
             "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11px;line-height:1.45}"
             ".rerr-row .rerr-chip{justify-self:start}"
             ".rerr-row.link{cursor:pointer}"
@@ -80231,13 +80237,26 @@ def _landing():
             ".rerr-del:hover{opacity:1}"
             ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11px}"
             # The per-kind filter bar (the user 2026-07-28): a vertical white "show" label on the left, then
-            # the toggles in an even GRID — 8 kinds over the minimum 2 rows x 4 equal columns, every chip the
-            # same cell width, instead of one ragged wrapping row. The toggles ARE the chips — lit means
-            # shown, dimmed (with a dashed edge, a second cue beyond opacity) means muted.
+            # the toggles in an even GRID (the #rerr-fgrid rule below sets the columns), every chip the same
+            # cell width, instead of one ragged wrapping row. The toggles ARE the chips: lit means shown,
+            # dimmed (with a dashed edge, a second cue beyond opacity) means muted.
             "#rerr-filters{display:flex;align-items:stretch;gap:9px;padding:8px 12px;border-bottom:1px solid #2a2a2a;flex:0 0 auto}"
             ".rerr-flabel{writing-mode:vertical-rl;transform:rotate(180deg);text-align:center;color:#e8eaed;"
             "font-size:9px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;user-select:none}"
-            "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(5,1fr);gap:5px}"   # 9 kinds -> 2 rows (5+4), the minimum
+            # As many equal columns as fit at 96px or more each, never more than five (2026-10-04). The 96px is --rerr-chip-col,
+            # the entry rows' chip column above, sized to hold the widest chip ("follow-up failed", 89 to 95px in the engines the
+            # served test runs), and read here from that one declaration. The other term, 20% - 5px, is a fifth of the grid less
+            # one 5px gap: five such tracks and their four gaps always fit and a sixth never does, so the desktop's 700px panel
+            # keeps exactly the five equal columns it had. Those were repeat(5,1fr), which could not narrow: a 1fr track's minimum
+            # is its chips' min-content width and the chips never wrap, so five columns stayed about 340 to 360px wide. On a
+            # phone, in WebKit and Firefox, they ran past the filter bar's content edge below 414px of viewport, past the panel
+            # below 401px and off the screen below 388 to 389px; in Chromium below 435, 422 and 409px. A phone now gets three
+            # columns from about 370px and two below it (tests/test_log_filter_grid_served.py measures them, and that every chip
+            # still holds its label). The 96px holds the widest chip in Inter, the panel's font. In the system fallback font
+            # (before Inter loads, or where web fonts are blocked) "follow-up failed" needs about 99px: the label still stays
+            # inside its pill and its cell, and eats up to about 3px of the right padding. Raising the two widths to fit it would
+            # move the phone's step from two columns to three from about 370px to about 382px, so they stay at 96px.
+            "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(max(var(--rerr-chip-col),20% - 5px),1fr));gap:5px}"
             ".rerr-fbtn{cursor:pointer;user-select:none;text-align:center}"
             ".rerr-fbtn.off{opacity:0.35;border-style:dashed}"
             ".rerr-fbtn:hover{opacity:1}"
@@ -80522,8 +80541,9 @@ def _landing():
             "<rect class=rn-b x='11' y='11' width='4' height='4' rx='0.6' fill='currentColor'/></svg></div>"
             # the push bell, the desktop twin of #mbell (the user 2026-08-08: a laptop Chrome tab can
             # receive Web Push with no install, but the opt-in bell only rendered on the mobile layout).
-            # Ships hidden; _LANDING_PUSH_JS reveals it wherever the Push API exists and drives both
-            # bells as ONE control (same subscription, same flow). No data-act — it owns its own tap flow.
+            # Ships hidden; _LANDING_PUSH_JS reveals it on every page, Push API or not, and drives both
+            # bells as ONE control (same subscription, same flow): a tap opens or closes the popover.
+            # No data-act: it owns its own tap flow.
             "<div class=rail-act id=rail-bell hidden title=Notifications aria-label=Notifications>"
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
@@ -80564,9 +80584,11 @@ def _landing():
             "<button class=mact id=merr data-act=errs data-keycmd=log.open aria-label=Log title='Log — click to open'>"
             + _ERRS_SVG +
             "</button>"
-            # the push bell (plans/ios-app.md proposal 2): opt this DEVICE into needs-you notifications.
-            # Ships hidden; _LANDING_PUSH_JS reveals it only where the Push API exists (on iOS: the
-            # installed home-screen app). No data-act — it owns its own tap flow, not the A-map's.
+            # the push bell (plans/ios-app.md proposal 2), the phone twin of #rail-bell. Ships hidden;
+            # _LANDING_PUSH_JS reveals it on every page, Push API or not, and a tap opens or closes the
+            # popover, whose This-device row opts this DEVICE in to push notifications where the Push
+            # API exists (on iOS: the installed home-screen app). No data-act: it owns its own tap flow,
+            # not the A-map's.
             "<button class=mact id=mbell hidden aria-label=Notifications title=Notifications>"
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
@@ -81097,13 +81119,13 @@ class Handler(BaseHTTPRequestHandler):
         or a one-time ?c= code authorizes from any Origin, as before: it is the credential the CLI,
         hooks, the extension host, the VS Code webview and kernel-to-kernel calls present, and a
         cross-site page cannot forge it. The BROWSER's own credential is two parts. The session cookie
-        alone opens only the page and static classes (a page document, /dist, /media, /sw.js: code, no
-        session data). The full and socket classes additionally need the page key (the X-Romp-Key
+        alone opens only the page and static classes (a page document, /dist, /media, /sw.js).
+        The full and socket classes additionally need the page key (the X-Romp-Key
         header, or k= on a socket dial); the file class additionally needs a per-file cap. The cookie
         still passes through the Origin gate (_origin_ok), which refuses a request that names a foreign
         Origin. A request that names none passes it with the cookie, and a browser names none on a GET
         navigation (a frame's included) or on a subresource load made without CORS (a script, an image),
-        whichever page made it: that is why the page and static classes carry code and no session data.
+        whichever page made it: that is why the cookie alone opens only the page and static classes.
         session_to_set is the session a login mints or keeps: a
         GET navigation to a page authorized by ?token=, ?c=, or the old romp_token cookie (which held
         the serve token itself, migrated once here); every other authorized response sets no cookie."""

@@ -13360,8 +13360,14 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
             return got
 
         def release(self, n=1):
-            self.releases.append(n)
+            # The permit goes back first and the record follows, the order acquire keeps too. The other order failed
+            # CI's free threaded 3.14t cell once (run 37488658499) in
+            # test_a_session_ended_during_the_slot_wait_launches_nothing_and_the_semaphore_stays_whole, which polls
+            # until releases is [1] and then reads _value: with the GIL off that read landed between the append and
+            # the base release and saw 0 where the release was about to make 1. Pinned by
+            # CountingSemRecordsAfterItsEffect.
             super().release(n)
+            self.releases.append(n)
 
     def _helper(self):
         """An apiKeyHelper is configured on this box: a follower's key report is a key romp controls, so the walk moves it
@@ -15215,6 +15221,54 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         asyncio.run(s._stop_hook({"background_tasks": []}, None, None))   # the fresh CLI's first report: nothing running
         self.assertEqual([l for l in self.lines[n:] if "background task" in l], [], "no phantom: the drop left no id behind to hold")
         self.assertEqual(s._live_work_counts(), (0, 0)); self.assertEqual(s._reported_tasks, set())
+
+
+class CountingSemRecordsAfterItsEffect(unittest.TestCase):
+    """SettingsPickThroughTheLoop._CountingSem, the recorder both pick classes put in place of the spawn semaphore,
+    makes each record only after the effect it records. The slot-wait end case polls until the recorder shows the
+    taker's release and then reads the semaphore's count, so a release recorded before the permit was back let that
+    read land in the gap and see 0. That happened once on CI's free threaded 3.14t cell (run 37488658499). The
+    observation here is made in one thread at the moment each base call runs and each record is appended, with no
+    timing and no race."""
+
+    def test_each_record_follows_its_effect_so_a_reader_that_sees_the_record_reads_the_count_with_it(self):
+        seen = []
+
+        class _AtTheBase(threading.Semaphore):
+            """Next after the recorder in the probe's MRO, so the recorder's super() call runs these on the way to
+            threading.Semaphore: what the record lists hold, and the count, at the moment the base call starts."""
+
+            def acquire(self, blocking=True, timeout=None):
+                seen.append(("base acquire", list(self.acquires), self._value))
+                return super().acquire(blocking, timeout)
+
+            def release(self, n=1):
+                seen.append(("base release", list(self.releases), self._value))
+                super().release(n)
+
+        class _Probe(SettingsPickThroughTheLoop._CountingSem, _AtTheBase):
+            pass
+
+        sem = _Probe(1)
+
+        class _Record(list):
+            """A record list that notes the count at the moment an entry is appended to it."""
+
+            def __init__(self, label):
+                super().__init__()
+                self.label = label
+
+            def append(self, item):
+                seen.append((self.label, item, sem._value))
+                super().append(item)
+
+        sem.acquires, sem.releases = _Record("acquire recorded"), _Record("release recorded")
+        self.assertTrue(sem.acquire(timeout=1))
+        sem.release()
+        self.assertEqual(seen, [("base acquire", [], 1), ("acquire recorded", True, 0),
+                                ("base release", [], 0), ("release recorded", 1, 1)],
+                         "each base call runs before its record, and each record lands with the count already moved")
+        self.assertEqual((sem.acquires, sem.releases, sem._value), ([True], [1], 1))
 
 
 class ReportAbsencePredicate(unittest.TestCase):
