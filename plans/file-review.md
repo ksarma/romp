@@ -5240,10 +5240,15 @@ document stands on its own, each with the reasoning it was given.
     controls); THE COMMAND TABLES' census checks both ways that each committed table is a writable special parameter of an
     installed shell and that every writable command-table parameter the shells expose is committed, reddening on a planted
     extra and a planted missing name. The rows:
-    clause (a) AS8-ruleS-bracevar-pwd and its `:`, echo, append, input and prefix twins, AS8-ruleS-bracevar-path (a
-    `{PATH}>` before a made name) and the control AS8-ruleS-ctl-noredir; clause (b) AS8-ruleS-table-bash-ba and
-    AS8-ruleS-table-bash-split; clause (c) AS8-ruleS-nameRun-typeset-fu and AS8-ruleS-nameRun-declare-fu, each refused
-    now where the pre-round-2 head allowed it while bash or zsh wrote. The cost, on the restricted side:
+    clause (a) AS8-ruleS-bracevar-pwd and its `:`, echo, append, input and prefix twins, a twin for each other
+    redirection kind the clause reads beside the word (an output duplication, an input duplication, a here-string and a
+    here-document: AS8-ruleS-bracevar-outdup, -indup, -herestring, -heredoc, each red where its own kind is not read),
+    AS8-ruleS-bracevar-path (a `{PATH}>` before a made name) and the control AS8-ruleS-ctl-noredir; clause (b)
+    AS8-ruleS-table-bash-ba and AS8-ruleS-table-bash-split; clause (c) AS8-ruleS-nameRun-typeset-fu and
+    AS8-ruleS-nameRun-declare-fu, and the head read at both places a may-change word stands, behind an in-shell wrapper
+    at the peel index (AS8-ruleS-nameRun-builtin-typeset-fu) and after a reserved word at the raw head index
+    (AS8-ruleS-nameRun-if-typeset-fu), each red where the clause reads the other place alone, each refused now where the
+    pre-round-2 head allowed it while bash or zsh wrote. The cost, on the restricted side:
     AS8-ctl-func-call-unrelated, a function definition, now takes fork main's reading (the bare name after a bound path
     refuses) where ROOT alone allowed it, writing nothing; option-insensitive, a head like `typeset x=1` beside a
     mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it. FUNCTION_SOURCES
@@ -5398,7 +5403,8 @@ document stands on its own, each with the reasoning it was given.
     cd leave the cwd unknown binds nothing (no directory to resolve the destination against), so a later bare name on a
     readable PATH is no writer the command made and passes (AS8-residual-copy-unknown-cwd, bash and zsh write). THE MOVED LINK RE-RESOLVES (fork PR 975's
     round 2 gap pass, R3): a command-made RELATIVE symlink carried unchanged into a directory on a readable PATH by a
-    preserving op (mv, a hard `ln`, cp -a/-P/-r) has text that re-resolves against the NEW directory; rule B first bound
+    preserving op (mv, a hard `ln`, `link`, cp -a/--archive/-d/--no-dereference/-P/-r/-R) has text that re-resolves
+    against the NEW directory; rule B first bound
     the link's OLD target (not a path the command made) and let the moved name pass, while a real bash, zsh and dash ran
     the cp the link's relative name finds in its new home and wrote the tracked file. The earlier pass named this a
     residual the synthetic world could not stage; the command stages it itself (`cp /usr/bin/cp scratch/realcp` is the
@@ -5406,7 +5412,10 @@ document stands on its own, each with the reasoning it was given.
     introduced, fixed here: bindWrite resolves a preserving op's link text against the destination's directory
     (linkTexts holds each command-made link's raw text), so the made copy there refuses by name. Rows
     AS8-ruleB-relsym-mv, -hardln, -cpa, -cpP, -cpr and the two out twins, red at the pre-round-2 head, with real writes
-    in all three shells. The same moved link RUN BY ITS FULL PATH (no PATH search) base and the pre-round-2 head both
+    in all three shells; one row per remaining preserving spelling, each red where that spelling alone is not read as
+    preserving (AS8-ruleB-relsym-cp-archive, -cp-d, -cp-no-dereference, -cp-upper-R, -link), and the link made in this
+    shell and moved inside `bash -c`, red where the fresh shell's walk is not handed the link texts
+    (AS8-ruleB-relsym-cpa-fresh-shell). The same moved link RUN BY ITS FULL PATH (no PATH search) base and the pre-round-2 head both
     allowed (a full-path invocation is no bare-name lookup for them); the destination's absolute path is bound too, so it
     refuses, a fork-main allow the by-name rows do not reach (AS8-ruleB-relsym-mv-fullpath, -cpa-fullpath). An
     absolute-source move into a directory on a readable PATH (`mv <abs> <dir>`), which fork main allows and ruling C and
@@ -5442,9 +5451,13 @@ document stands on its own, each with the reasoning it was given.
     AS8-drop-noremedy-env-cd and AS8-drop-noremedy-gate-cd hold as they did. THE SHELL'S GATE (BUILTIN_GATES, set by
     the scan before the walk, mentionsBuiltinGate, by the walk's gate name and by a text not read run here) stays,
     read by THE ASSIGNING HEAD alone: under a command that may turn a builtin on or off a builtin may stand under any
-    name, so every mention taints (AS8-root-gate-scan, AS8-root-gate-walk-ansic, AS8-root-gate-unheld-callback, one per
-    setter, costs on which no shell writes beside AS8-cp-sed-path-ls; the third, whose callback leaves the directory
-    unknown, fork main allowed, since it skipped the bound-name refusal there); its
+    name, so every mention taints (AS8-root-gate-scan, AS8-root-gate-walk-var, AS8-root-gate-unheld-callback, one per
+    setter, each red where its own setter is off and the other two on, costs on which no shell writes beside
+    AS8-cp-sed-path-ls; the third, whose callback leaves the directory unknown, fork main allowed, since it skipped the
+    bound-name refusal there). The first two put the gate word where rule S does not read it as a head, a command name
+    built from a variable the command assigns literally: spelled as a head the word is on THE NAME-RUN AXIS, and clause
+    (c) refused those rows with every setter off (the reviewer's tg-t31-1 on the round-2 pass); a change that reads a
+    head resolved from a variable as one that may change what a name runs subsumes those two setters. Its
     rows AS8-builtin-gate-* are refused as every bare name is, gate or no gate (a mention no shell runs among them,
     AS8-builtin-gate-mention-cost). Pre-existing, disclosed with a witness row each (allowed at fork main and here while
     the shell writes): the same table writes where no copy and no unread PATH put the bound-name refusal in play, or

@@ -975,6 +975,15 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-ruleS-bracevar-input', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}</dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
       ['AS8-ruleS-bracevar-prefix', 'nad', 'mkdir -p 10 11; p={OUT}/x; x=1 true {p}>/dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
       ['AS8-ruleS-bracevar-path', 'out', 'mkdir -p 10 11; cp /usr/bin/cp 10/c2; cp /usr/bin/cp 11/c2; true {PATH}>/dev/null; c2 {NA}/base/report.md {NA}/docs/report.md', BZ, 'name', null],
+      // every redirection kind clause (a) reads beside a `{NAME}` word (fork PR 975's round-2 pass, the reviewer's mutant M31-4: the rows above use `>`, `>>`
+      // and `<` alone, so dropping the descriptor-duplication, the input-duplication or the here-document term from ruleHasRedir reopened the write): an
+      // output duplication `{p}>&2`, an input duplication `{p}<&0`, a here-string `{p}<<<x` and a here-document `{p}<<EOF`, each assigning p a descriptor
+      // number in bash and zsh, each red where its own term is dropped, fork main refusing, the pre-round-2 head allowing (the here-document's write did not
+      // reproduce in the reviewer's probe, whose body shared the line; with the body on lines of its own bash and zsh write)
+      ['AS8-ruleS-bracevar-outdup', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}>&2; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-indup', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}<&0; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-herestring', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}<<<x; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-heredoc', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}<<EOF\nx\nEOF\necho y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
       ['AS8-ruleS-ctl-noredir', 'nad', 'mkdir -p 10 11; p={OUT}/x; true; echo y > "$p/../report.md"', N, 'allow'],
       ['AS8-ruleS-table-bash-ba', 'na', `OUT={OUT}/scratch\nshopt -s expand_aliases\nBASH_ALIASES[grep]=read\ngrep OUT <<< {NA}/docs\necho x > "$OUT/report.md"`, ['bash'], ['text', 'which is not a literal path']],
       ['AS8-ruleS-table-bash-split', 'na', `OUT={OUT}/scratch\nshopt -s expand_aliases\nprintf -v 'BASH_''ALIASES[grep]' read\ngrep OUT <<< {NA}/docs\necho x > "$OUT/report.md"`, ['bash'], ['text', 'which is not a literal path']],
@@ -997,6 +1006,14 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-ruleS-nameRun-typeset-fu-quoted', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; 'typeset' -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-ruleS-nameRun-declare-fu-dquoted', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; "declare" -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-ruleS-nameRun-typeset-fu-bslash', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; \\typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
+      // clause (c) reads the head at BOTH places a may-change word stands (fork PR 975's round-2 pass, the reviewer's mutant M31-5: every row above has the
+      // word first, where the two agree): behind an in-shell wrapper, `builtin typeset -fu g`, only the peel index reaches it (the raw head is `builtin`),
+      // red where clause (c) reads the raw head alone; and after a reserved word, `if typeset -fu g; then :; fi`, only the raw head index reaches it (the peel
+      // stops at `if`), red where it reads the peel index alone, so the raw head's term is not redundant (the reviewer's corollary, that keeping the peel
+      // read alone changed no verdict, held on a battery with no compound before the word). Fork main refuses each, the pre-round-2 head allows it, zsh
+      // writes
+      ['AS8-ruleS-nameRun-builtin-typeset-fu', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; builtin typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
+      ['AS8-ruleS-nameRun-if-typeset-fu', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; if typeset -fu g; then :; fi; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-root-alias-head', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias g=read\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-global-alias', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias -g G='read PATH'\nG < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-alias-unread-operand', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; printf 'g=read\\n' > {OUT}/an; read n < {OUT}/an; alias $n\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
@@ -1189,10 +1206,19 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // own name where the scan does not read the spelling, and by a text not read run here that poisons no name (a `mapfile -C` callback); each row red
       // where its setter is off. The first two are fork main's own refusals; the callback leaves the directory unknown, where fork main skipped the
       // bound-name refusal and allowed the third (THE BOUND NAME survives an unknown directory since an audit of this change), as the change's head before
-      // round 2 refused it too
-      ['AS8-root-gate-scan', 'na', 'cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; grep -c PATH {OUT}/scratch/b.service; enable -n echo; ls docs', N, ['text', [ANY_NAME, 'its command name names enable,', 'Make the change with track-edit instead']]],
+      // round 2 refused it too. Each gate word stands where RULE S does not read it as a head, so the refusal is the gate's and no other rule's (fork PR 975's
+      // round-2 pass, the reviewer's tg-t31-1: spelled as a head, `enable -n echo` or `$'\x65nable' -n echo`, the gate word is on THE NAME-RUN AXIS, so
+      // clause (c) gave those rows fork main's reading with every gate setter off and neither row went red under its setter's mutant). Here the gate word is a
+      // command name built from a variable the command assigns literally, which clause (c) does not read (a word with an expansion is no literal head) and
+      // the walk resolves: after the mention, so only the scan before the walk sets the gate in time (the scan reads the `enable` of `e=enable`), and
+      // before it spelled in parts the scan does not read (`e=en; $e'able'`), so only the walk's gate name sets it. Measured through the hook as a process
+      // with each setter disabled alone, the other two left on: scan off, AS8-root-gate-scan alone allowed; the walk's gate name off,
+      // AS8-root-gate-walk-var alone allowed; the unheld text off, AS8-root-gate-unheld-callback alone allowed. The isolation rests on clause (c) reading
+      // literal heads only and on FUNCTION_SOURCES, the function clause's head set, holding no gate word: a change that reads a head resolved from a variable
+      // as one that may change what a name runs subsumes the first two setters, and these two rows then stay refused with their setter off
+      ['AS8-root-gate-scan', 'na', 'cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; grep -c PATH {OUT}/scratch/b.service; e=enable; $e -n echo; ls docs', N, ['text', [ANY_NAME, 'its command name names $e,', 'Make the change with track-edit instead']]],
       ['AS8-root-gate-unheld-callback', 'na', 'cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; mapfile -C "$(cat {OUT}/scratch/keep.md)" -c 1 a < {OUT}/scratch/keep.md; grep -c PATH {OUT}/scratch/b.service; ls docs', N, ['text', [ANY_NAME, 'its command name names ls,']]],
-      ['AS8-root-gate-walk-ansic', 'na', "cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; $'\\x65nable' -n echo; grep -c PATH {OUT}/scratch/b.service; ls docs", N, ['text', [ANY_NAME, 'its command name names ls,']]],
+      ['AS8-root-gate-walk-var', 'na', "cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; e=en; $e'able' -n echo; grep -c PATH {OUT}/scratch/b.service; ls docs", N, ['text', [ANY_NAME, 'its command name names ls,']]],
       // D1 (an audit of fork PR 975's body, its gate behind a command named by a variable, a false allow this change introduced, 2026-10-05): a
       // command named by a variable that holds
       // `enable` turns bash's echo builtin off, and its unread head leaves the directory unknown, where the change had cleared THE BOUND NAME; the
@@ -1286,6 +1312,17 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-ruleB-relsym-cpr', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -r stage_s scratch/r_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; r_s base/report.md docs/report.md', A, 'name'],
       ['AS8-ruleB-relsym-mv-out', 'out', 'cd {OUT}; cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; mv stage_s scratch; grep -q PATH {NA}/base/report.md; PATH={OUT}/scratch:/usr/bin:/bin; stage_s {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
       ['AS8-ruleB-relsym-cpa-out', 'out', 'cd {OUT}; cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -a stage_s scratch/a_s; grep -q PATH {NA}/base/report.md; PATH={OUT}/scratch:/usr/bin:/bin; a_s {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      // the rest of the preserving set, one row per spelling (fork PR 975's round-2 pass, the reviewer's mutants M31-1 and M31-2: dropping `--archive`, `-d`
+      // or `--no-dereference` from cp's preserving options, or `link` from the preserving writers, reopened the write while every row above stayed green;
+      // `-R` beside `-r` is the same letter class): each red where its own spelling is not read as preserving, fork main refusing, the pre-round-2 head
+      // allowing, bash, zsh and dash writing. And the link carried into a fresh shell (M31-3): the link made in this shell and moved by `cp -a` inside
+      // `bash -c`, so the fresh shell's walk must be handed the link texts this one recorded (linkTexts in the text's context), red where it is not
+      ['AS8-ruleB-relsym-cp-archive', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp --archive stage_s scratch/v_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; v_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-cp-d', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -d stage_s scratch/d_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; d_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-cp-no-dereference', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp --no-dereference stage_s scratch/n_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; n_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-cp-upper-R', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -R stage_s scratch/R_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; R_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-link', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; link stage_s scratch/l_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; l_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-cpa-fresh-shell', 'na', "cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; bash -c 'cp -a stage_s scratch/a_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; a_s base/report.md docs/report.md'", A, 'name'],
       // fork PR 975's gap pass (R3, 2026-10-06): the two witnesses the ruling asked for and the earlier pass left out.
       // THE FULL-PATH MOVED LINK: a preserving move of a command-made relative symlink, then run by its FULL PATH (no PATH search). The ruling named this a
       // residual the world could not stage; it stages (the moved link resolves to the cp the command made). Base AND the pre-round-2 head allow it (the
@@ -1578,6 +1615,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-root-func-zsh-autoload': { c2: CP }, 'AS8-root-func-zsh-functions-c': { c2: CP, g: 'bound' }, 'AS8-root-func-unread-head-loop': { w3: W2 },
       'AS8-ruleS-bracevar-path': { c2: CP }, 'AS8-ruleS-nameRun-typeset-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-declare-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-readonly-fu': { c2: CP, g: 'bound' },
       'AS8-ruleS-nameRun-typeset-fu-quoted': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-declare-fu-dquoted': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-typeset-fu-bslash': { c2: CP, g: 'bound' },
+      'AS8-ruleS-nameRun-builtin-typeset-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-if-typeset-fu': { c2: CP, g: 'bound' },
       'AS8-root-alias-head': { c2: CP }, 'AS8-root-alias-unread-operand': { c2: CP, g: 'bound' },
       'AS8-cost-into-file': { w2: 'absent' }, 'AS8-cost-into-dir-T': { w2: 'absent' },
       'AS8-root-test-v-path': { c2: CP }, 'AS8-root-jobs-x-read-path': { w3: W2 }, 'AS8-root-jobs-x-eval-func': { c2: CP }, 'AS8-root-zsh-continue-path': { c2: CP },
@@ -1596,6 +1634,8 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ...Object.fromEntries(['AS8-ruleB-tests2-cp', 'AS8-ruleB-tests2-mv', 'AS8-ruleB-tests2-install', 'AS8-ruleB-tests2-cpt'].map((id) => [id, { c2x: CP }])),
       'AS8-ruleB-relsym-mv': { stage_s: CP }, 'AS8-ruleB-relsym-mv-out': { stage_s: CP }, 'AS8-ruleB-relsym-hardln': { h_s: CP },
       'AS8-ruleB-relsym-cpa': { a_s: CP }, 'AS8-ruleB-relsym-cpa-out': { a_s: CP }, 'AS8-ruleB-relsym-cpP': { p_s: CP }, 'AS8-ruleB-relsym-cpr': { r_s: CP },
+      'AS8-ruleB-relsym-cp-archive': { v_s: CP }, 'AS8-ruleB-relsym-cp-d': { d_s: CP }, 'AS8-ruleB-relsym-cp-no-dereference': { n_s: CP }, 'AS8-ruleB-relsym-cp-upper-R': { R_s: CP },
+      'AS8-ruleB-relsym-link': { l_s: CP }, 'AS8-ruleB-relsym-cpa-fresh-shell': { a_s: CP },
       'AS8-ruleB-relsym-mv-fullpath': { '{OUT}/scratch/stage_s': CP }, 'AS8-ruleB-relsym-cpa-fullpath': { '{OUT}/scratch/a_s': CP }, 'AS8-ruleB-intodir-mv-abs': { c2: CP },
       'AS8-alias-unread-operand-cp': { g: CP },   // the alias the file names, of cp
       'AS8-residual-backup-explicit-path': { '{OUT}/scratch/xzz': CP },   // the backup of a copy of cp, run by its full path
@@ -1714,7 +1754,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 298 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 310 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
@@ -1978,7 +2018,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // dash's `%builtin` road (R2's correctness-3 closures): the written script's name spelled by the program's full path, which runs no lookup
       ...Object.fromEntries([['echo', 'echo x'], ['printf', 'printf x'], ['test', 'test -n x']].map(([n, call]) => [`AS8-builtin-dash-pctbuiltin-${n}`, `printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/${n}; chmod +x {OUT}/scratch/${n}; printf '%s\\n' {OUT}/scratch > {OUT}/p; read X < {OUT}/p; PATH=$X:%builtin:$PATH; /usr/bin/${call}`])),
       'AS8-builtin-dash-pctbuiltin-dash-c': "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; printf '%s\\n' {OUT}/scratch > {OUT}/p; dash -c 'read X < {OUT}/p; PATH=$X:%builtin:$PATH; /usr/bin/echo x'",
-      'AS8-root-gate-walk-ansic': "cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; $'\\x65nable' -n echo; grep -c PATH {OUT}/scratch/b.service; /usr/bin/ls docs",
+      'AS8-root-gate-walk-var': "cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; e=en; $e'able' -n echo; grep -c PATH {OUT}/scratch/b.service; /usr/bin/ls docs",
       // a script written into place as echo and run by its bare name, refused since fork PR 975's round 2 (R2): the program's full path in place of the name
       'AS8-builtin-noenable-script': "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; /usr/bin/echo",
       'AS8-builtin-slash-env-echo': `${STASHED_ECHO}/usr/bin/env /usr/bin/echo base/report.md docs/report.md`,
@@ -2157,9 +2197,9 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     assert.ok(hook.includes("else if (ops.length === 1 && name === 'ln' && ops[0].text) {") && hook.includes('if (cwd) bind(path.basename(ops[0].text), srcText(ops[0]));'), 'a one-operand ln binds ./basename(SRC), closing shell F2 (the reviewer\'s t8-3; behaviour: AS8-made-one-op-ln-readable-path, red where it binds nothing; AS8-made-one-op-ln-s, AS8-made-one-op-ln, and its cost AS8-cost-one-op-ln-s-other-name)');
     // THE SHELL'S GATE, kept for THE ASSIGNING HEAD (R2 took out THE SHELL'S OWN NAME, THE WRAPPER DROPPED and the exemptions kept aside to withdraw):
     // set by the scan before the walk, by the walk's gate name and by a text not read run here, and read by mentionMayAssign (behaviour: AS8-root-gate-scan,
-    // red where the scan is off; AS8-root-gate-walk-ansic, red where the walk's name does not set it; AS8-root-gate-unheld-callback, red where a text not
+    // red where the scan is off; AS8-root-gate-walk-var, red where the walk's name does not set it; AS8-root-gate-unheld-callback, red where a text not
     // read run here does not)
-    assert.ok(hook.includes('const builtinsOff = { seen: mentionsBuiltinGate(command) };') && hook.includes('if (BUILTIN_GATES.has(name)) gateBuiltins();') && hook.includes("    gateBuiltins();   // THE SHELL'S GATE: a text not read, run here, may turn a builtin on or off") && hook.includes('const gateBuiltins = () => { builtinsOff.seen = true; };'), "THE SHELL'S GATE: set for the whole command by the scan before the walk, by the walk's gate name and by a text not read run here, and read by THE ASSIGNING HEAD (behaviour: AS8-root-gate-scan, AS8-root-gate-walk-ansic, AS8-root-gate-unheld-callback)");
+    assert.ok(hook.includes('const builtinsOff = { seen: mentionsBuiltinGate(command) };') && hook.includes('if (BUILTIN_GATES.has(name)) gateBuiltins();') && hook.includes("    gateBuiltins();   // THE SHELL'S GATE: a text not read, run here, may turn a builtin on or off") && hook.includes('const gateBuiltins = () => { builtinsOff.seen = true; };'), "THE SHELL'S GATE: set for the whole command by the scan before the walk, by the walk's gate name and by a text not read run here, and read by THE ASSIGNING HEAD (behaviour: AS8-root-gate-scan, AS8-root-gate-walk-var, AS8-root-gate-unheld-callback)");
     assert.ok(hook.includes('r.unknown.held = held;') && hook.includes('if (nm.length > 0 && spec.refuse && spec.refuse.long.some((x) => x.startsWith(nm))) return opaque(`${name} --${nm}`, value);') && hook.includes('if (u.why.held) return ') && hook.includes('if (u.why.piped) return `This command is blocked here: its \\`${u.why.wrapper}\\` wrapper carries the option ${u.why.option}, which I do not know, `'), 'a literal wrapper option is split by what the table holds and by whether the output reaches `|` (behaviour: AS3-option-abbrev, AS3-option-held-*, AS3-option-unheld-*; an abbreviation of a refused option takes the refusal of the option it abbreviates: AS3-option-refuse-abbrev-*, and the census over the table above)');
     assert.ok(hook.includes("const compare = u.how.includes(CONSTRUCT_HEADS['[['].via) ? 'Write the comparison with `expr`") && hook.includes('const inText = moved;'), 'the comparison names its one remedy, and the text\'s own move names the text remedy whatever an earlier construct did (behaviour: AS7-compare-notlit, AS6-script-eval-in-text-*)');
   } finally { process.env.HOME = savedHome; w.rm(); }
