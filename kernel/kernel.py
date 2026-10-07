@@ -37409,19 +37409,18 @@ def _task_outputs_for(reminders, path, index=None):
     task-notification, or nothing readable was found. `reminders` are the INNER XML (outer wrapper already
     peeled by _split_reminders), so re-wrap before parsing.
 
-    `index` is the build's id -> command map. build_session hands one dict to every call it makes, and the
-    first scan that answers with rows fills it, so a build reads the every-task scan once where it read it
-    once per task notification (each notification is its own user turn; one build of a large session read it
-    2,149 times, measured 2026-10-06). It answers what the search over a fresh scan answered: the first row
-    with an id wins (setdefault, as next() took the first match), and a missing id or a row without a command
-    reads ''. An empty answer is not kept, so the next reminder reads again, as the search did: a failed read
-    folds to an empty answer (fold_records keeps nothing then), and so does a transcript with no task rows.
-    The index holds commands, never rows, and lives only as long as the build. The difference from the
-    search: an answer that changes after the index is taken reached the build's later reminders under the
-    search, and here waits for the next build. That takes a change during the build: a record appended that a
-    later reminder needs (a live-tail notification whose launch reaches the transcript mid-build), the
-    transcript rewritten or its fold state replaced, or a later read failing (the search then read no
-    command). None (a direct caller) runs the search per reminder."""
+    `index` is the build's id -> command map. build_session hands one dict to every call it makes, and the first
+    scan that answers with rows fills it, so a build reads the every-task scan once where it read it once per task
+    notification (each notification is its own user turn: in one build of a large session this function read it
+    2,148 times, measured 2026-10-06). It answers what the search over a fresh scan answered: the first row with an
+    id wins (setdefault, as next() took the first match), and a missing id or a row without a command reads ''. An
+    empty answer is not kept, so the next reminder reads again, as the search did: a failed read folds to an empty
+    answer (fold_records keeps nothing then), and so does a transcript with no task rows. The index holds commands,
+    never rows, and lives only as long as the build. The difference from the search: an answer that changes after
+    the index is taken reached the build's later reminders under the search, and here waits for the next build.
+    That takes a change during the build: a record appended that a later reminder needs (a live-tail notification
+    whose launch reaches the transcript mid-build), the transcript rewritten or its fold state replaced, or a later
+    read failing (the search then read no command). None (a direct caller) runs the search per reminder."""
     out = {}
     for r in reminders:
         note = _parse_task_notification("<task-notification>%s</task-notification>" % r)

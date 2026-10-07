@@ -842,7 +842,7 @@ def task_note(tid, outfile=""):
 class TaskOutputsOneScanPerBuild(_Fold):
     """build_session joins each task notification to its launch command through ONE id -> command index per
     build, taken from the every-task scan at the build's first notification, where main ran that scan once per
-    notification (each notification is its own user turn; one build of a large session read it 2,149 times).
+    notification (each notification is its own user turn: 2,148 scans for one build of a large session).
     The payload must be what main's per-reminder search built: `build(main_path=True)` drops the build's index
     so every reminder takes that search, and the two whole payloads are compared, beside expected outputs
     written out from the fixture. Two scan counts per build: the every-task scans made inside
