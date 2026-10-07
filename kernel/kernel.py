@@ -55030,9 +55030,10 @@ def _msg_summaries():
     _parse-cached too, so an unchanged session costs nothing but the key's stats.
 
     The union is rebuilt as a NEW dict whenever a builder rescans any session or drops one that left
-    discovery, and nothing edits a published union. _postal_card_deps_memo keys its entry on the map object,
-    matched by identity, so a union refilled in place would pair an old entry's key with new content, and a
-    stale caption would stay in a chat signature's tail (tests/test_chat_fixed_cost_memos.py,
+    discovery, and nothing edits a published union. _postal_card_deps_memo keys a record's entry on the map
+    object, matched by identity, when the record has a message-id card (a record with none never fetches the
+    map and is not keyed on it), so a union refilled in place would pair such an entry's key with new content,
+    and a stale caption would stay in that tab's chat signature tail (tests/test_chat_fixed_cost_memos.py,
     ProducerIdentity)."""
     now = time.time()
     try:

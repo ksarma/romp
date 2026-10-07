@@ -1310,12 +1310,13 @@ class NameColorIndex(unittest.TestCase):
 class ProducerIdentity(unittest.TestCase):
     """The two producers whose objects the chat signature's memos key on by identity, pinned at the producer
     and through the composition. _names_scope_digest caches its digest per names snapshot object, and
-    _postal_card_deps_memo keys its entry on the caption map object, so _names_snapshot must return a new dict on
-    every call and _msg_summaries a new union on every change, and neither may edit an object it has returned.
-    Every returned object is held across several changes: a producer that alternated two buffers would pass a
-    two-call check yet hand a record that skipped a cycle its old object back. The union is the real
-    _msg_summaries over stubbed discovery, keys and scans; the snapshot is the real _names_snapshot over a
-    temporary registry written as the kernel writes it (_atomic_write)."""
+    _postal_card_deps_memo keys a record's entry on the caption map object when the record has a message-id card
+    (a record with none never fetches the map and is not keyed on it; this class's records carry one), so
+    _names_snapshot must return a new dict on every call and _msg_summaries a new union on every change, and
+    neither may edit an object it has returned. Every returned object is held across several changes: a producer
+    that alternated two buffers would pass a two-call check yet hand a record that skipped a cycle its old object
+    back. The union is the real _msg_summaries over stubbed discovery, keys and scans; the snapshot is the real
+    _names_snapshot over a temporary registry written as the kernel writes it (_atomic_write)."""
 
     def setUp(self):
         td = tempfile.TemporaryDirectory()
