@@ -52,7 +52,9 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 
 # Hermetic state BEFORE the loads (the tests/test_perf_gc_block.py preamble): the modules resolve their state root at
 # import, and only pytest runs conftest's floor. The root minted here is outside conftest's belt, so session hosts are
-# switched off in it as well.
+# switched off in it as well. No kernel environment name is written at module level (the census of module-level writers
+# in tests/test_hermetic_kernel_postal.py admits no new writer): ROMP_KERNEL_NO_OPEN is read by main alone, which this
+# module never runs, and with no ROMP_SERVE_TOKEN the load mints its token file under a temp state root.
 _ROOT = tempfile.mkdtemp()
 os.environ["XDG_STATE_HOME"] = _ROOT
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
@@ -61,8 +63,6 @@ with open(os.path.join(_ROOT, "romp", "session-hosts"), "w") as _fh:
     _fh.write("off")
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
-os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 _THRESHOLDS_BEFORE_LOAD = gc.get_threshold()
 km = load_source("romp_kernel_gc_threshold", os.path.join(BIN, "romp-kernel"))
 _THRESHOLDS_AFTER_LOAD = gc.get_threshold()
