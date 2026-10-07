@@ -69,7 +69,7 @@
   "return \"refs/heads/\" + branch_of(name)",
   "return (text[len(\"refs/heads/\"):] if text.startswith(\"refs/heads/\") else text) == branch_of(name)",
   "return remote_ref_sha(root, \"refs/heads/\" + MAIN)",
-  "# checkout --force --detach refs/heads/batch/<name> and git symbolic-ref HEAD refs/heads/batch/<name> in the batch"
+  "# exits 0, when no bisect is in progress) and git symbolic-ref HEAD refs/heads/batch/<name> in the batch worktree,"
  ],
  "scripts/pr-orphans.sh": [
   "elif git rev-parse --verify --quiet \"refs/heads/$MAIN\" >/dev/null; then"
@@ -204,7 +204,9 @@
   "never named the signal. Or, with the restore refused and no stop yet, at the git symbolic-ref -q HEAD that reads,",
   "restore, read = \"read-tree -m -u HEAD refs/heads/batch/b1\", \"symbolic-ref -q HEAD\"",
   "\"`git -C %s symbolic-ref HEAD refs/heads/batch/b1`.\\n\" % wt",
-  "symbolic-ref HEAD refs/heads/batch/b1, and applying the saved change again, puts the worktree back on batch/b1",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"HEAD\", cwd=wt), \"refs/heads/batch/b1\", \"on the branch\")",
+  "fx._git(\"symbolic-ref\", \"HEAD\", \"refs/heads/batch/b1\", cwd=wt)",
+  "refs/heads/batch/b1, git bisect reset (which exits 0 when no bisect is in progress), git symbolic-ref HEAD",
   "self.assertEqual(fx._git(\"symbolic-ref\", \"HEAD\", cwd=wt), \"refs/heads/batch/b1\", \"on the branch\")",
   "fx._git(\"symbolic-ref\", \"HEAD\", \"refs/heads/batch/b1\", cwd=wt)"
  ],

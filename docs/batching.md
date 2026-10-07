@@ -688,26 +688,43 @@ subject; `verify` refuses the branch otherwise.
    branch; in `verify`, the removal of the ledger check's temporary worktree)
    runs to its end: a
    SIGTERM, SIGHUP or Ctrl-C that lands inside one runs it again from its start, with later ones
-   ignored. When a stop lands during one of `bisect`'s cleanups, `bisect` still prints what it had
-   found first, the first bad commit's line or what stopped it, whether or not that cleanup then
-   finishes, and the tool exits 128 plus the signal's number. The cleanup
+   ignored. If two stops arrive together, before the tool has handled either, it acts on the
+   lower-numbered one (SIGHUP, then SIGINT, then SIGTERM), whichever was sent first, and Python
+   writes a traceback to stderr saying it ignored the other. When a stop lands during one
+   of `bisect`'s cleanups, `bisect` still prints what it had found first, the first bad commit's
+   line or what stopped it, whether or not that cleanup then finishes, and the tool exits 128 plus
+   the signal's number. If a stop lands after the cleanup, while `bisect` is printing the first bad
+   commit's line or composing the cleanup's error, the tool holds it until that text is printed and
+   then exits the same way. Until then a stop cannot interrupt a print that blocks (to a terminal
+   that has stopped taking output, for example); SIGKILL still ends the tool. The cleanup
    also runs for a stop during a step it undoes: one while `bisect` checks
    out the base or a commit it tests, or while its `git bisect start` runs, leaves the worktree on
-   the batch branch with no bisect in progress. When the worktree had no changes to tracked files before those steps, the
+   the batch branch with no bisect in progress, except in the one case below where the restore is
+   refused. When the worktree had no changes to tracked files before those steps, the
    cleanup's restore of the branch's tree is forced (and in `bisect`'s cleanup after its steps it
    runs before the `git bisect reset`), so the branch's tree is back even when the stop ended a
    checkout after it had written the other commit's files and index and before it moved HEAD; a
    worktree that had changes to tracked files gets the unforced restore, the two-way merge
-   `git checkout` makes, which keeps them. That merge also keeps what such a stop staged. With
-   changes to tracked files before those steps, a stop that ends one of those checkouts after it has
-   written the other commit's files and index, and before it has moved HEAD, leaves the worktree on
-   the batch branch at its tip with that commit's files staged beside your changes, which stay
-   unstaged, and the tool says its cleanup ran. The next `bisect` runs the command at the tip over
-   those files, so it refuses, saying the command passes at the tip, whenever the command passes on
-   them. To recover, save your changes (`git diff` shows them, unless you had staged some yourself),
-   run `git checkout --force --detach refs/heads/batch/<name>` and then
-   `git symbolic-ref HEAD refs/heads/batch/<name>` in the batch worktree, and apply your changes
-   again. The batch
+   `git checkout` makes, which keeps them. That merge also keeps what such a stop staged, and what
+   it leaves depends on which checkout the stop ended. For the two checkouts made from the tip, the
+   base's and that of the first commit `bisect` tests, the worktree ends on the batch branch at its
+   tip with that commit's whole tree staged beside your changes, which stay unstaged, and the tool
+   says its cleanup ran. A later checkout starts from the commit tested just before it, and the
+   restore merges from that commit. If the tip matches one of the two tested commits on each file
+   where they differ, the worktree again ends on the batch branch at its tip and the tool says its
+   cleanup ran, but only the files where the tip matches the earlier commit are staged, at the
+   stopped commit's versions. If the tip matches neither commit on one of those files,
+   `git read-tree` refuses the restore: the tool says its cleanup did not finish, and the
+   worktree is left detached at the earlier commit, with the bisect in progress and the stopped
+   commit's tree staged. The next `bisect` then refuses. With files staged on the branch, it runs
+   the command at the tip over them, and says the command passes at the tip whenever the command
+   passes on them; with the worktree left detached, it says the worktree is not checked out at the
+   batch branch. To recover in any of these cases, save your changes (`git diff` shows them, unless
+   you had staged some yourself), then in the batch worktree run
+   `git checkout --force --detach refs/heads/batch/<name>`, `git bisect reset` (when no bisect is
+   in progress it says so and exits 0) and `git symbolic-ref HEAD refs/heads/batch/<name>`, and
+   apply your changes again. The commands the tool prints when the restore is refused deal only with
+   the files `git` names, so they can leave the stopped commit's versions of other files staged. The batch
    worktree is `scripts/batch.py`'s own, and that cleanup runs whenever `bisect` ends, stopped or
    not: when the worktree had no changes to tracked files before those steps, the forced restore
    discards every change the test command made to tracked files there, at the base and at each

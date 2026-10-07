@@ -414,7 +414,8 @@
   "with self.env(SHIM_LOG=log, SHIM_SAYS=self.said, SHIM_ENDS=\"128\", SHIM_ON=\"for-each-ref\"), \\",
   "worktree add of the batch branch at origin/main. Each meets the memory limit batch.py sets on every git call,",
   "{\"n\": 11, \"reason\": \"conflicts with origin/main in y.py\", \"files\": [\"y.py\"], \"with\": [],",
-  "base = fx.dev_git(\"merge-base\", \"origin/main\", tip)"
+  "base = fx.dev_git(\"merge-base\", \"origin/main\", tip)",
+  "return tip, merges, fx.dev_git(\"merge-base\", \"origin/main\", tip)"
  ],
  "tests/test_ci_secret_scan.py": [
   "\"lacks --all, --diff-merges=first-parent, --text\"),",

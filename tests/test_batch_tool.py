@@ -3895,15 +3895,28 @@ exec "$PLANT_REAL_GIT" "$@"
     # with its group, as a stop that lands as a cleanup git starts. A later call with the same argv runs the real git.
     # With STOP_PASS set, the first such call takes that file instead and runs the real git, so the second is the one
     # stopped (the forced restore of the branch's tree and the git symbolic-ref that points HEAD at the branch, which
-    # bisect's two cleanups both run).
+    # bisect's two cleanups both run). With STOP_AGAIN set, the next call with that argv after the stopped one (the
+    # step's run again) takes that file, sends batch.py the signal STOP_AGAIN_SIG names (TERM, INT or HUP), a second
+    # stop, and then runs the real git. With STOP_PAIR set, the stopped call sends STOP_SIG and then the signal
+    # STOP_PAIR names while batch.py is stopped (SIGSTOP, then SIGCONT), so the two arrive together, before batch.py
+    # has handled either. A case that sets none of these gets the wrapper as it was.
     STOP_AT_GIT = r"""#!/bin/sh
 case " $* " in
   *"$STOP_ON"*) if [ -n "$STOP_PASS" ] && mv "$STOP_PASS" "$STOP_PASS.taken" 2>/dev/null; then
       :
     elif mv "$STOP_ARM" "$STOP_ARM.taken" 2>/dev/null; then
-      kill -"$STOP_SIG" $PPID
+      if [ -n "$STOP_PAIR" ]; then
+        kill -STOP $PPID
+        kill -"$STOP_SIG" $PPID
+        kill -"$STOP_PAIR" $PPID
+        kill -CONT $PPID
+      else
+        kill -"$STOP_SIG" $PPID
+      fi
       sleep 30
       exit 1
+    elif [ -n "$STOP_AGAIN" ] && mv "$STOP_AGAIN" "$STOP_AGAIN.taken" 2>/dev/null; then
+      kill -"$STOP_AGAIN_SIG" $PPID
     fi ;;
 esac
 exec "$PLANT_REAL_GIT" "$@"
@@ -3999,6 +4012,67 @@ exec "$PLANT_REAL_GIT" "$@"
         self.assertEqual(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "BISECT_START")),
                          bisecting, "the bisect state, as said")
 
+    def test_a_second_stop_during_bisects_cleanup_is_ignored_so_the_cleanup_finishes_and_the_first_stop_wins(self):
+        """The rule bisect_found and _read_again_on_stop rely on: the first stop signal wins, and _on_stop ignores every
+        one after it (the verify pass at the build of the NEW-1 fix, its signals-V-1). The command fails at the base;
+        one stop signal reaches batch.py as the forced restore of the cleanup after that run starts (STOP_AT_GIT, which
+        holds that git until batch.py ends it), and a second, another signal, as the restore's run again starts
+        (STOP_AGAIN, which then runs the real git). batch.py prints why the run at the base stopped, exits 128 plus the
+        first signal's number saying the cleanup ran, and the worktree is on batch/b1 at the tip with no bisect in
+        progress. Each of the three signals is the second once, so a handler that ignores only some of them is red too.
+        With the stop signals left to _on_stop after the first (the mutant m5), the second came out of the run again,
+        the step that points HEAD at the branch never ran, and batch.py exited 128 plus the second signal's number
+        saying the cleanup ran over a worktree left detached at the base."""
+        fails_at_the_base = "if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; exit 1"
+        restore = "read-tree --reset -u refs/heads/batch/b1"
+        cases = ((signal.SIGTERM, signal.SIGINT), (signal.SIGINT, signal.SIGHUP), (signal.SIGHUP, signal.SIGTERM))
+        for n, (first, again) in enumerate(cases):
+            with self.subTest(first=first, again=again):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, _merge_101 = self.bisect_chain()
+                wt = fx.wt("b1")
+                base = fx._git("merge-base", ORIGIN_MAIN_REF, tip, cwd=wt)
+                env, met = self.stop_at_git(restore, first)
+                again_arm = os.path.join(fx.tmp, "stop-at-git", "again")
+                open(again_arm, "w").close()
+                env.update(STOP_AGAIN=again_arm, STOP_AGAIN_SIG=signal.Signals(again).name[3:])
+                rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", fails_at_the_base, env=env,
+                                            driver=BATCH_TERMINAL_DRIVER)
+                self.assertTrue(met(), "premise: the first stop landed as `git %s` started" % restore)
+                self.assertTrue(os.path.exists(again_arm + ".taken"),
+                                "premise: the second stop was sent as the restore's run again started")
+                self.assertEqual((rc, out), (128 + first, ""), out + err)
+                self.assertEqual(err, "batch: the command fails at the base %s (%s) too; no member made it fail. Check "
+                                      "the command and the environment before blaming a member\n"
+                                 % (base[:10], batch.remote_main()) + self.STOPPED_RAN % first)
+                self.assert_reset_at_the_tip(tip)
+
+    def test_two_stops_that_arrive_together_stop_bisect_as_the_lower_numbered_one(self):
+        """The case docs/batching.md names beside "later ones ignored" (the verify pass at the build of the NEW-1 fix,
+        its signals-V-5): SIGTERM and SIGINT reach batch.py together, before it has handled either (STOP_AT_GIT with
+        STOP_PAIR, as the restore of the cleanup after bisect's steps starts). Python runs the handlers of signals that
+        are both pending in the order of their numbers, so _on_stop runs for SIGINT (2) first, whichever was sent
+        first, and ignores SIGTERM after it: batch.py prints the first bad commit's line, its cleanup runs, it exits 128
+        plus 2 saying the cleanup ran, and Python writes to stderr that it ignored signal 15. A pin of what happens,
+        not a rule batch.py chose: the order of sending cannot be read once both are pending."""
+        for n, (first, then) in enumerate(((signal.SIGTERM, signal.SIGINT), (signal.SIGINT, signal.SIGTERM))):
+            with self.subTest(first=first, then=then):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                tip, merge_101 = self.bisect_chain()
+                env, met = self.stop_at_git("read-tree --reset -u refs/heads/batch/b1", first, second=True)
+                env["STOP_PAIR"] = signal.Signals(then).name[3:]
+                rc, out, err = self.bisect_with("exit 1", env=env, driver=BATCH_TERMINAL_DRIVER)
+                self.assertTrue(met(), "premise: the two stops were sent as the restore started")
+                self.assertEqual((rc, out), (128 + signal.SIGINT, self.FIRST_BAD_101 % merge_101[:10]), out + err)
+                self.assertIn("OSError: Signal 15 ignored due to race condition\n", err)
+                self.assertTrue(err.endswith("\n" + self.STOPPED_RAN % signal.SIGINT), err)
+                self.assert_reset_at_the_tip(tip)
+
     def test_a_stop_during_bisects_cleanup_prints_why_bisect_stopped_first_and_exits_as_stopped(self):
         """The closing check of PR 959, its NEW-1, where the cleanup then finishes: the run at the base or the steps
         stopped on a Fail, or on another exception, and SIGTERM, or SIGINT as Ctrl-C sends it, reaches batch.py as a git
@@ -4010,8 +4084,9 @@ exec "$PLANT_REAL_GIT" "$@"
         command exits 139 at #101's merge (the stop at the restore of the cleanup after the steps, its git bisect reset
         or its git symbolic-ref); and the command, a script that removes itself in its run at the tip, is gone at the
         base, so starting it there raises FileNotFoundError, which is printed as Python prints it, its traceback, before
-        the stop's line. Red before this change: the stop came out of the cleanup in place of the reason, and batch.py
-        printed the stop's line alone."""
+        the stop's line (that case runs batch.py with Python's colour off, so the traceback is plain text whatever the
+        test run inherits). Red before this change: the stop came out of the cleanup in place of the reason, and
+        batch.py printed the stop's line alone."""
         self.maxDiff = None
         fails_at_the_base = "if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; exit 1"
         exits_139 = self.BISECT_CMD % "exit 139"
@@ -4038,6 +4113,10 @@ exec "$PLANT_REAL_GIT" "$@"
                         f.write('#!/bin/sh\nrm -f "$0"\nexit 1\n')
                     os.chmod(script, 0o755)
                     argv = [script]
+                    # Python 3.13 and later colour the traceback sys.excepthook prints under an inherited FORCE_COLOR or
+                    # PYTHON_COLORS=1, which the matches below would then miss; PYTHON_COLORS=0 outranks both (the
+                    # verify pass at the build of the NEW-1 fix, its tests-docs-V-TD-2)
+                    env = dict(env, PYTHON_COLORS="0")
                 else:
                     argv = ["sh", "-c", cmd]
                 rc, out, err = self.bounded("bisect", "b1", "--", *argv, env=env, driver=BATCH_TERMINAL_DRIVER)
@@ -4186,6 +4265,155 @@ exec "$PLANT_REAL_GIT" "$@"
                                    "error: Entry 'kernel/kernel.py' not uptodate. Cannot merge.\n"
                                  + self.left_unfinished(merge_102, True))
                 self.assert_left_detached(merge_102, True)
+
+    # BATCH_TERMINAL_DRIVER with one stop hook, chosen by HOOK, which sends batch.py SIGTERM once and records in the
+    # file HOOK_LOG that it did: "after_line", inside a print, once stdout has been written the newline that ends a
+    # "first bad:" line; "before_line", as batch.py calls print for a "first bad:" line, before print runs; "fail_init",
+    # as a Fail whose message holds HOOK_MARK is built, before it exists; "hold", as the function HOOK_MARK names calls
+    # _hold_stops, before the hold begins. Each stands in for a stop that arrives at that point: Python runs the
+    # signal's handler at its next check for signals, which the hook's own calls reach first.
+    STOP_HOOK_DRIVER = BATCH_TERMINAL_DRIVER.replace("sys.exit(mod.main(argv))\n", """import builtins, io, os
+hook, mark, sent = os.environ["HOOK"], os.environ.get("HOOK_MARK", ""), []
+def fire():
+    if not sent:
+        sent.append(1)
+        with open(os.environ["HOOK_LOG"], "a") as f:
+            f.write("fired\\n")
+        os.kill(os.getpid(), signal.SIGTERM)
+if hook == "after_line":
+    class AfterLine(io.TextIOBase):
+        def __init__(self, inner):
+            self.inner, self.seen = inner, False
+        def write(self, s):
+            n = self.inner.write(s)
+            self.seen = self.seen or "first bad:" in s
+            if self.seen and s.endswith("\\n"):
+                self.seen = False
+                fire()
+            return n
+        def flush(self):
+            self.inner.flush()
+        def writable(self):
+            return True
+    sys.stdout = AfterLine(sys.stdout)
+elif hook == "before_line":
+    def hooked_print(*a, **k):
+        if a and str(a[0]).startswith("first bad:"):
+            fire()
+        return builtins.print(*a, **k)
+    mod.print = hooked_print
+elif hook == "fail_init":
+    fail_init = mod.Fail.__init__
+    def hooked_init(self, msg, code=1):
+        if mark in str(msg):
+            fire()
+        fail_init(self, msg, code)
+    mod.Fail.__init__ = hooked_init
+elif hook == "hold":
+    hold = mod._hold_stops
+    def hooked_hold():
+        if sys._getframe(1).f_code.co_name == mark:
+            fire()
+        hold()
+    mod._hold_stops = hooked_hold
+sys.exit(mod.main(argv))
+""")
+    assert STOP_HOOK_DRIVER != BATCH_TERMINAL_DRIVER
+
+    def hooked(self, hook, mark, cmd, env=None):
+        """bisect b1 -- sh -c `cmd` through STOP_HOOK_DRIVER with `hook` and `mark`, in `env` (default the fixture's):
+        (rc, stdout, stderr, whether the hook fired)."""
+        fx = self.fx
+        log = os.path.join(fx.tmp, "stop-hook.log")
+        rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", cmd, driver=self.STOP_HOOK_DRIVER,
+                                    env=dict(env or fx.env, HOOK=hook, HOOK_MARK=mark, HOOK_LOG=log))
+        return rc, out, err, os.path.exists(log)
+
+    def test_a_stop_after_bisects_cleanup_failed_waits_for_its_text_and_exits_as_stopped(self):
+        """The verify pass at the build of the NEW-1 fix, its signals-V-2: with a change to notes.txt before bisect,
+        bisect's cleanup after the steps (or after the run at the base) is refused by its unforced restore, since the
+        command appends to postal/postal_service.py, and no stop arrives during it. SIGTERM then reaches batch.py after
+        bisect_unfinished has read the state the cleanup left (STOP_HOOK_DRIVER): in the print of the first bad commit's
+        line, after the line; just before that print; as bisect_unfinished begins to hold the stop signals; as the Fail
+        naming the first bad commit is built; or, when the command fails at the base or a step's command exits 139, as
+        the Fail with the cleanup's text is built. The stop waits until the line is printed and the Fail built, and
+        batch.py exits 128 plus the signal's number: the first bad commit's line printed once, or why the run or the
+        steps stopped first, then that the cleanup did not finish, read-tree's error, the state the batch worktree is
+        left in (detached, at #101's merge with the bisect in progress, or at the base with none) and the commands that
+        put it back. Red before this change in every case but the hold's, where batch.py said its cleanup ran and never
+        printed the cleanup's error, nor, for a stop just before the print, the first bad commit's line, nor, for the
+        Fails with the cleanup's text, why bisect stopped (the hold's case is red there on its premise: no hold began).
+        Catching the stop around that code instead, with no hold (the finding's first proposal), is red in the cases
+        just before the print and as the Fails with the cleanup's text are built, and in the hold's on its premise."""
+        self.maxDiff = None
+        found = self.BISECT_CMD % "echo '# mid' >> postal/postal_service.py; exit 1"
+        exits_139 = self.BISECT_CMD % "echo '# mid' >> postal/postal_service.py; exit 139"
+        fails_at_the_base = ("if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; "
+                             "echo '# base' >> postal/postal_service.py; exit 1")
+        cleanup = "Then bisect's cleanup did not finish"
+        cases = (("in the line's print, after the line", found, "after_line", ""),
+                 ("just before the line's print", found, "before_line", ""),
+                 ("as the hold begins", found, "hold", "bisect_unfinished"),
+                 ("as the Fail naming the first bad commit is built", found, "fail_init", "bisect named the first bad"),
+                 ("the command fails at the base", fails_at_the_base, "fail_init", cleanup),
+                 ("a step's command exits 139", exits_139, "fail_init", cleanup))
+        for n, (case, cmd, hook, mark) in enumerate(cases):
+            with self.subTest(case=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, merge_101 = self.bisect_chain()
+                wt = fx.wt("b1")
+                base = fx._git("merge-base", ORIGIN_MAIN_REF, tip, cwd=wt)
+                with open(os.path.join(wt, "notes.txt"), "a") as f:
+                    f.write("a change the cleanup keeps\n")
+                rc, out, err, fired = self.hooked(hook, mark, cmd)
+                self.assertTrue(fired, "premise: the stop was sent %s" % case)
+                stopped = self.STOPPED_UNFINISHED % signal.SIGTERM + self.REFUSED_POSTAL
+                if cmd == found:
+                    self.assertEqual((rc, out), (128 + signal.SIGTERM, self.FIRST_BAD_101 % merge_101[:10]), out + err)
+                    self.assertEqual(err, stopped + self.left_unfinished(merge_101, True))
+                    self.assert_left_detached(merge_101, True)
+                elif cmd == exits_139:
+                    self.assertEqual((rc, out), (128 + signal.SIGTERM, ""), out + err)
+                    self.assertEqual(err, "batch: bisect stopped at %s: the command exited 139, and git bisect run "
+                                          "stops on an exit of 128 or more, or a signal\n" % merge_101[:10]
+                                     + stopped + self.left_unfinished(merge_101, True))
+                    self.assert_left_detached(merge_101, True)
+                else:
+                    self.assertEqual((rc, out), (128 + signal.SIGTERM, ""), out + err)
+                    self.assertEqual(err, "batch: the command fails at the base %s (%s) too; no member made it fail. "
+                                          "Check the command and the environment before blaming a member\n"
+                                     % (base[:10], batch.remote_main()) + stopped + self.left_unfinished(base, False))
+                    self.assert_left_detached(base, False)
+
+    def test_a_stop_after_bisects_cleanup_ran_waits_for_the_first_bad_commits_line(self):
+        """The verify pass at the build of the NEW-1 fix, its signals-V-3: bisect names #101 and its cleanup after the
+        steps finishes, and SIGTERM then reaches batch.py before the first bad commit's line is printed
+        (STOP_HOOK_DRIVER): just before that print, or as cmd_bisect begins to hold the stop signals, inside the try
+        around the cleanup. Either way batch.py prints the line once and exits 128 plus the signal's number saying the
+        cleanup ran, with the worktree on batch/b1 at the tip, the branch's tree in its index and files, and no bisect
+        in progress. Red before this change: the stop just before the print came out of it in place of the line, so
+        stdout was empty (Python itself checks for signals as print converts its arguments to text, before it writes),
+        and no hold began (the second case red on its premise). A hold begun after that try is red in the second case,
+        where the stop is raised outside the handler that prints the line."""
+        self.maxDiff = None
+        for n, (case, hook, mark) in enumerate((("just before the line's print", "before_line", ""),
+                                                ("as the hold begins", "hold", "cmd_bisect"))):
+            with self.subTest(case=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, merge_101 = self.bisect_chain()
+                rc, out, err, fired = self.hooked(hook, mark, self.BISECT_CMD % "exit 1")
+                self.assertTrue(fired, "premise: the stop was sent %s" % case)
+                self.assertEqual((rc, out, err), (128 + signal.SIGTERM, self.FIRST_BAD_101 % merge_101[:10],
+                                                  self.STOPPED_RAN % signal.SIGTERM))
+                self.assert_reset_at_the_tip(tip)
+                self.assertEqual(fx._git("status", "--porcelain", "--untracked-files=no", cwd=fx.wt("b1")), "",
+                                 "the branch's tree is back in the index and the files")
 
     # A post-checkout hook for the bisect setup pins, inert unless SETUP_AT is set: the first checkout whose new HEAD is
     # SETUP_AT (it takes the file SETUP_ARM, so no later one does) waits on the FIFO SETUP_FIFO, which only the test opens
@@ -4342,10 +4570,10 @@ exit 0
         bisect runs the command at the tip over those files, so it refuses, saying the command passes at the tip, when
         the command passes on them: at the checkout of the base, the base's files, with the command failing at #101's
         merge; at the checkout of the midpoint, #101's merge's files, with the command passing there, so #102 is the
-        member at fault. Saving the change (git diff), then git checkout --force --detach refs/heads/batch/b1 and git
-        symbolic-ref HEAD refs/heads/batch/b1, and applying the saved change again, puts the worktree back on batch/b1
-        with the tip's tree and that change, and bisect then names the member. Measured the same with git 2.43.0 and git
-        2.55.0, and over batch.py before and after the closing check of PR 959's NEW-1 was fixed (2026-10-07)."""
+        member at fault. The recovery the docs give (recover_as_the_docs_say) puts the worktree back on batch/b1 with
+        the tip's tree and that change, and bisect then names the member. Measured the same with git 2.43.0 and git
+        2.55.0, and over batch.py before and after the closing check of PR 959's NEW-1 was fixed (2026-10-07). These are
+        the two checkouts made from the tip; the pin below holds a later one."""
         n = 0
         for step, middle, member in (("the checkout of the base", "exit 1", 101),
                                      ("the checkout of the midpoint", "exit 0", 102)):
@@ -4375,12 +4603,146 @@ exit 0
                 rc, out, err = self.bisect_with(middle)
                 self.assertEqual((rc, out, err), (1, "", "batch: the command passes at the batch tip %s; nothing to "
                                                          "bisect (does it run the failing test?)\n" % tip[:10]))
-                saved = fx._git("diff", cwd=wt) + "\n"
-                fx._git("checkout", "--quiet", "--force", "--detach", "refs/heads/batch/b1", cwd=wt)
-                fx._git("symbolic-ref", "HEAD", "refs/heads/batch/b1", cwd=wt)
-                fx._git("apply", cwd=wt, input=saved)
-                self.assertEqual(fx._git("status", "--porcelain", "--untracked-files=no", cwd=wt), "M notes.txt")
+                self.recover_as_the_docs_say()
                 rc, out, err = self.bisect_with(middle)
+                self.assertEqual((rc, err), (0, ""), out + err)
+                self.assertIn("first bad: #%d " % member, out)
+                self.assert_reset_at_the_tip(tip)
+
+    def recover_as_the_docs_say(self):
+        """The recovery docs/batching.md and cmd_bisect's comment give for the batch worktree after a stop in one of
+        bisect's checkouts with changes made before bisect: save the changes (git diff), git checkout --force --detach
+        refs/heads/batch/b1, git bisect reset (which exits 0 when no bisect is in progress), git symbolic-ref HEAD
+        refs/heads/batch/b1, and apply the changes again. The worktree is then on batch/b1 with the tip's tree and the
+        change to notes.txt alone."""
+        fx = self.fx
+        wt = fx.wt("b1")
+        saved = fx._git("diff", cwd=wt) + "\n"
+        fx._git("checkout", "--quiet", "--force", "--detach", "refs/heads/batch/b1", cwd=wt)
+        fx._git("bisect", "reset", cwd=wt)
+        fx._git("symbolic-ref", "HEAD", "refs/heads/batch/b1", cwd=wt)
+        fx._git("apply", cwd=wt, input=saved)
+        self.assertEqual(fx._git("status", "--porcelain", "--untracked-files=no", cwd=wt), "M notes.txt")
+        self.assertFalse(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "BISECT_START")),
+                         "no bisect in progress")
+
+    def four_members(self, extra=False):
+        """A chain of four members planned and assembled as batch b1: #101 sets kernel/kernel.py to VERSION = 2, #102
+        makes postal/postal_service.py return 2, #103 adds x.txt holding 1 and #104 makes it 2; with `extra`, #103 also
+        sets kernel/kernel.py to VERSION = 3 and #104 sets it back to 2. Returns (the tip, {member: its merge}, the
+        base)."""
+        fx = self.fx
+        fx.branch("a", {"kernel/kernel.py": "VERSION = 2\n"})
+        fx.branch("b", {"postal/postal_service.py": "def send():\n    return 2\n"}, base="a")
+        fx.branch("c", dict({"x.txt": "1\n"}, **({"kernel/kernel.py": "VERSION = 3\n"} if extra else {})), base="b")
+        fx.branch("d", dict({"x.txt": "2\n"}, **({"kernel/kernel.py": "VERSION = 2\n"} if extra else {})), base="c")
+        fx.pr(101, "a", title="kernel: bump the version", labels=["fix"], body="Body.\n\n" + TRAILER)
+        fx.pr(102, "b", base="a", title="postal: send two", labels=["feature"], body=TRAILER)
+        fx.pr(103, "c", base="b", title="x: add one", labels=["feature"], body=TRAILER)
+        fx.pr(104, "d", base="c", title="x: make it two", labels=["feature"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        tip = fx.dev_git("rev-parse", "batch/b1")
+        merges = {e["n"]: e["merge"] for e in fx.state("b1")["assembly"]["merged"]}
+        return tip, merges, fx.dev_git("merge-base", "origin/main", tip)
+
+    def test_with_prior_changes_a_stop_in_a_later_checkout_stages_some_files_or_leaves_the_worktree_detached(self):
+        """The residual docs/batching.md and cmd_bisect's comment disclose for a checkout bisect makes after the first
+        commit it tests (the verify pass at the build of the NEW-1 fix, its tests-docs-V-TD-1), over four_members's
+        chain, with a line added to notes.txt before bisect, so the cleanup's restore is the unforced two-way merge.
+        bisect checks out the tip's first-parent ancestors in this order: the base, #102's merge, then #101's merge
+        when the command passes at #102's (the command fails where postal/postal_service.py returns 2) or #103's when
+        it fails there (the command fails where x.txt holds 2). SIGTERM ends that second checkout after it has written
+        the commit's files and index and before it has moved HEAD (WINDOW_HOOK; the premise, read while the hook waits:
+        HEAD at #102's merge, the index that commit's tree). That checkout starts from #102's merge, so the restore
+        merges from there.
+        - At #101's merge: the two commits hold only postal/postal_service.py differently, and the tip holds it as
+          #102's does. batch.py says its cleanup ran, and the worktree is on batch/b1 at the tip with #101's version of
+          that file staged, and only it: the staged tree is not #101's merge's (x.txt is the tip's). The next bisect
+          refuses, saying the command passes at the tip.
+        - At #103's merge: the two commits hold only x.txt differently (#102's has none), and the tip holds it as
+          neither does, so git read-tree refuses the restore: batch.py says its cleanup did not finish, with the
+          worktree left detached at #102's merge, the bisect in progress and #103's tree staged. The next bisect
+          refuses, saying the worktree is not checked out at batch/b1.
+        - At #103's merge, with four_members's extra change: the commands batch.py prints there, followed after
+          discarding the one change git names (x.txt), put the worktree back on batch/b1 but leave #103's
+          kernel/kernel.py staged, and the next bisect fails at its checkout of the base.
+        In each case the recovery the docs give (recover_as_the_docs_say) puts the worktree back, and bisect then names
+        the member at fault. Measured the same with git 2.43.0 and git 2.55.0 (2026-10-07). Before this change the docs
+        said every such stop left the worktree on the branch at the tip with the stopped commit's whole tree staged."""
+        self.maxDiff = None
+        fails_on_postal = "if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; exit 0"
+        fails_on_x = "if grep -q 2 x.txt 2>/dev/null; then exit 1; fi; exit 0"
+        cases = (("at #101's merge", fails_on_postal, 101, 102, False),
+                 ("at #103's merge", fails_on_x, 103, 104, False),
+                 ("at #103's merge, then the printed commands", fails_on_x, 103, 104, True))
+        for n, (case, cmd, stopped_at, member, extra) in enumerate(cases):
+            with self.subTest(case=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, merges, base = self.four_members(extra)
+                wt = fx.wt("b1")
+                other, earlier = merges[stopped_at], merges[102]
+                with open(os.path.join(wt, "notes.txt"), "a") as f:
+                    f.write("a change made before bisect\n")
+                env, taken = self.window_hook(other)
+                seen = {}
+
+                def ready():
+                    # read once, while the hook waits: plumbing only, which writes neither the index nor a ref
+                    if not seen and os.path.exists(taken):
+                        seen.update(head=fx._git("rev-parse", "HEAD", cwd=wt),
+                                    index=fx._git("diff-index", "--cached", "--name-only", other, cwd=wt))
+                    return bool(seen)
+                rc, out, err = self.stop_when(ready, "bisect", "b1", "--", "sh", "-c", cmd, env=env,
+                                              driver=BATCH_TERMINAL_DRIVER)
+                self.assertEqual(seen, {"head": earlier, "index": ""},
+                                 "premise: the checkout from #102's merge had written the other commit's tree and not "
+                                 "moved HEAD")
+                self.assertEqual(fx._git("diff", "--name-only", cwd=wt), "notes.txt",
+                                 "the change made before bisect, unstaged")
+                if stopped_at == 101:
+                    self.assertEqual((rc, out, err), (128 + signal.SIGTERM, "", self.STOPPED_RAN % signal.SIGTERM))
+                    self.assertEqual(fx._git("symbolic-ref", "HEAD", cwd=wt), "refs/heads/batch/b1", "on the branch")
+                    self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), tip, "at the tip")
+                    self.assertEqual(fx._git("diff", "--cached", "--name-only", cwd=wt), "postal/postal_service.py",
+                                     "one file staged")
+                    self.assertEqual(fx._git("diff", "--cached", "--name-only", other, "--", "postal/postal_service.py",
+                                             cwd=wt), "", "at #101's merge's version")
+                    self.assertEqual(fx._git("diff", "--cached", "--name-only", other, cwd=wt), "x.txt",
+                                     "the staged tree is not #101's merge's")
+                    rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", cmd)
+                    self.assertEqual((rc, out, err), (1, "", "batch: the command passes at the batch tip %s; nothing "
+                                                             "to bisect (does it run the failing test?)\n" % tip[:10]))
+                else:
+                    self.assertEqual((rc, out), (128 + signal.SIGTERM, ""), out + err)
+                    self.assertEqual(err, self.STOPPED_UNFINISHED % signal.SIGTERM
+                                     + "git read-tree -m -u HEAD refs/heads/batch/b1 failed (128):\n"
+                                       "error: Entry 'x.txt' would be overwritten by merge. Cannot merge.\n"
+                                     + self.left_unfinished(earlier, True))
+                    self.assert_left_detached(earlier, True)
+                    self.assertEqual(fx._git("diff", "--cached", "--name-only", other, cwd=wt), "",
+                                     "#103's merge's tree staged")
+                    rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", cmd)
+                    self.assertEqual((rc, out, err), (1, "", "batch: %s is not checked out at batch/b1 (HEAD is %s)\n"
+                                                      % (wt, earlier[:10])))
+                if extra:
+                    fx._git("rm", "--cached", "--quiet", "x.txt", cwd=wt)
+                    os.remove(os.path.join(wt, "x.txt"))
+                    fx._git("checkout", "--quiet", "--detach", "refs/heads/batch/b1", cwd=wt)
+                    fx._git("bisect", "reset", cwd=wt)
+                    fx._git("symbolic-ref", "HEAD", "refs/heads/batch/b1", cwd=wt)
+                    self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), tip, "at the tip")
+                    self.assertEqual(fx._git("diff", "--cached", "--name-only", cwd=wt), "kernel/kernel.py",
+                                     "#103's kernel/kernel.py still staged")
+                    rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", cmd)
+                    self.assertEqual((rc, out), (1, ""), out + err)
+                    self.assertTrue(err.startswith("batch: git checkout --quiet --detach %s failed (1):\n" % base), err)
+                    self.assertIn("\n\tkernel/kernel.py\n", err)
+                self.recover_as_the_docs_say()
+                rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", cmd)
                 self.assertEqual((rc, err), (0, ""), out + err)
                 self.assertIn("first bad: #%d " % member, out)
                 self.assert_reset_at_the_tip(tip)
