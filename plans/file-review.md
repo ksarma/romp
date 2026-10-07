@@ -5236,12 +5236,20 @@ document stands on its own, each with the reasoning it was given.
     families: the DEFINE/CHANGE family, whose own option forms act on a function, alias, builtin or hash entry (autoload,
     functions, typeset, declare, readonly, enable, disable, alias, unalias, hash, rehash, unhash, unfunction, zmodload;
     NAME_RUN_DEFINE); and the RUN-TEXT family, which runs a text, a command or a function in this shell that may itself
-    define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle, zstyle, zregexparse;
-    NAME_RUN_TEXT), which includes every head that could define a function the walk did not see. zregexparse is a RUN-TEXT
-    word whose code is an ARGUMENT, not a text operand: zsh's zregexparse runs each `-guard` and `:action` component of its
-    argument list as shell code while it parses, so a guard can define a reader g that sets PATH and lets a copied cp through
-    (fork PR 975's round 2, the name-run axis takes words that run code arguments; before this it was classified a
-    not-a-changer, fork main refusing the write while zsh wrote). The changer is caught plain, quoted
+    define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle, zstyle, zregexparse,
+    mapfile, readarray; NAME_RUN_TEXT), meant to hold every head that could define a function the walk did not see; it holds
+    each such head found so far, and the census below samples for one it lacks without proving there is none.
+    zregexparse is a RUN-TEXT word whose code is an ARGUMENT, not a text operand: zsh's zregexparse runs each `-guard` and
+    `:action` component of its argument list as shell code while it parses, so a guard can define a reader g that sets PATH
+    and lets a copied cp through (fork PR 975's round 2, the name-run axis takes words that run code arguments; before this
+    it was classified a not-a-changer, fork main refusing the write while zsh wrote). mapfile and readarray, bash's one
+    builtin under two names, are RUN-TEXT words of the same kind: bash runs the `-C` callback as a command line in this
+    shell once per `-c` count of lines read, with the index and the line appended as words, so a `;`-terminated callback can
+    define a function (the checker's finding on that pass, tg-k45: both were classified not-a-changer, and the code-argument
+    shapes then in the census could not reach a callback that fires only once a line is read). On the axis they close no
+    write fork main lets through (the callback road is a residual fork main shares, below), and they cost on the restricted
+    side: a plain mapfile beside a mention of PATH and a bare name after a copy now takes fork main's refusal
+    (AS8-cost-mapfile-plain-mention, no shell writing). The changer is caught plain, quoted
     (`'typeset'`), escaped (`\typeset`) and behind an in-shell wrapper (`builtin typeset -fu g`, `\builtin typeset -fu g`,
     `'builtin' typeset -fu g`; NAME_RUN_AXIS, NAME_RUN_CHANGERS). And a head run by a word that runs a FOLLOWING command in
     this shell but is no peelable wrapper, zsh's `repeat <count> cmd`, whose count is peeled and whose inner command is
@@ -5255,10 +5263,17 @@ document stands on its own, each with the reasoning it was given.
     child session's environment is not the command). THE NAME-RUN AXIS's census asks the same population as THE ASSIGNING
     HEAD's and reds on a word it does not classify, and its BEHAVIOURAL LEG runs every not-a-changer word live under two
     shape families: the autoload/alias/hash OPTION shapes, reddening one that in fact changes what a later name runs (alias
-    and autoload are its controls); and the CODE-ARGUMENT shapes, a marker-defining code string placed where a word may read
-    code from (a bare argument, a `-guard` and a `:action` after the state and regex lead a parser needs, and each
-    single-letter option's argument in three spellings), reddening one that runs a code-string argument as shell code
-    (zregexparse is its control, which also proves the census reds if zregexparse were moved to the not-a-changer side);
+    and autoload are its controls); and the CODE-ARGUMENT shapes, a marker-defining code string, bare and `;`-terminated
+    with a trailing `:` that takes words a word appends to it, placed where a word may read code from (a bare argument, a
+    `-guard` and a `:action` after the state and regex lead a parser needs, each single-letter option's argument, lower and
+    upper case, in three spellings, and the callback option pairs a shell's manual documents with the companion option the
+    callback needs, mapfile's `-C` with `-c 1`), each run with the standard input closed and again with one line on it,
+    reddening one that runs a code-string argument as shell code (zregexparse, mapfile and readarray are its controls, each
+    run standing in for moving that word back to the not-a-changer side; the census reds when any of them is moved there).
+    The code-argument shapes are a SAMPLE of placements, option pairs and inputs, not a proof: a word that runs an argument
+    as code only under some other placement, option combination or input passes them, as mapfile did before the pair and
+    the fed line were added. Run over every not-a-changer builtin of bash, zsh and dash on a development box (bash 5.2, zsh
+    5.9 with its modules loaded, dash), they catch none;
     THE COMMAND TABLES' census checks both ways that each committed table is a writable special parameter of an
     installed shell and that every writable command-table parameter the shells expose is committed, reddening on a planted
     extra and a planted missing name. The rows:
@@ -5276,7 +5291,9 @@ document stands on its own, each with the reasoning it was given.
     escaped wrapper (AS8-ruleS-nameRun-bslash-builtin, -quoted-builtin), and one run by zsh's `repeat`
     (AS8-ruleS-nameRun-repeat, -repeat-builtin); and, the name-run axis taking words that run code ARGUMENTS, a head that runs
     its own argument as code, zsh's zregexparse running a `-guard` that defines the reader g (AS8-ruleS-nameRun-zregexparse,
-    refused now where the branch head allowed it while zsh wrote, caught by the behavioural leg's code-argument shapes). Each
+    refused now where the branch head allowed it while zsh wrote, caught by the behavioural leg's code-argument shapes; bash's
+    mapfile and readarray, which joined the axis after it, have no closure row, since fork main allows their callback road
+    and the axis restores fork main's reading: AS8-residual-mapfile-callback-reader below). Each
     is refused now where the pre-round-2 head and the branch head allowed
     it while zsh wrote the tracked file; each red at the branch head before C1, and each red under a single-site
     mutant of ruleHeadUnsafe: the unreadable-head check dropped (the var and bracevar rows), the non-external unknown
@@ -5284,16 +5301,19 @@ document stands on its own, each with the reasoning it was given.
     an unquoted wrapper (the bslash and quoted rows). The cost, on the restricted side:
     AS8-ctl-func-call-unrelated, a function definition, now takes fork main's reading (the bare name after a bound path
     refuses) where ROOT alone allowed it, writing nothing; option-insensitive, a head like `typeset x=1` beside a
-    mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it. THE
+    mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it, and so does a
+    plain `mapfile` or `readarray` with no callback (AS8-cost-mapfile-plain-mention). THE
     FUNCTION-CLAUSE SECOND WALK IS GONE (C3, R1's ruled deletion retried). The R1 disproof of the orchestrator's proposed
     deletion rested on clause (c) reading LITERAL heads only, so a function defined through a head the guard read as a
     runtime value (the opaque source or eval head `c=.; "$c" file`, or a define head resolved from a variable
     `x=autoload; $x g`) was caught at the R1 build by the second walk alone. C1 changed that premise: clause (c), BY
-    CONSTRUCTION, fails on any head the guard cannot read, so those same roads give rule S's refusal, and every command that
-    could define a function the walk did not see (a literal definition by clause (a), a changer head or an unreadable source
-    head by clause (c)) fails rule S. So C3 removes the function-clause second walk and the hand set of function-defining
-    heads it read: a three-hook probe over every saved road (the later-definition, called-body, zsh autoload and functions
-    -c, and opaque-head loops: AS8-root-func-later-loop, -later-keyword, -later-body, -later-echo, -zsh-autoload,
+    CONSTRUCTION, fails on any head the guard cannot read, so those same roads give rule S's refusal, and a command that
+    could define a function the walk did not see fails rule S wherever it does so by a literal definition (clause (a)), an
+    unreadable head or a head the axis classifies a changer (clause (c)). That is as complete as the axis: a head that can
+    run code in this shell but stands on the not-a-changer side passes clause (c), as zregexparse, mapfile and readarray did
+    until the code-argument passes found them. So C3 removes the function-clause second walk and the hand set of
+    function-defining heads it read: a three-hook probe over every saved road (the later-definition, called-body, zsh
+    autoload and functions -c, and opaque-head loops: AS8-root-func-later-loop, -later-keyword, -later-body, -later-echo, -zsh-autoload,
     -zsh-functions-c, -unread-head-loop) showed each stays refused with the walk gone, none allowed where fork main refuses,
     and the rows test stays verdict-neutral (the deletion was run as a mutant over all the rows before it was made). No
     committed closure row turns allowed, so the STOP rule did not fire. The rows keep their refusals, now through rule S.
@@ -5364,17 +5384,24 @@ document stands on its own, each with the reasoning it was given.
     outside the table is no builtin of the three shells, so a program, which assigns nothing in this shell; a
     function or an alias the environment exports is outside the model, as it is for every writer. Pre-existing and
     disclosed (M3: fork main allows each while the shells write): PATH set inside a call of a function the command
-    defines or an eval's text, or by a reader a command DEFINES inside an eval's text that later sets PATH (the eval and
-    source blind spot fork main shares, found by the shell lens on fork PR 975's round 2; distinct from the zregexparse road,
-    where the reader is defined by an argument the shell runs, which THE NAME-RUN AXIS now catches), or through zsh's `path`
+    defines or an eval's text, or by a reader a command DEFINES inside an eval's text or in a mapfile or readarray `-C`
+    callback that later sets PATH (the blind spot fork main shares; the eval road found by the shell lens on fork PR 975's
+    round 2, the callback road by the checker on that round's code-argument pass, tg-k45), or through zsh's `path`
     array, which zsh ties to PATH (the array assigned, assigned
     keeping `$path`, appended to with `+=`, an element assigned, the scalar form `path=DIR` that sets the one-element
     array, read with `read -A path`, or reached by the `(P)` flag with `::=` through a name holding PATH: the sound
     lens's tg-r12-1), is read as the PATH the command gave, the guard's own, so a copied command run by its bare name
-    passes (AS8-residual-path-func-call, AS8-residual-path-eval, AS8-residual-eval-define-reader, AS8-residual-path-zsh-array,
+    passes (AS8-residual-path-func-call, AS8-residual-path-eval, AS8-residual-eval-define-reader,
+    AS8-residual-mapfile-callback-reader, AS8-residual-path-zsh-array,
     AS8-residual-path-zsh-array-keep, AS8-residual-path-zsh-array-append, AS8-residual-path-zsh-array-element,
     AS8-residual-path-zsh-read-A, AS8-residual-path-zsh-indirect, AS8-residual-path-zsh-scalar; the follow-up
-    reads PATH as unreadable once the command is poisoned, names `path`, or defines a reader in an eval or source body).
+    reads PATH as unreadable once the command is poisoned, names `path`, or defines a reader in an eval or source body or a
+    callback). What sets the eval and callback roads apart from the zregexparse road is fork main's reading, not where the
+    reader is defined (the callback, like zregexparse's guard, is an argument the shell runs as code): fork main refuses the
+    zregexparse command, not reading the `-g()` guard as a definition, so holding zregexparse on THE NAME-RUN AXIS restores
+    a refusal; it allows the eval and callback commands, whose texts it reads and whose reader it takes for a function the
+    command defines (a callback or eval text defining another name instead is refused), so holding eval, mapfile and
+    readarray on the axis, which gives a command fork main's reading and no more, leaves them allowed.
     What the restored refusal leaves in place: a cp, mv, install, ln or ln -s of two operands binds the file it makes,
     DIR/<the source's name> under a directory, the destination as spelled under `-T` or onto a file, and both where the
     destination's kind is not known (fork PR 975's round 1, C), and a one-operand ln binds ./<the source's name> (the
@@ -5497,19 +5524,27 @@ document stands on its own, each with the reasoning it was given.
     the scan before the walk, mentionsBuiltinGate, by the walk's gate name and by a text not read run here) stays,
     read by THE ASSIGNING HEAD alone: under a command that may turn a builtin on or off a builtin may stand under any
     name, so every mention taints (AS8-root-gate-scan, AS8-root-gate-walk-var, AS8-root-gate-unheld-callback, one per
-    setter, each red where its own setter is off and the other two on, costs on which no shell writes beside
+    setter, each written to go red where its own setter is off and the other two on, costs on which no shell writes beside
     AS8-cp-sed-path-ls; the third, whose callback leaves the directory unknown, fork main allowed, since it skipped the
-    bound-name refusal there). THE FIRST TWO NO LONGER ISOLATE THEIR SETTER (C4, since C1): they put the gate word where
-    rule S once did not read it as a head, a command name built from a variable the command assigns literally (`$e`,
-    `$e'able'`), so at the round-2 pass (the reviewer's tg-t31-1) clause (c) read literal heads only and each gate row went
-    red with only its own setter off. Since C1 clause (c) (ruleHeadUnsafe) reads the RESOLVED head commandOf peels, so a
-    gate word reached through a variable is a head the guard cannot read and fails clause (c); AS8-root-gate-scan and
+    bound-name refusal there). NONE OF THE THREE ISOLATES ITS SETTER NOW. THE FIRST TWO stopped at C4, since C1: they put
+    the gate word where rule S once did not read it as a head, a command name built from a variable the command assigns
+    literally (`$e`, `$e'able'`), so at the round-2 pass (the reviewer's tg-t31-1) clause (c) read literal heads only and
+    each gate row went red with only its own setter off. Since C1 clause (c) (ruleHeadUnsafe) reads the RESOLVED head
+    commandOf peels, so a gate word reached through a variable is a head the guard cannot read and fails clause (c);
+    AS8-root-gate-scan and
     AS8-root-gate-walk-var are now refused by rule S regardless of the gate setter, so neither isolates its setter any
     longer. Their claim that THE SHELL'S GATE still fires rests on the source pin (the scan, the walk's gate name and the
-    unheld text) and this note; AS8-root-gate-unheld-callback keeps isolating its setter, since mapfile's callback text is
-    run unread and clause (c) does not reach it (mapfile is no changer, the callback a quoted substitution), so with the
-    unheld text off it alone goes allowed. BUILTIN_GATES is KEPT (R2): that unheld path still reads it to fire the gate,
-    and taking it out would reopen a write (AS8-root-gate-unheld-callback). Its
+    unheld text) and this note. AS8-root-gate-unheld-callback isolated its setter (mapfile's callback text is run unread,
+    and clause (c) did not reach it while mapfile was no changer) until mapfile and readarray joined THE NAME-RUN AXIS (the
+    checker's finding on round 2's code-argument pass, tg-k45): its mapfile head now fails clause (c), so it too is refused
+    by rule S whatever its setter does. Measured by mutants over every row: with the unheld text's gate setter dropped,
+    that row went allowed at the branch head before mapfile joined the axis and holds refused after; with the gate read
+    nowhere (mentionMayAssign ignoring it), every row holds after. So NO ROW ISOLATES ANY SETTER now, and the claim that
+    the gate fires rests on the source pin alone. BUILTIN_GATES is KEPT (R2), on the restricted side; R2's reason for
+    keeping it, that the unheld path still read it and taking it out let AS8-root-gate-unheld-callback through, no longer
+    holds, since every word of IN_PLACE_BINDERS, the heads whose text the walk reads as run in this shell (eval, trap, `.`,
+    source, emulate, mapfile, readarray, alias), now stands on the axis, and keeping it rests on the gate's purpose rather
+    than on a row. Its
     rows AS8-builtin-gate-* are refused as every bare name is, gate or no gate (a mention no shell runs among them,
     AS8-builtin-gate-mention-cost). Pre-existing, disclosed with a witness row each (allowed at fork main and here while
     the shell writes): the same table writes where no copy and no unread PATH put the bound-name refusal in play, or

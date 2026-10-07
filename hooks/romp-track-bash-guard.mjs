@@ -5209,21 +5209,30 @@ export const NAME_TABLE_PARAMS = new Set(['BASH_ALIASES', 'BASH_CMDS', 'function
 // the command actually carries. Two families: the DEFINE/CHANGE family, whose own options act on a function, alias, builtin or hash entry (autoload,
 // functions, typeset/declare/readonly with -fu, enable, disable, zmodload, alias, unalias, hash, rehash, unhash, unfunction); and the RUN-TEXT family,
 // which runs a text, a command or a function in this shell that may itself define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched,
-// compgen, jobs, zle, zstyle, zregexparse), so a LITERAL head of one gives the whole command fork main's reading here (clause (c)), and the autoload/typeset
-// -fu/declare -fu/functions -u roads close too. zregexparse is a RUN-TEXT word that takes its code as an ARGUMENT, not a text operand: zsh's zregexparse runs
-// each `-guard` and `:action` component of its argument list as shell code in this shell while it parses, so a guard or action can define a function (fork PR
-// 975's round 2, the name-run axis takes words that run code arguments; before this it was classified not-a-changer, so `zregexparse m m m /m/ '-g() {...}'; g
-// PATH < p; c2 ...` ran a shadow reader g that set PATH and let a copied cp through, fork main refusing, zsh writing). CLAUSE (c) IS THE WHOLE CLOSURE for a
-// function definition now (fork PR 975's round 2, C3): ruleHeadUnsafe reads the
+// compgen, jobs, zle, zstyle, zregexparse, mapfile, readarray), so a LITERAL head of one gives the whole command fork main's reading here (clause (c)), and
+// the autoload/typeset -fu/declare -fu/functions -u roads close too. zregexparse is a RUN-TEXT word that takes its code as an ARGUMENT, not a text operand:
+// zsh's zregexparse runs each `-guard` and `:action` component of its argument list as shell code in this shell while it parses, so a guard or action can
+// define a function (fork PR 975's round 2, the name-run axis takes words that run code arguments; before this it was classified not-a-changer, so
+// `zregexparse m m m /m/ '-g() {...}'; g PATH < p; c2 ...` ran a shadow reader g that set PATH and let a copied cp through, fork main refusing, zsh writing).
+// mapfile and readarray (bash's one builtin under two names) take their code as an argument too: bash runs the `-C` callback as a command line in this shell
+// once per `-c` count of lines read, the index and the line appended as words, so a `;`-terminated callback can define a function (fork PR 975's round 2, the
+// checker's finding on the code-argument pass: both were classified not-a-changer, and the code-argument shapes then in the leg could not see it). On the axis
+// they give a mapfile or readarray head fork main's reading, which closes no write fork main lets through: fork main reads a literal callback as a text, so a
+// reader the callback defines and a later call of it that sets PATH is the disclosed function-call residual (AS8-residual-mapfile-callback-reader, allowed at
+// fork main and here while bash writes). CLAUSE (c) IS THE WHOLE CLOSURE for a function definition now (fork PR 975's round 2, C3): ruleHeadUnsafe reads the
 // RESOLVED head commandOf peels and fails on a changer OR on a head the guard cannot read, so a function defined through a runtime-value head (an opaque or
 // unread head that may be `source`/eval, `c=.; "$c" file`, or a changer resolved from a variable, `x=autoload; $x g`) fails clause (c) too; the
-// function-clause second walk this once needed is gone, verdict-neutral over every row and every saved road (three-hook probe). The behavioural leg of THE
-// NAME-RUN AXIS's census runs every not-a-changer word live and reds one that in fact changes what a name runs, now under two shape families: the
-// autoload/alias/hash option shapes (a word whose own option changes a name), and the CODE-ARGUMENT shapes (a marker-defining code string placed where a word
-// may read code from: a bare argument, a `-guard` or `:action` after a parser's lead, and each single-letter option's argument), so a word like zregexparse
-// that runs an argument as code is caught by construction. Decision 47 states the premise.
+// function-clause second walk this once needed is gone, verdict-neutral over every row and every saved road (three-hook probe). That closure is only as
+// complete as the axis: a word that can run code in this shell but stands on the not-a-changer side passes clause (c), as zregexparse, mapfile and readarray
+// did. The behavioural leg of THE NAME-RUN AXIS's census runs every not-a-changer word live and reds one that in fact changes what a name runs, under two
+// shape families: the autoload/alias/hash option shapes (a word whose own option changes a name), and the CODE-ARGUMENT shapes (a marker-defining code
+// string, bare and `;`-terminated, placed where a word may read code from: a bare argument, a `-guard` or `:action` after a parser's lead, each single-letter
+// option's argument in lower and upper case, and the callback option pairs a shell's manual documents, mapfile's `-C` with `-c 1`; each run with the standard
+// input closed and again with one line on it). The leg is a SAMPLE of placements, option pairs and inputs, not a proof: a word that runs an argument as code
+// only under some other placement, option combination or input is outside what it sees, as mapfile was before the pair and the fed line. Decision 47 states
+// the premise.
 const NAME_RUN_DEFINE = new Set(['autoload', 'functions', 'typeset', 'declare', 'readonly', 'enable', 'disable', 'zmodload', 'alias', 'unalias', 'hash', 'rehash', 'unhash', 'unfunction']);   // readonly: zsh's `readonly -fu g` marks g for autoload, the same as `typeset -fu` (readonly is typeset -r in zsh), so option-insensitively it may change what a name runs
-const NAME_RUN_TEXT = new Set(['eval', 'source', '.', 'trap', 'emulate', 'fc', 'r', 'sched', 'compgen', 'jobs', 'zle', 'zstyle', 'zregexparse']);   // runs a text, a command or a function in this shell, which may define or redefine what a later name runs (zregexparse runs its `-guard` and `:action` arguments as code)
+const NAME_RUN_TEXT = new Set(['eval', 'source', '.', 'trap', 'emulate', 'fc', 'r', 'sched', 'compgen', 'jobs', 'zle', 'zstyle', 'zregexparse', 'mapfile', 'readarray']);   // runs a text, a command or a function in this shell, which may define or redefine what a later name runs (zregexparse runs its `-guard` and `:action` arguments as code; mapfile and readarray run their `-C` callback as a command line in this shell, once per `-c` count of lines read)
 const NAME_RUN_HEADS = new Set([...NAME_RUN_DEFINE, ...NAME_RUN_TEXT]);
 const RUN_CHANGE_WHY = 'an option form of it can define, change, mark for autoload, enable, disable or remove a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
 const RUN_TEXT_WHY = 'runs a text, a command or a function in this shell, which may define or redefine a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
