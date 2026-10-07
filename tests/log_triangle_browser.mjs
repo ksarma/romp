@@ -234,17 +234,21 @@ try {
   await snap("closedSeen");
   // a live problem: the chat pane's socket reported down, as its shim reports it (logs one entry and holds the cue while down)
   await until("the chat pane's socket up", () => (window.__labWs || []).indexOf("chat:up") >= 0, null, 20000);
-  await page.evaluate(() => window.postMessage({ romp: "wsState", app: "chat", state: "down" }, "*"));
+  // every socket word is posted from the chat pane's own frame to the shell, as its shim posts it: the shell's listeners read
+  // window.__rompPaneSourceOk first, which refuses a message whose source is the shell's own window, so a word posted from
+  // the top document is dropped unread
+  const chatFrame = await (await page.$("#f-chat")).contentFrame();
+  await chatFrame.evaluate(() => window.parent.postMessage({ romp: "wsState", app: "chat", state: "down" }, "*"));
   // then {romp:'wsFail'}, the failed-redial word PR 968 adds to the shim (netFail) and to the shell's Log; a tree without 968
   // neither sends nor hears it. So the step reads one unread entry from either Log: 968's writes the connection-lost entry on
   // this word, and a Log without 968 has written it at the drop and has no listener for the word
-  await page.evaluate(() => window.postMessage({ romp: "wsFail", app: "chat" }, "*"));
+  await chatFrame.evaluate(() => window.parent.postMessage({ romp: "wsFail", app: "chat" }, "*"));
   await has(true);
   await snap("downUnread");
   await page.click("#merr");
   await until("the Log open", () => !document.getElementById("rerr-back").hidden);
   await snap("downOpen");
-  await page.evaluate(() => window.postMessage({ romp: "wsState", app: "chat", state: "up" }, "*"));
+  await chatFrame.evaluate(() => window.parent.postMessage({ romp: "wsState", app: "chat", state: "up" }, "*"));
   await has(false);
   await snap("upOpen");
   // an entry that arrives while the Log is open lands seen, with the mark an opening gives what it shows
