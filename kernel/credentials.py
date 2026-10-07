@@ -544,15 +544,18 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
     entered (the run finishing, so that the key or a CredentialError follows; the bound or another
     exception; a KeyboardInterrupt during the wait or anywhere in the kill) leaves the block through
     Popen.__exit__, which closes the pipe and then reaps the shell. On KeyboardInterrupt that reap waits at
-    most a quarter second for the shell and the interrupt goes on; otherwise it waits without a bound. By
-    then the shell has been reaped, or sent SIGKILL by the kill, unless the kill never signalled the running
-    shell: an exception other than KeyboardInterrupt that lands before os.killpg and outside communicate, or
-    a kill refused for the shell by os.killpg and p.kill() alike, leaves that wait on a running shell until
-    the shell exits, as subprocess.run's wait after its kill was. In three cases a KeyboardInterrupt ends
-    the call with no further wait for the shell, as in subprocess.run: one after an earlier one in
-    communicate has spent the quarter second (Popen allows it once per run); one between the shell's start
-    and the block's entry, which never reaches Popen.__exit__, so the pipe stays open too; and a second one
-    inside Popen.__exit__'s quarter-second wait, which ends that wait."""
+    most a quarter second for the shell and the interrupt goes on, and after a first KeyboardInterrupt during
+    the wait, which communicate meets with that quarter second, it makes no wait at all (the shell is reaped
+    there by that wait, or by the kill's drain, or, when the drain runs out, by its p.kill() fallback alone);
+    otherwise it waits without a bound. By then the shell has been reaped, or sent SIGKILL by the kill,
+    unless the kill never signalled the running shell: an exception other than KeyboardInterrupt that lands
+    before os.killpg and outside communicate, or a kill refused for the shell by os.killpg and p.kill()
+    alike, leaves that wait on a running shell until the shell exits, as subprocess.run's wait after its kill
+    was. In three cases a KeyboardInterrupt ends the call with no further wait for the shell, as in
+    subprocess.run: one after an earlier one in communicate has spent the quarter second (Popen allows it
+    once per run); one between the shell's start and the block's entry, which never reaches Popen.__exit__,
+    so the pipe stays open too; and a second one inside Popen.__exit__'s quarter-second wait, which ends that
+    wait."""
     bound = HELPER_TIMEOUT_S if timeout_s is None else timeout_s
     try:
         with subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -569,9 +572,11 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
                     # pipe has closed it and the shell is reaped; the group's other members have SIGKILL
                     # pending and finish exiting on their own, possibly just after the call returns. When the
                     # drain runs out, the fallback p.kill() reaps the shell the group's SIGKILL ended
-                    # (send_signal polls before it signals, so the poll reaps it and nothing is sent), and
-                    # Popen.__exit__'s wait would reap it as well. Either way the call leaves no zombie of the
-                    # shell.
+                    # (send_signal polls before it signals, so the poll reaps it and nothing is sent). After a
+                    # first KeyboardInterrupt in communicate, Popen.__exit__ makes no wait (communicate has spent
+                    # Popen's quarter second), so on that road the fallback is the shell's only reap; on the
+                    # others Popen.__exit__'s wait would reap it as well. So when the drain runs out, the call
+                    # leaves no zombie of the shell.
                     # Not covered: a process that left the group itself (setsid, setpgid, a daemonizing
                     # helper) is not signalled and runs on. If it still holds stdout, the drain waits its whole
                     # bound for an end that does not come, the call raises that much later, and the process

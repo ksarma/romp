@@ -361,8 +361,11 @@ print(json.dumps({"outcome": outcome, "elapsed": round(elapsed, 3), "sent": len(
 # and wait: on each the run's stdout is closed when the call ends, and the shell is reaped (the returncode set and
 # /proc without it) on every one but ki-at-kill, where a KeyboardInterrupt lands before os.killpg: the shell still
 # runs there, and the window's floor shows the quarter-second wait for it that Popen.__exit__ makes before the
-# interrupt goes on, its ceiling that the wait is bounded (the shell would run for 30 s). The rows from cut-at-kill
-# on are the roads run_helper's docstring names where the close does not happen or the wait is unbounded or absent.
+# interrupt goes on, its ceiling that the wait is bounded (the shell would run for 30 s). After a SIGINT during the
+# wait, communicate has spent that quarter second and Popen.__exit__ makes no wait, so the sigint-wait rows find the
+# shell reaped by communicate's own wait, by the drain, or, with a holder of stdout outside the group, by the drain's
+# p.kill() fallback alone: that row is the fallback's pin. The rows from cut-at-kill on are the roads run_helper's
+# docstring names where the close does not happen or the wait is unbounded or absent.
 _EXIT_ROADS = (
     # The run finishes: the key, or a CredentialError after it.
     ("finished", "the key", 5, "returned: " + HELPER_OUT, 0, 0, [], None),
@@ -380,10 +383,13 @@ _EXIT_ROADS = (
     ("fnf-wait", "a hung tree", 5, "apiKeyHelper could not run: /bin/sh is not available", 1, -signal.SIGKILL, [],
      None),
     ("cut-drain", "a hung tree", 1, "Cut", 1, -signal.SIGKILL, [], (1.0, 2.0)),
-    # A KeyboardInterrupt: during the wait with the shell running (the group is ended) or exited (communicate reaps
-    # it, no group is signalled and the sleep runs on, as with subprocess.run before), during the drain, just after
-    # os.killpg, during the fallback, and before os.killpg.
+    # A KeyboardInterrupt: during the wait with the shell running (the group is ended; with a holder of stdout outside
+    # the group the drain runs out 2 s on, communicate's quarter second before it, and the p.kill() fallback is the
+    # shell's only reap) or exited (communicate reaps it, no group is signalled and the sleep runs on, as with
+    # subprocess.run before), during the drain, just after os.killpg, during the fallback, and before os.killpg.
     ("sigint-wait-running", "a hung tree", 10, "KeyboardInterrupt", 1, -signal.SIGKILL, [], (0.0, 3.0)),
+    ("sigint-wait-running", "a holder of stdout outside the group", 10, "KeyboardInterrupt", 1, -signal.SIGKILL,
+     ["holder"], (2.2, 3.0, "from the SIGINT")),
     ("sigint-wait-exited", "a shell that exited, its sleep holding stdout", 10, "KeyboardInterrupt", 0, 0, ["sleep"],
      (0.0, 3.0)),
     ("sigint-drain", "a holder of stdout outside the group", 1, "KeyboardInterrupt", 1, -signal.SIGKILL, ["holder"],
@@ -848,10 +854,13 @@ class HelperTimeoutEndsTheGroup(_Settings):
         # Unbounded, the drain would wait for this process to exit, 30 s here.
         # Two more clauses of this road are pinned here. When the drain runs out, the shell is still reaped: the group's
         # SIGKILL has already ended it, the p.kill() fallback's poll reaps it first (Popen.send_signal polls before it
-        # signals, so nothing is sent), and Popen.__exit__'s wait would reap it without the fallback, so the returncode
-        # below holds either way. And the run closes its end of the pipe (Popen.__exit__ does), so the escaped
-        # process's next write to stdout, made after the call returned (on a SIGUSR1 from the test), fails with EPIPE;
-        # with that end left open, the write would land in the pipe's buffer and succeed.
+        # signals, so nothing is sent), and on this road, the bound, Popen.__exit__'s wait would reap it without the
+        # fallback, so the returncode below holds with the fallback removed too. This test is therefore not the
+        # fallback's pin: the sigint-wait-running row of _EXIT_ROADS with a holder of stdout outside the group is, since
+        # after communicate's quarter second Popen.__exit__ makes no wait. And the run closes its end of the pipe
+        # (Popen.__exit__ does), so the escaped process's next write to stdout, made after the call returned (on a
+        # SIGUSR1 from the test), fails with EPIPE; with that end left open, the write would land in the pipe's buffer
+        # and succeed.
         pids = self._pids()
         wrote = os.path.join(os.path.dirname(pids), "wrote")
         code = ("import errno, os, signal, sys\n"
@@ -1017,8 +1026,10 @@ class HelperTimeoutEndsTheGroup(_Settings):
     # inside the Popen's own context manager, whose __exit__ closes the pipe and reaps the shell, the wait bounded by a
     # quarter second on KeyboardInterrupt. Among the KeyboardInterrupt roads: the bound fires, a holder outside the
     # group keeps the drain waiting, and SIGINT lands during the drain (with the close after the kill, in the same
-    # finally, the interrupt went on out of the kill and left the pipe open); and an interrupt that lands before
-    # os.killpg, which leaves the shell running and shows the wait for it bounded.
+    # finally, the interrupt went on out of the kill and left the pipe open); a SIGINT during the wait with the shell
+    # running and a holder outside the group, where the drain runs out and Popen.__exit__ makes no wait, so the
+    # p.kill() fallback is the shell's only reap (red with the fallback removed: the shell left a zombie); and an
+    # interrupt that lands before os.killpg, which leaves the shell running and shows the wait for it bounded.
     def test_every_finished_run_leaves_its_pipe_closed_and_its_shell_reaped(self):
         self._check_exit_roads()
 
