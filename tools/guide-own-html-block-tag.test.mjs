@@ -14,7 +14,7 @@
 // mid-sentence). This module holds each clause of the account to the
 // installed marked (vscode-extension/node_modules, the copy the viewer bundles), by lexing synthetic documents, and to the two
 // code paths the account rests on. The lexer legs skip where marked is not installed, which is every CI run of tools/*.test.mjs
-// (the shell job runs no npm ci); ui/webview/guide-own-html-block-tag.test.ts runs the same legs through the viewer's own
+// (the vendored-tooling job runs no npm ci); ui/webview/guide-own-html-block-tag.test.ts runs the same legs through the viewer's own
 // configuration under the extension job's npm test, so CI holds them there. The sentences are pinned flattened, so a rewrap
 // survives. Synthetic text only. Run: node --test tools/guide-own-html-block-tag.test.mjs
 import { test } from 'node:test';
@@ -42,12 +42,15 @@ const PLACEHOLDER = 'The same placeholder typed first on its line is therefore r
 const CHAT = 'A chat message is not read this way.';
 const LOSS = 'A `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML takes everything after it out of the Rendered view, up to an end tag of its name, or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so the tag written with the slash mid-sentence does this, and so does the tag first on its line; a `<textarea>` in either place shows that stretch as unformatted characters instead: after the tag first on its line the file\'s own text, and after the tag written with the slash mid-sentence the HTML the viewer built from the rest of its paragraph and the blocks after it, tags such as `</p>` and `<h2>` among the characters.';
 
+// The paragraph is docs/reference.md's "### A file's own HTML" since fold 4 moved the fork's paragraph out of docs/guide.md and
+// merged it with the project's copy there (the front pages are the project's, CLAUDE.md "The documentation front pages").
 function ownHtmlParagraph() {
-  const guide = read('docs', 'guide.md');
-  const at = guide.indexOf("**A file's own HTML.**");
-  assert.ok(at >= 0, 'the guide has the paragraph');
-  const end = guide.indexOf('\n\n', at);
-  return flat(end < 0 ? guide.slice(at) : guide.slice(at, end));
+  const ref = read('docs', 'reference.md');
+  const head = ref.indexOf("\n### A file's own HTML\n");
+  assert.ok(head >= 0, 'the reference has the section');
+  const at = ref.indexOf('\n\n', head + 1) + 2;
+  const end = ref.indexOf('\n\n', at);
+  return flat(end < 0 ? ref.slice(at) : ref.slice(at, end));
 }
 
 test('the guide states the rule for a tag in prose, then where it stops (an HTML block), then what the placeholder does first on its line, then which tags take the rest of the file when they stay HTML, in that order and once', () => {

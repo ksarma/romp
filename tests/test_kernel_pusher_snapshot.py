@@ -77,12 +77,13 @@ class _CycleFixture(unittest.TestCase):
         self.row = {SID: dict(meta), SID2: dict(meta)}
         self.saved_clients = list(km._clients)
         self._files_stat_reset()
-        # Every cycle test measures a steady-state jobs pass, never the boot's first: _jobs_pass skips the spend guard
-        # while _PERF_STATS.jobs["passes"] is 0 (the T401 follow-up), and that counter is module state _jobs_cycle's
-        # finally bumps and nothing here reset, so a test's job roster used to depend on whether an earlier test in the
-        # process had run a pass (the empty-window case below failed alone and passed after a sibling, 2026-09-18).
-        # The pin is stated here for the whole class so the three jobs-pass cases count one roster; patch.dict is the
-        # shape tests/test_spend_tree_memo.py uses for this counter, and it puts the counter back at cleanup.
+        # Every cycle test measures a steady-state jobs pass, never the boot's first: _jobs_pass runs the spend guard
+        # only once _PERF_STATS.jobs["passes"] is at least 1 (the T401 follow-up), and that counter is module state
+        # _jobs_cycle's finally bumps and nothing here reset, so which jobs read the memo in a test's pass used to
+        # depend on whether an earlier test in the process had run a pass (the empty-window case below was red alone
+        # and green after a sibling). The pin is stated once on this fixture, so every jobs pass a test in any class
+        # below runs counts one roster of readers, whichever test draws the process's first; patch.dict is the shape
+        # tests/test_spend_tree_memo.py uses for this counter, and it puts the counter back at cleanup.
         passes = mock.patch.dict(km._PERF_STATS.jobs, {"passes": max(km._PERF_STATS.jobs.get("passes", 0), 1)})
         passes.start()
         self.addCleanup(passes.stop)
@@ -206,7 +207,7 @@ class OneDiscoverPerCycle(_CycleFixture):
             km._sessions, jd._discover_fingerprint = orig_sessions, orig_fp
         s1 = km._sessions_scope_stats
         d = {k: s1[k] - s0[k] for k in s1}
-        d["calls"] = calls[0]                             # every _sessions read the cycle made, memo or not
+        d["calls"] = calls[0]                             # every _sessions read the cycle made, hit or miss
         return len(inside), keys, d
 
     def test_one_sweep_per_key_per_cycle_without_a_client(self):
@@ -272,16 +273,23 @@ class OneDiscoverPerCycle(_CycleFixture):
         for path in self.paths.values():
             os.utime(path, (old, old))
         self.row = {}
-        fps, keys, d = self._cycle(None, cycle=km._jobs_cycle)   # the tick jobs' pass (the housekeeping split, 2026-09-13)
-        self.assertEqual(d["miss"], len(keys), "one sweep per key, the empty result memoized")
-        self.assertEqual(fps, d["miss"])
-        # The hit count is pinned against the reads the pass made, not a fixed number: with no session in the window
-        # the _path_of misses under _compacting_now that carry the siblings past a threshold are gone, and the roster
-        # of readers then turns on process state (the spend guard reads only on a counted pass, the fixture's pin, and
-        # only while the ceiling is on). This case asserted five hits and failed alone with four (2026-09-18); every
-        # read after the first per key being a hit is the property, whatever the roster.
-        self.assertEqual(d["hit"] + d["miss"], d["calls"], "every read of the pass went through the memo")
-        self.assertGreaterEqual(d["hit"], 1, "the tick jobs were served the empty list from the memo")
+        # The hits are counted against the reads the pass made, not against a fixed number: with no session in the
+        # window there are no _path_of misses under _compacting_now to lift the count the way the two-session siblings
+        # see it, and the roster of readers turns on process state (the spend guard reads only on a counted pass, the
+        # fixture's pin, and only while the ceiling is on). This case asserted five hits and saw four on a cold pass.
+        # The property is that every read after the first per key is a hit, whatever the roster: one pass with the
+        # guard reading (the default ceiling) and one with the ceiling at 0, where the guard returns before its read.
+        # The guard is entered on both passes, which is what the fixture's pin promises.
+        for ceiling in (km.SPEND_CEILING_DEFAULT, 0.0):
+            with self.subTest(ceiling=ceiling):
+                with mock.patch.object(km, "_spend_ceiling", return_value=ceiling), \
+                     mock.patch.object(km, "_spend_guard_tick", wraps=km._spend_guard_tick) as guard:
+                    fps, keys, d = self._cycle(None, cycle=km._jobs_cycle)   # the tick jobs' pass (the housekeeping split, 2026-09-13)
+                self.assertEqual(guard.call_count, 1, "a steady-state pass: the spend guard is in its roster")
+                self.assertEqual(d["miss"], len(keys), "one sweep per key, the empty result memoized")
+                self.assertEqual(fps, d["miss"])
+                self.assertEqual(d["hit"] + d["miss"], d["calls"], "every read of the pass went through the memo")
+                self.assertGreaterEqual(d["hit"], 1, "the tick jobs were served the empty list from the memo")
 
     def test_the_key_is_normalized_like_discover(self):
         # the memo key is normalized the way discover normalizes its own: None, the default window and a float

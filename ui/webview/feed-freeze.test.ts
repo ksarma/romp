@@ -132,7 +132,13 @@ test("both card shapes arm the freeze on the same events the hover highlight rid
 test("the badge hint counts the USER'S view and never mutates state computing it", () => {
   // render and the painter share one view filter, so the hint counts exactly what would move
   assert.match(FEED, /function viewFiltered\(list: AskItem\[\]\): AskItem\[\]/);
-  assert.match(FEED, /let shown = viewFiltered\(asks\);/);
+  // render reads the shared view through the paint plan since review round 2 of the lazy panes (2026-09-19): paintPlan derives
+  // viewFiltered(list) once (every board's view, which the tag-lens line counts) and then keeps the active board's cards of it
+  // (boards phase four, PR 1886: the board filter lives in paintPlan, so the paint and the reveal agree on the active board),
+  // and renderBody paints from its object (feed-hidden-paint.test.ts pins the wiring)
+  assert.match(FEED, /function paintPlan\(list: AskItem\[\]\)[^\n]*\{\n\s*const allBoards = viewFiltered\(list\);[^\n]*\n\s*const shown = onActiveBoard\(allBoards\);/);
+  assert.match(FEED, /const plan = paintPlan\(asks\);\n\s*const shown = plan\.shown, byTurn = plan\.byTurn, grouped = plan\.grouped;/);
+  assert.match(FEED, /const toItems = \(list: AskItem\[\]\) => onActiveBoard\(viewFiltered\(list\)\)\.map/, "the hint reads the render pass's own board filter, so it counts what is on screen (the 1886 read, medium 1)");
   assert.match(FEED, /const d = freezeDiff\(toItems\(asks\), toItems\(payloadView\(pendingFeedPayload\)\)\);/);
   // payloadView reads pendingCleared but must not write it (the flush re-runs the real bookkeeping)
   const pv = FEED.slice(FEED.indexOf("function payloadView"), FEED.indexOf("function paintFreezeParts"));

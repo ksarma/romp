@@ -325,15 +325,28 @@ const withClass = (a: Element, cls: string): void => {
  *  (`report.md#results`) rides as the section to land on once the file is open (data-frag); a `?query` is dropped
  *  from the path. The href comes off a path link: a browser must not follow it, and the chat's document-level opener
  *  reads only anchors with one. An anchor the sanitizer left without an href (a scheme it refuses, a file on another
- *  host) is dressed dead with the reason in its title, unless it is a named target and never was a link; so is a
- *  file target that resolves to no path (`[up](../)` from a file named without a directory). Every attribute is set
- *  as one (an inline SVG's <a> has no target, rel, className or title property to write). */
+ *  host) is dressed dead with the reason in its title, unless it is a named target and never was a link (a target
+ *  still carrying the plain `xlink:href` the fence pass's re-parse leaves on a split svg anchor was one, and is
+ *  dressed dead); so is a file target that resolves to no path (`[up](../)` from a file named without a directory).
+ *  Every attribute is set as one (an inline SVG's <a> has no target, rel, className or title property to write). */
 export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
   root.querySelectorAll("a").forEach((node) => {
     const a = node as HTMLElement;
     const href = a.getAttribute("href");
     if (href === null) {
-      if (a.hasAttribute("name") || a.hasAttribute("id")) return;
+      // An anchor target the author wrote (`<a name="install">`, `<a id="results">`) never was a link and is left alone. Not so
+      // an href-less anchor carrying an attribute named `xlink:href`: that is the fence pass's re-parse product, an svg
+      // <a xlink:href> split across lines inside a raw fence, which the HTML parser re-creates in body as an HTML <a> whose
+      // xlink:href is a plain attribute in no namespace, so mdBlock's fold (`a[*|href]`, a namespaced match read through
+      // getAttributeNS) never selects it and no `href` is ever written on it (the fork PR review's round 2 measured this in
+      // Chromium, Firefox and WebKit, findings correctness-2, extra7-1 and tests-4, 2026-09-20). That anchor WAS a followable
+      // section link before the fence pass moved ahead of the link passes, and the sheet paints every href-less anchor in the
+      // link ink (`.fileview-md a`, no [href] guard), so exempted as an anchor target it read as live and did nothing on a click.
+      // It is marked dead with the reason whether or not the author gave it an id or a name. The key is the attribute, not the
+      // fence: an author's HTML <a xlink:href> written in prose, which the sanitizer keeps with the attribute plain and no href,
+      // is marked too (it never followed and read as live the same way). A one-line svg anchor keeps its namespace and the fold
+      // has moved its xlink:href to `href` before this pass, so it never reaches this arm.
+      if ((a.hasAttribute("name") || a.hasAttribute("id")) && !a.hasAttribute("xlink:href")) return;
       withClass(a, DEAD_LINK_CLASS);
       a.setAttribute("title", DEAD_LINK_TITLE);
       return;

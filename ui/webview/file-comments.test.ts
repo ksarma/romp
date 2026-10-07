@@ -25,7 +25,27 @@ const VIEW = web("file-view.ts");
 const GEAR = web("gear.js");
 const CHAT_CSS = web("styles.css");
 const FEED_CSS = web("feed.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files and chat paragraphs live in docs/reference.md since the front pages became the project's (CLAUDE.md "The
+// documentation front pages"; fold 4 moved every fork paragraph there). The chat's section is "## The chat pane in detail" up
+// to the feed's layout controls. The Files section is the same paragraphs the Python helpers' _files_section() reads (for
+// one, tests/test_guide_files_about_vocabulary.py): "## The Files pane" up to the Artifacts pane, then the three viewer
+// subsections the reference keeps with the chat pane ("Links inside a file", "Text size and width", "A file's own HTML"),
+// each up to the next `## ` or `### ` heading. Those three sat in the guide's Files section on this fork, so the
+// vocabulary and privacy scan below still reads them. The pins read both sections there.
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const refSection = (from: string, to: string): string => {
+  const at = REF.indexOf(from), end = REF.indexOf(to, at + 1);
+  assert.ok(at > -1 && end > at, "docs/reference.md has " + from.trim() + " before " + to.trim());
+  return REF.slice(at, end);
+};
+const refSubsection = (heading: string): string => {
+  const at = REF.indexOf("\n### " + heading + "\n");
+  assert.ok(at > -1, "docs/reference.md has ### " + heading);
+  const ends = ["\n## ", "\n### "].map((h) => REF.indexOf(h, at + 1)).filter((i) => i > -1);
+  return REF.slice(at, ends.length ? Math.min(...ends) : REF.length);
+};
+const filesSection = (): string => [refSection("\n## The Files pane\n", "\n## The Artifacts pane"),
+  ...["Links inside a file", "Text size and width", "A file's own HTML"].map((h) => refSubsection(h))].join("\n\n");
 const ADR = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"), "utf8");
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
@@ -791,11 +811,23 @@ test("every mutating verb: consent first, a fence from the current status, one r
   assert.match(SRC, /if \(attempt === 0 && \(e\.code === "store-moved" \|\| e\.code === "config-moved" \|\| e\.code === "busy"\)\) \{\n\s*await this\.refresh\(\);/,
     "the save through the panel retries once on busy as on a moved sidecar or config, from a fresh status");
   for (const verb of ['"set-tracked", { on: true, scope: "file" }', '"set-tracked", { on: true, scope: "folder" }', '"set-tracked", { on: false, scope: "folder" }',
-    '"set-tracked", { on: false, scope: "file" }', '"reply", { commentId: c.commentId, note }', '"comment", args', '"resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }']) {
+    '"set-tracked", { on: false, scope: "file" }', '"resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }']) {
     assert.ok(SRC.includes("this.mutate(" + verb), verb + " goes through mutate()");
   }
+  // the composer's writes go through writeFor, which marks the saving composer (savingFor) around mutate: a pin on where the
+  // code lives, by the count of its call sites. Each site is executed in file-comments-save-held-composer.test.ts: the
+  // reply's write sent through mutate alone reds 10 tests there, among them "a reply refused after a new comment was started
+  // under its save…"; a region's reds 2, "the note for a refused comment, the box handed on to a comment the person typed in:
+  // a comment on a region names the region…" and "a region comment's save held…"; a passage or file comment's reds 27, among
+  // them "a reply started while a comment saves opens empty…" and "a comment refused after a reply was started under its
+  // save: its words are never filed as that reply"
+  for (const [verb, sites] of [['"reply", { commentId: c.commentId, note }', 1], ['"comment", args', 2]] as Array<[string, number]>) {
+    assert.equal(SRC.split("this.writeFor(c, " + verb).length - 1, sites, verb + " goes through writeFor() at each of its call sites, a region's and a passage's for a comment (a pin on where the code lives, counting the sites; the tests named above execute each site)");
+  }
+  assert.match(SRC, /this\.savingFor = c;\n\s*try \{ return await this\.mutate\(verb, args, "composer"\); \}\n\s*finally \{ if \(this\.savingFor === c\) \{ this\.savingFor = null; this\.syncHeldBack\(\); \} \}/, "…and writeFor through mutate(), the composer marked for the round trip, unmarked however the write ends, a waiting comment's Bring it back following the unmarking (a pin on where the code lives. The mark is executed by file-comments-save-held-composer.test.ts, where a write that never marks its composer reds 36 tests, among them \"a new comment started while a comment saves opens empty…\" and \"while a comment saves, startReply (Reply) opens an empty box…\"; the unmark by file-comments-follow.test.ts \"edits on both sides of the selected copy…\", file-comments-region-tied.test.ts \"a region on the SECOND twin, the file changed at both ends…\", file-comments-regions.test.ts \"a figure whose src the viewer rewrote through /file still matches its embed…\" and file-comments-save-held-composer.test.ts \"a refused comment waiting in its note is asked about…\", \"the close names every comment a yes would drop…\", \"while a save is out, each ask's kept text says…\" and \"while a comment saves, the viewer's close asks…\", each red when the mark outlives the write; the following by the same file's \"on a fine pointer, a reply whose own save is refused…\" and \"on a coarse pointer, a new comment whose own save is refused…\", each red when the unmarking re-renders no reason)");
   assert.match(SRC, /args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start;/, "a passage comment carries the engine's anchor and the start offset");
-  assert.match(SRC, /if \(r\) this\.closeComposer\(\);\s*\/\/ a refusal keeps the note where it was typed/);
+  assert.match(SRC, /if \(r && this\.composer === c\) this\.closeComposer\(\);\s*\/\/ a refusal keeps the note where it was typed\n\s*else if \(this\.composer !== c\) this\.settleAway\(c, note, r\);/,
+    "a landing closes the saving composer only, and with another composer open (or none) the settle acts on its own comment: a pin on where the code lives; the close's condition, the saving composer only, is executed by file-comments-save-held-composer.test.ts \"a reply started while a comment saves opens empty…\", \"a new comment started while a comment saves opens empty…\", \"while a comment saves, a new comment's Save waits…\" and \"with no save out the box still carries its words…\", each red when a landing closes whatever composer is open; the settle away by the same file, where settleAway never running reds 44 tests, among them \"a comment refused after a reply was started under its save, the reply's box still empty…\", \"a comment refused after the person typed in a reply started under its save…\" and \"Cancel during a comment's save, then a refusal…\"");
 });
 
 test("click-safety: ONE delegate() root for every control (the body row, which also holds the highlights), keyed expand state, flash on the direct buttons", () => {
@@ -811,7 +843,7 @@ test("click-safety: ONE delegate() root for every control (the body row, which a
   // the composer's input is never rebuilt, and the aside's own children are placed once per open, so a
   // poll re-render swaps section CHILDREN only and cannot drop the input's focus mid-word
   assert.match(SRC, /if \(!box\.contains\(this\.input\)\) box\.replaceChildren\(ref, this\.input, acts, err\);/);
-  assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
+  assert.match(SRC, /if \(!this\.root\.contains\(head\)\) this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log, this\.live\);/);
   assert.equal((SRC.match(/this\.root\.replaceChildren\(/g) || []).length, 1, "the aside's children are never rebuilt elsewhere");
   // the highlights carry the delegate's action and the comment id; painted through anchor-map, states located / context / detached
   // the Rendered paint defers the trim of its collapsed blanks to the pass (`trim: false`; anchor-map.ts trimCollapsedMarks runs
@@ -958,26 +990,26 @@ test("vocabulary and privacy: the person's words, never the format's; no persona
   const modelWords = (MODEL.match(/\b(thread|suggestion|annotation)s?\b/gi) || []).filter((w) => !new RegExp("--" + w).test(MODEL));
   assert.deepEqual([...new Set(MODEL.match(/[^-]\b(thread|annotation)s?\b/gi) || [])], [], "the model's only 'thread' is the --thread flag");
   void modelWords;
-  const newGuide = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges"));
+  const newGuide = filesSection();
   assert.doesNotMatch(newGuide, /\b(suggestion|annotation)s?\b/i);
   assert.doesNotMatch(newGuide.replace(/`[^`]*`/g, ""), /\bthreads?\b/i);
   // This file is new prose too, and its assertion messages print to the person on failure — so it scans itself,
   // with the guard's own regex lines set aside (an assertion message here once named the sessions pane by its old word).
   const SELF = web("file-comments.test.ts").split("\n").filter((l) => !l.includes("/fleet/i")).join("\n");
-  for (const [name, text] of [["file-comments.ts", SRC], ["file-comments-model.ts", MODEL], ["guide.md Files", newGuide], ["file-comments.test.ts", SELF]] as const) {
+  for (const [name, text] of [["file-comments.ts", SRC], ["file-comments-model.ts", MODEL], ["reference.md Files section", newGuide], ["file-comments.test.ts", SELF]] as const) {
     assert.doesNotMatch(text, /fleet/i, name + ": no new fleet identifiers or prose");
     assert.doesNotMatch(text, /\/home\/[a-z]/, name + ": no absolute home paths");
   }
 });
 
-test("docs: the guide covers the panel, the poll, the consent, either view and media, the log and its opt-out, and where to look when the action is missing; the ADR is accepted", () => {
-  const flat = (t: string) => t.replace(/\s+/g, " ");   // the guide wraps at 80 columns
-  const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
+test("docs: the reference covers the panel, the poll, the consent, either view and media, the log and its opt-out, and where to look when the action is missing; the ADR is accepted", () => {
+  const flat = (t: string) => t.replace(/\s+/g, " ");   // the reference wraps its lines
+  const files = flat(filesSection());
   for (const phrase of ["**Comments**", "**Track changes**", "**Send to session**", "Rendered or Raw", "**Comment on this file**", "image or a PDF",
     ".trackchanges/", "comments log", ".gitignore", "**File comments**", "**File editing**", "every few seconds", "**Re-place**"]) {
     assert.ok(files.includes(phrase), "Files section: " + phrase);
   }
-  const chat = flat(GUIDE.slice(GUIDE.indexOf("### The chat"), GUIDE.indexOf("### The feed")));
+  const chat = flat(refSection("\n## The chat pane in detail\n", "\n## The feed's layout controls\n"));
   assert.ok(chat.includes("quote chip"), "chips remain for one-off notes");
   assert.ok(chat.includes("**Comments**"), "…and point at the panel for anything worth keeping");
   assert.ok(files.includes("folder a session will write into"), "track the folder before the session writes");

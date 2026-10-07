@@ -6,7 +6,8 @@ entries behind the bell in the bottom bar's action cluster. This EXECUTES the re
 _LANDING_ERRS_JS in node against a DOM stub (the test_remotes_panel_render.py pattern — source pins
 can't catch scope slips in this class of inline JS) and drives the full story:
 
-  a visible pane's WS drop logs an entry + reddens the bell with an unread count; a repeat of the same
+  a visible pane's WS drop whose reconnect fails logs an entry + reddens the bell with an unread count (the
+  drop alone writes nothing since iOS item 4b, 2026-10-03: tests/test_conn_lost_on_failure.py); a repeat of the same
   drop coalesces (event-exact, no time window); a HIDDEN pane's drop logs nothing; opening the popover
   marks everything seen; panes can post {romp:'notify'}; per-row clear and Clear all empty the store;
   entries persist in localStorage.
@@ -16,6 +17,7 @@ Synthetic only — no network, no real DOM.
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -29,6 +31,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_errc", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  a served text with its comments blanked (loads no romp code)
 
 HARNESS = r"""
 'use strict';
@@ -65,12 +69,14 @@ const EL = {};
   EL[id] = withCls(mkEl(id));
 });
 const POSTED = [];   // what the shell posts into the feed iframe (revealCard)
-EL['f-feed'].contentWindow = { postMessage: (msg) => POSTED.push(msg) };
+EL['f-feed'].contentWindow = { postMessage: (msg) => { POSTED.push(msg); if (msg.romp === 'revealCard') SEQ.push('post'); } };
 const SETTINGS_POSTED = [];   // what it posts into the settings iframe: the unread count for the gear's Open log button (the gear's own page since 2026-09-10)
 EL['f-settings'].contentWindow = { postMessage: (msg) => SETTINGS_POSTED.push(msg) };
 const TOGGLES = [];  // window.__rompPaneToggle calls (revealing the feed pane on a jump)
+const SEQ = [];      // the jump's steps in order: the pane toggle, the tab switch (window.__rompMobileTab, review round 3) and the post into the feed
 const SENT = [];     // what the shell socket is asked to send (a jump with the Feed pane off here: openSession)
 let SHELL_OK = true, FEED_OFF = false;   // the socket is open; the gear's Panes section has the Feed pane off in this browser
+let MOBILE_ON = true;   // the shell's layout probe (window.__rompMobileOn): the phone layout unless a step flips it (review round 4, correctness-3)
 EL['rail-errs']._num = mkEl('');   // the <text class=rerr-n> INSIDE each bell svg (the in-bell count)
 EL['merr']._num = mkEl('');
 function bellNum() { return EL['rail-errs']._num.textContent; }
@@ -78,7 +84,10 @@ const BODY = new Set(['po-chat', 'po-feed', 'po-timeline']);   // fleet pane hid
 const WL = {};
 global.window = {
   addEventListener: (k, f) => { (WL[k] = WL[k] || []).push(f); },
-  __rompPaneToggle: (k, to) => TOGGLES.push(k + ':' + to),
+  __rompPaneSourceOk: () => true,   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
+  __rompPaneToggle: (k, to) => { TOGGLES.push(k + ':' + to); SEQ.push('toggle:' + k + ':' + to); },
+  __rompMobileTab: (t) => { SEQ.push('tab:' + t); STORE['romp-mobile-tab'] = t; },   // the mobile script's show(): on the phone the pane's tab comes forward (pass 3, extra9-1); it persists the remembered tab whatever the layout, which is why the Log row gates the call (pass 4)
+  __rompMobileOn: () => MOBILE_ON,   // the layout probe the Log row's gate reads (review round 4, correctness-3 and regression-3)
   __rompShellSend: (m) => { SENT.push(m); return SHELL_OK; },
   __rompPaneEnabled: (k) => !(k === 'feed' && FEED_OFF),   // the head script's reader of the Panes setting, stubbed
 };
@@ -94,16 +103,20 @@ function notes() { return JSON.parse(STORE['romp:notices'] || '[]'); }
 DRIVER = r"""
 const out = {};
 // 1) a VISIBLE pane's drop logs an entry + reddens the bell (no count badge — it clipped, 2026-07-27)
+// ...once its reconnect fails (iOS item 4b, 2026-10-03: the shim's wsFail word, a dial that closed without opening; the drop alone writes nothing)
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterDrop = { n: notes().length, text: notes()[0].text,
   red: EL['rail-errs']._cls.has('has'), mred: EL['merr']._cls.has('has'),
   num: bellNum(), mnum: EL['merr']._num.textContent };
 // 2) up then down again — the SAME error coalesces into one entry with a count (no flood)
 post({ romp: 'wsState', app: 'chat', state: 'up' });
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterRepeat = { n: notes().length, times: notes()[0].n };
-// 3) a HIDDEN pane's drop logs nothing (fleet is toggled off)
-post({ romp: 'wsState', app: 'fleet', state: 'down' });
+// 3) a HIDDEN pane's drop logs nothing, its failed reconnect included (the Waiting pane: no po-waiting class here)
+post({ romp: 'wsState', app: 'waiting', state: 'down' });
+post({ romp: 'wsFail', app: 'waiting' });
 out.afterHidden = { n: notes().length };
 // 4) panes can feed the center directly
 post({ romp: 'notify', kind: 'warn', text: 'TESTHOST delivery failed' });
@@ -134,6 +147,7 @@ out.filterBar = { n: EL['rerr-fgrid'].children.length,
 // 10) muting offline: its entries stop rendering, stop counting, and the live-down cue stays dark
 EL['rerr-fgrid'].children[0].fire('click');
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterMute = { stored: STORE['romp:errFilters'], n: notes().length,
   red: EL['rail-errs']._cls.has('has'),
   emptyText: EL['rerr-list'].children[0].textContent };
@@ -149,14 +163,26 @@ out.afterMany = { num: bellNum() };
 post({ romp: 'notify', kind: 'stalled', text: 'api \u2014 stalled: held', sid: 'TESTSID', itemId: 'TESTSID:g9' });
 const jumpRow = EL['rerr-list'].children[0];
 out.jump = { linky: jumpRow.className.indexOf('link') >= 0 };
+SEQ.length = 0;
 jumpRow.fire('click');
 out.jump.closed = EL['rerr-back'].hidden;
+out.jump.seq = SEQ.slice();
 out.jump.posted = POSTED.filter((m) => m.romp === 'revealCard').pop() || null;   // paint() also posts the unread count (T290)
 out.unseenPosts = SETTINGS_POSTED.filter((m) => m.romp === 'logUnseen').map((m) => m.n);
 out.unseenToFeed = POSTED.filter((m) => m.romp === 'logUnseen').length;   // none: the feed page hosts no gear
 out.jump.toggles = TOGGLES.join('|');
+out.jump.store = STORE['romp-mobile-tab'] === undefined ? 'absent' : STORE['romp-mobile-tab'];   // the phone's switch wrote the remembered tab (the stub's model of show())
 // …while a kernel-minted entry (no target) is not clickable
 out.plainRowLinky = EL['rerr-list'].children[1].className.indexOf('link') >= 0;
+// 13b) the same jump on a DESKTOP dashboard (review round 4, correctness-3 and regression-3): the tab switch is gated on the layout, so the
+// mobile script's show() does not run and the remembered phone tab (romp-mobile-tab) is not written; the reveal and the post are unchanged.
+// The popover closed on the jump above and a closed Log does not re-render its rows, so it is reopened first (step 14's shape).
+MOBILE_ON = false; SEQ.length = 0; delete STORE['romp-mobile-tab'];
+EL['rail-errs'].fire('click');
+EL['rerr-list'].children[0].fire('click');
+out.jumpDesktop = { seq: SEQ.slice(), store: STORE['romp-mobile-tab'] === undefined ? 'absent' : STORE['romp-mobile-tab'], closed: EL['rerr-back'].hidden,
+  posted: POSTED.filter((m) => m.romp === 'revealCard').pop() || null };
+MOBILE_ON = true;
 // 14) the Feed pane off in this browser (the gear's Panes section): a card's entry (itemId: the feed's badge mirror)
 // is not logged; an entry naming only a session lands, and its jump opens the session in the chat (openSession on the
 // shell socket), never toggling or posting into a feed that is not here; a socket that is down says so in the Log
@@ -269,12 +295,16 @@ class ErrorCenterExecutes(unittest.TestCase):
         # muting the judge's 'warning' never mutes a change of yours that did not land. The label widened to
         # 'refused' on 2026-09-10 (review round 3), when the kind came to hold a restart the manager refused
         # and a state file that could not be read as well: 'not saved' named one of the three.
+        # 'cards frozen' joined on 2026-09-21 (the maintainer's round 6 of the wsBytesByHost review, ui-1): a machine's live
+        # card update that could not be applied, and another after the fresh copy it sent back, posted the kindless catch-all
+        # and landed here unlabelled with no toggle; its own kind, registered on fork lines after the tables, so it can be read
+        # and muted like the rest (ui/webview/notify-kinds-registered.test.ts holds every posted kind to the three tables).
         a = self.out["filterBar"]
-        self.assertEqual(a["n"], 14)
+        self.assertEqual(a["n"], 15)
         self.assertEqual(a["first"], "offline")
         self.assertEqual(a["labels"],
                          "offline|limit|judge|warning|stalled|follow-up failed|retrying|api error|"
-                         "sdk|fleet sync|jump failed|cleared|refused|not sent")
+                         "sdk|fleet sync|jump failed|cleared|refused|not sent|cards frozen")
 
     def test_muting_a_kind_hides_counts_and_live_cue_but_keeps_the_entries(self):
         a = self.out["afterMute"]
@@ -303,7 +333,27 @@ class ErrorCenterExecutes(unittest.TestCase):
         self.assertIn(1, self.out["unseenPosts"]); self.assertIn(0, self.out["unseenPosts"])
         self.assertEqual(self.out["unseenToFeed"], 0, "the count rides into the settings iframe (the gear's own page), not the feed")
         self.assertIn("feed:true", a["toggles"], "the feed pane is revealed for the jump")
+        # review round 3 (2026-09-19, extra9-1): the jump SHOWS the feed's tab on the phone (window.__rompMobileTab('feed'), the browseFiles
+        # relay's precedent) between the toggle and the post, so the shell's show() paints the feed's held board and posts its panes word in
+        # this click's task, before the revealCard message: the feed finds the card at the tap and parks nothing on this road
+        self.assertEqual(a["seq"], ["toggle:feed:true", "tab:feed", "post"], "the order inside the click: reveal the pane, show its tab, then post the jump")
+        self.assertEqual(a["store"], "feed", "the phone's switch ran show(), which persists the remembered tab (the stub's model; the desktop case below asserts the gate against it)")
+        js = km._LANDING_ERRS_JS
+        self.assertIn("try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "the switch is gated on the layout probe, the viewFile relay's shape (review round 4, correctness-3 and regression-3)")
+        self.assertNotIn("try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "no ungated switch left in the Log row's script")
+        self.assertLess(js.index("__rompPaneToggle('feed',true)"), js.index("__rompMobileTab('feed')"))
+        self.assertLess(js.index("__rompMobileTab('feed')"), js.index("{romp:'revealCard',itemId:n.tgt.itemId||''"))
         self.assertFalse(self.out["plainRowLinky"], "a kernel-minted entry with no target is not a link")
+
+    def test_a_desktop_dashboards_log_row_jump_switches_no_tab_and_leaves_the_remembered_phone_tab_alone(self):
+        # review round 4 (2026-09-19, correctness-3 and regression-3): the desktop grid shows the feed pane already, and the mobile script's
+        # show() persists romp-mobile-tab and sets body data-tab on every layout, so an ungated switch rewrote the remembered phone tab from a
+        # desktop click; the call is gated on the layout probe the way the viewFile relay's is. The reveal and the post are the same on both layouts.
+        d = self.out["jumpDesktop"]
+        self.assertEqual(d["seq"], ["toggle:feed:true", "post"], "on the desktop the click reveals the pane and posts the jump, with no tab switch between them: %r" % (d["seq"],))
+        self.assertEqual(d["store"], "absent", "…and the remembered phone tab is not written (the store has no romp-mobile-tab): %r" % (d,))
+        self.assertTrue(d["closed"], "the popover closes on the jump, as on the phone")
+        self.assertEqual(d["posted"], {"romp": "revealCard", "itemId": "TESTSID:g9", "sid": "TESTSID", "gesture": True}, "the same reveal reaches the feed")
 
     def test_with_the_feed_pane_off_here_card_entries_are_not_logged_and_a_jump_opens_the_session_in_the_chat(self):
         # the user 2026-09-10: a browser with the Feed pane off in the gear's Panes section shows no card here, so a
@@ -413,7 +463,8 @@ class ErrorCenterWiring(unittest.TestCase):
         self.assertIn("{romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||'',gesture:true}", html)
         # timestamps wear the SHARED recency ramp: the standalone dist bundle is loaded BEFORE the
         # errs script and read behind a feature test (dim default if the bundle is stale/missing)
-        self.assertLess(html.index("/dist/age-color-global.js"), html.index("window.__rompAgeColor"))
+        code = served_css.code(html)   # offsets preserved, comments blanked: a script comment spells __rompAgeColor before the code does
+        self.assertLess(code.index("/dist/age-color-global.js"), code.index("window.__rompAgeColor"))
         self.assertIn("if(window.__rompAgeColor)tm.style.color=window.__rompAgeColor(", html)
         self.assertIn("window.__rompNotify=function", html)
         # the mobile bar routes its bell to the same popover
@@ -436,8 +487,10 @@ window.__rompNotify = function (kind, text, tgt) { if (kind === 'conn') CONN.pus
 post({ romp: 'wsState', app: 'chat', state: 'parked' });
 out.afterPark = { n: notes().length, conn: CONN.length, red: EL['rail-errs']._cls.has('has'), mred: EL['merr']._cls.has('has') };
 // a real drop after the park (the tap's dial refused) logs the entry and lights the cue, as any drop does: the tracking
-// line reads prev as parked, not down, so the up->down rule fires
+// line reads prev as parked, not down, so the up->down rule fires, and the refused dial's wsFail word writes the entry
+// (iOS item 4b, 2026-10-03: the drop alone writes nothing)
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterDrop = { n: notes().length, conn: CONN.length, red: EL['rail-errs']._cls.has('has'), text: notes()[0] ? notes()[0].text : '' };
 EL['rail-errs'].fire('click');   // read the entry: from here the live cue alone keeps the bell red
 out.afterRead = { red: EL['rail-errs']._cls.has('has') };
@@ -455,7 +508,7 @@ class ParkedPaneCue(unittest.TestCase):
     """D2 (2026-09-18): the center against a parked pane's words. A pane off screen on the phone parks its return redial
     until its tab is tapped and posts wsState 'parked'; the shell keeps that as its own state, never 'down', so the live
     cue stays dark and no "connection lost" entry is logged: nothing is lost and nothing is reconnecting. A real drop after
-    the park logs and lights as before; a re-park clears the live cue; an open reads up."""
+    the park logs (once its dial fails, the wsFail word) and lights as before; a re-park clears the live cue; an open reads up."""
 
     @classmethod
     def setUpClass(cls):
@@ -475,7 +528,7 @@ class ParkedPaneCue(unittest.TestCase):
         self.assertEqual(self.out["afterPark"], {"n": 0, "conn": 0, "red": False, "mred": False}, "parked is not down: no conn call, no entry, no red on either bell")
 
     def test_a_real_drop_after_the_park_logs_and_lights_as_before(self):
-        # P2: a later down on the same pane still logs, because prev reads parked, not down
+        # P2: a later down on the same pane still logs once its reconnect fails, because prev reads parked, not down
         a = self.out["afterDrop"]
         self.assertEqual(a["n"], 1)
         self.assertEqual(a["conn"], 1, "the transition rule fires: prev was parked, not down")

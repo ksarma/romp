@@ -39,14 +39,13 @@ ui/webview/feed-view-state.test.ts, the kernel relay tests/test_kernel_active_ch
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -66,14 +65,6 @@ API_WORKING = "cccccccc-1111-2222-3333-000000000011"
 WEB_KEYS = {"f:a:" + WEB_BLOCKED, "f:a:" + WEB_WORKING, "f:a:" + WEB_DONE}
 
 NO_FOCUS = "No session is focused in the chat"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -132,7 +123,8 @@ const survey = () => page.evaluate(() => {
   return {
     section: !!sec, label: sec ? sec.getAttribute("aria-label") : null,
     first: list && list.firstElementChild ? (list.firstElementChild.id || list.firstElementChild.className) : null,
-    aboveBoard: sec ? sec.nextElementSibling === board : null,
+    // the rule is the section's next sibling and the board follows it (the divider under the box, the user 2026-09-19)
+    aboveBoard: sec ? !!(sec.nextElementSibling && sec.nextElementSibling.matches("hr.feed-focus-divider") && sec.nextElementSibling.nextElementSibling === board) : null,
     kids: sec ? Array.from(sec.children).map((c) => c.tagName.toLowerCase() + "." + c.className.split(" ").join(".")) : [],
     headShown: shown(q(".feed-focus-head")), headName: q(".feed-focus-head .fname")?.textContent ?? null,
     labelText: q(".feed-focus-fold")?.textContent ?? null, labelCaret: q(".feed-focus-caret")?.textContent ?? null,   // T410: the label and its caret
@@ -141,7 +133,7 @@ const survey = () => page.evaluate(() => {
     chips: sec ? Array.from(sec.querySelectorAll(".feed-focus-cols .feed-col-head .fcol-chip")).map((c) => c.textContent) : [],
     counts: sec ? Object.fromEntries(COLS.map((k) => [k, q(".feed-focus-cols .col-" + k + " .feed-col-count")?.textContent ?? null])) : {},
     folds: sec ? sec.querySelectorAll(".feed-focus-cols .fcol-fold").length : 0,   // one per block (T410)
-    divider: !!q("hr.feed-focus-divider"),
+    divider: !!(sec && sec.nextElementSibling && sec.nextElementSibling.matches("hr.feed-focus-divider")),
     secCards: cards(sec), boardCards: cards(board),
     hovered: !!document.querySelector(".fitem:hover"),
     stored: localStorage.getItem("romp:feedview"),
@@ -152,11 +144,21 @@ const light = async (on) => {   // LIGHT theme: the classes the feed's theme swi
   await page.waitForTimeout(250);
 };
 const theme = () => page.evaluate(() => {
-  const d = document.querySelector("#feed-focus .feed-focus-divider"), e = document.querySelector("#feed-focus .feed-focus-empty"),
+  // the rule after the box (the base drew it inside; the fallback lets the base's run reach the value asserts)
+  const d = document.querySelector("#feed-focus + hr.feed-focus-divider") || document.querySelector("#feed-focus .feed-focus-divider"), e = document.querySelector("#feed-focus .feed-focus-empty"),
         n = document.querySelector("#feed-focus .feed-focus-head .fname"), c = document.querySelector("#feed-focus .feed-focus-fold");
   if (!d || !e || !n || !c) return null;
-  return { divider: getComputedStyle(d).borderTopColor, dividerWidth: getComputedStyle(d).borderTopWidth, empty: getComputedStyle(e).color, label: getComputedStyle(c).color,
-           emptySize: getComputedStyle(e).fontSize, headSize: getComputedStyle(n).fontSize, labelSize: getComputedStyle(c).fontSize };
+  const sec = document.getElementById("feed-focus"), plainCol = document.querySelector("#feed-cols .feed-col"), card = sec.querySelector(".fitem[data-key]");
+  const cs = getComputedStyle(sec);
+  const secHead = sec.querySelector(".feed-focus-cols .feed-col-head"), plainHead = document.querySelector("#feed-cols .feed-col-head");
+  return { divider: getComputedStyle(d).borderTopColor,
+           // round two (the user 2026-09-19): a column-head strip inside the box against the board's own, and where the rule sits
+           headBg: secHead ? getComputedStyle(secHead).backgroundColor : null, plainHeadBg: plainHead ? getComputedStyle(plainHead).backgroundColor : null,
+           ruleTop: d.getBoundingClientRect().top, secBottom: sec.getBoundingClientRect().bottom, dividerWidth: getComputedStyle(d).borderTopWidth, empty: getComputedStyle(e).color, label: getComputedStyle(c).color,
+           emptySize: getComputedStyle(e).fontSize, headSize: getComputedStyle(n).fontSize, labelSize: getComputedStyle(c).fontSize,
+           // the region's tint (the user 2026-09-18): the section's own ground against a plain board column's and a card's inside it
+           tint: cs.backgroundColor, radius: cs.borderRadius, padLeft: cs.paddingLeft,
+           plainCol: plainCol ? getComputedStyle(plainCol).backgroundColor : null, card: card ? getComputedStyle(card).backgroundColor : null };
 });
 // (a) the default: the switch off, no section
 const off = await survey();
@@ -253,33 +255,29 @@ class ServedFocusedSessionSection(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served guard needs them")
         cls.lab = tempfile.mkdtemp(prefix="feedfocus-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         os.makedirs(state, exist_ok=True)
         with open(os.path.join(state, "session-hosts"), "w") as fh:   # a lab root of its own pins the hosts OFF (CLAUDE.md 2026-09-11)
             fh.write("off\n")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-feedfocus"
         env = _lab.kernel_env(cls.lab, os.path.join(cls.lab, "claude"), dist, cls.port, cls.token)
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(os.path.join(cls.lab, "kernel.log"), "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     @staticmethod
@@ -335,9 +333,9 @@ class ServedFocusedSessionSection(unittest.TestCase):
         self.assertTrue(on["section"], "the click built the section: %r" % on)
         self.assertFalse(on["hovered"], "no card is hovered (a hovered card would hold the repaint): %r" % on)
         self.assertEqual(on["first"], "feed-focus", "the section is the first child of #feed-list: %r" % on["first"])
-        self.assertTrue(on["aboveBoard"], "…directly before #feed-cols")
+        self.assertTrue(on["aboveBoard"], "…then its rule, then #feed-cols (the divider under the box, the user 2026-09-19)")
         self.assertEqual(on["label"], "the chat's focused session")
-        self.assertEqual(on["kids"], ["div.feed-focus-head", "div.feed-focus-empty", "div.feed-cols.feed-focus-cols", "hr.feed-focus-divider"], "head, quiet line, columns, rule: %r" % on["kids"])
+        self.assertEqual(on["kids"], ["div.feed-focus-head", "div.feed-focus-empty", "div.feed-cols.feed-focus-cols"], "head, quiet line, columns; the rule is the box's sibling: %r" % on["kids"])
         self.assertTrue(on["divider"], "the rule under the section")
         # headed by the LABEL (T410): "Current session:" then the session's name, the caret open; the cap is gone
         self.assertTrue(on["headShown"], "the head shows for a focused session")
@@ -365,6 +363,22 @@ class ServedFocusedSessionSection(unittest.TestCase):
         self.assertEqual(dark["divider"], "rgba(255, 255, 255, 0.22)", "dark: the 2px rule in --rule-strong (T410): %r" % dark)
         self.assertEqual(lit["divider"], "rgba(0, 0, 0, 0.22)", "light: the light theme's --rule-strong: %r" % lit)
         self.assertEqual((dark["dividerWidth"], lit["dividerWidth"]), ("2px", "2px"), "a 2px rule in both themes (T410)")
+        # the whole region on the very faint accent tint (the user 2026-09-18): the section's computed ground is the theme's
+        # --accent-tint, a plain board column carries none of it, and a card inside keeps its own ground
+        self.assertEqual(dark["tint"], "rgba(156, 210, 255, 0.04)", "dark: the section's ground is the accent tint (the base had none): %r" % dark)
+        self.assertEqual(lit["tint"], "rgba(194, 65, 12, 0.04)", "light: the light theme's own tint: %r" % lit)
+        for th, t in (("dark", dark), ("light", lit)):
+            self.assertIsNotNone(t["plainCol"], "%s: a plain board column outside the section (the selector matched nothing, so the guard below would pass vacuously)" % th)
+            self.assertNotEqual(t["plainCol"], t["tint"], "%s: the rest of the feed carries no tint: %r" % (th, t["plainCol"]))
+            self.assertIsNotNone(t["card"], "%s: a card inside the section" % th)
+            self.assertNotEqual(t["card"], t["tint"], "%s: the cards keep their own ground: %r" % (th, t["card"]))
+            self.assertEqual((t["radius"], t["padLeft"]), ("8px", "8px"), "%s: a small radius and a margin around the cards: %r" % (th, (t["radius"], t["padLeft"])))
+            # round two (the user 2026-09-19): the tint runs ALL the way across the box. A column-head strip inside it paints no
+            # ground of its own (the base painted the page ground, a darker band across the row), while the board's own head
+            # below keeps its ground; and the divider sits under the box, outside the tint, the rounded bottom edge above it
+            self.assertEqual(t["headBg"], "rgba(0, 0, 0, 0)", "%s: a column head inside the box is transparent, so the tint reads through: %r" % (th, t["headBg"]))
+            self.assertNotEqual(t["plainHeadBg"], "rgba(0, 0, 0, 0)", "%s: the board's own head keeps its ground: %r" % (th, t["plainHeadBg"]))
+            self.assertGreaterEqual(t["ruleTop"], t["secBottom"], "%s: the divider's top is at or below the box's bottom: %r" % (th, (t["ruleTop"], t["secBottom"])))
         self.assertNotEqual(dark["empty"], lit["empty"], "the quiet line's colour follows --dim across themes: %r vs %r" % (dark, lit))
         self.assertNotEqual(dark["label"], lit["label"], "…and so does the label text's")
         self.assertEqual(lit["labelSize"], dark["labelSize"], "geometry is not theme: the label's size holds across themes")

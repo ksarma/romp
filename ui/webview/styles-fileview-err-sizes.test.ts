@@ -230,7 +230,7 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(PANEL, /composerBox = el\("div", "fc-composer"\);/);
   assert.match(PANEL, /composerActs = el\("div", "fc-actions"\);/);
   assert.match(PANEL, /composerErr = el\("div"\);/, "the composer's error slot is a class-less div");
-  assert.match(PANEL, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
+  assert.match(PANEL, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log, this\.live\);/);
   // the fresh list lands in the cards section — wholesale, or grafted around a reply's box standing in a card the fresh
   // list keeps (swapCards; file-comments-reply-keep.test.ts) — and the composer is rendered after it, before the send
   // section: the box is placed into a card of the fresh list (the reply follow-on, 2026-09-07; file-comments-reply-place.test.ts)
@@ -267,7 +267,8 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(PANEL, /const x = btn\("✕", "fcerrx", "fileview-btn fc-x"\);[^\n]*row\.appendChild\(x\);/);
   // …and where each slot's row lands
   assert.match(PANEL, /\[this\.loader\("track"\), this\.errRow\("track"\), this\.errRow\("head"\), this\.errRow\("poll"\), this\.errRow\("edit"\)\]\) if \(n\) head\.appendChild\(n\);/);
-  assert.match(PANEL, /const err = this\.composerErr;\n\s*err\.replaceChildren\(\.\.\.\[this\.loader\("composer"\), this\.errRow\("composer"\)\]/);
+  assert.match(PANEL, /const err = this\.composerErr;\n(?:\s*\/\/[^\n]*\n)*\s*const own = this\.ownRefusal && this\.ownRefusal\.c === c \? this\.ownRefusal\.err : null;\n\s*const row = own \? this\.errRow\("composer", own\.reload && this\.busy\.has\("composer"\) \? \{ \.\.\.own, reload: false \} : own\)\n\s*: this\.savingFor && this\.savingFor !== c \? null : this\.errRow\("composer"\);\n\s*err\.replaceChildren\(\.\.\.\[waits \? null : this\.loader\("composer"\), row, \.\.\.this\.heldRows\(\)\]/,
+    "the composer's row lands under the box: a restored comment's own row, under that comment alone, else the slot's, the saving composer's alone while its write is out, and the notes for refused comments after it (a pin on where the code lives. Executed by file-comments-save-held-composer.test.ts: the restored comment's own row by \"a refused comment brought back while another comment's save is out shows its own refusal row…\" and 12 more tests there, among them \"Cancel during a comment's save, then a refusal…\", red when the render ignores it; under that comment alone by \"a refused comment's own refusal row shows under that comment alone: a reply opened in its place…\" and \"…: a new comment opened in its place…\", red when it shows under any composer; its Reload withheld during another save by \"a comment refused with a Reload, brought back while another comment's save is out…\"; the slot's row kept from another composer by \"a comment refused after the person typed in a reply started under its save…\"; the loader kept from it by \"while a comment saves, a new comment's Save waits…\"; the notes by 37 tests there, among them \"the refused comment's note stays through a re-render…\")");
   assert.match(PANEL, /box\.replaceChildren\(ref, this\.input, acts, err\);/);
   assert.match(PANEL, /\[this\.loader\("card:" \+ c\.id\), this\.errRow\("card:" \+ c\.id\)\]\) if \(n\) card\.appendChild\(n\);/);
   assert.match(PANEL, /\[this\.loader\("send"\), this\.errRow\("send"\)\]\) if \(x\) box\.appendChild\(x\);/);

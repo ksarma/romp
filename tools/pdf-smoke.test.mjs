@@ -5,9 +5,10 @@
 // pdf.js supports under Node: it runs its parser on the main thread from a worker file beside it, so
 // nothing is configured and no canvas library is needed for the page count and the viewport.
 //
-// Skips, by name, when the dependency is not installed: CI's shell job runs tools/*.test.mjs without an
-// npm ci, so the assertion runs in the vscode-extension job (which installs) and skips in the shell job,
-// and the skip line says which install would make it run. A developer without node_modules sees the same.
+// Skips, by name, when the dependency is not installed: CI's vendored-tooling job runs tools/*.test.mjs
+// without an npm ci, so the assertion runs in the vscode-extension job (which installs) and skips in the
+// vendored-tooling job, and the skip line says which install would make it run. A developer without
+// node_modules sees the same.
 //
 // Run: node --test tools/pdf-smoke.test.mjs
 import { test } from 'node:test';
@@ -68,7 +69,7 @@ test('pdfjs-dist opens a two-page synthetic PDF: two pages, each with a positive
 test('the installed pdfjs-dist is the 6.x line, Apache-2.0, and ships the worker the esbuild entry names', { skip: SKIP }, () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8'));
   assert.match(pkg.version, /^6\./, 'the chunk is written against pdf.js 6');
-  assert.equal(pkg.license, 'Apache-2.0', 'the license docs/install.md names');
+  assert.equal(pkg.license, 'Apache-2.0', 'the license docs/reference.md\'s License section names');
   assert.ok(fs.existsSync(path.join(PKG_DIR, 'build', 'pdf.worker.mjs')), 'vscode-extension/esbuild.js bundles this file as dist/pdf-worker.js');
 });
 

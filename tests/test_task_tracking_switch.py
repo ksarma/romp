@@ -32,7 +32,7 @@ sys.path.insert(0, HERE)
 from romp_load import load_source   # noqa: E402
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)   # a live kernel's export outranks the XDG floor
-os.environ.setdefault("ROMP_KERNEL_PORT", "0")   # never the live kernel's port
+os.environ.setdefault("ROMP_KERNEL_PORT", "1")   # never the live kernel's port: the floor's dead port (tests/conftest.py)
 
 km = load_source("romp_kernel_tasktrack", os.path.join(BIN, "romp-kernel"))
 JUDGE_SRC = Path(ROOT, "kernel", "judge.py").read_text()
@@ -368,7 +368,11 @@ class ThePanesNotice(_Base):
             self.assertIn("<button id=tt-off-btn type=button class=notice-act>Open Task tracking settings</button>", page)
         km._set_task_tracking(False, gt=1)
         feed, fleet = km._feed_page(), km._fleet_page()
-        self.assertIn("<div id=tt-off class=tt-off style=", feed, "off: the notice shows")
+        # the off render is the on render less its hidden attribute, and the served-pins census judges a pin over _feed_page()
+        # against the on render (tests/test_served_pins_read_elements.py), where a literal spanning that attribute occurs nowhere
+        # and fails as a verdict that proves nothing: the notice's opening up to the attribute is pinned here, and the attribute's
+        # absence by the two assertNotIn below
+        self.assertIn("<div id=tt-off class=tt-off", feed, "off: the notice is in the page, with no hidden attribute (below)")
         self.assertIn("there is no feed to show", feed)
         self.assertIn("there is no outline to show", fleet)
         self.assertNotIn("class=tt-off hidden", feed)
@@ -527,15 +531,24 @@ class TheMeshRoad(_Base):
         self.assertEqual((v["taskTracking"], v["settingsGt"]["task-tracking"]), (False, 0), "the report survives the stamp")
         self.assertEqual(km._setting_stored_gt("task-tracking"), 0)
 
-    def test_a_kernel_attached_after_the_flip_adopts_the_peers_newer_off_and_an_older_stamp_teaches_nothing(self):
+    def test_a_kernel_attached_after_the_flip_is_proposed_the_peers_newer_off_and_keeps_its_switch(self):
+        """Until 2026-09-18 the peer's newer off was ADOPTED here and this kernel's judges stood down with no word to the user
+        (the user's incident: a new machine attached with tracking off and the panes vanished). Phase one A of
+        plans/settings-across-machines.md: the newer off is a proposal the user answers in Settings; the switch stays on."""
         self.assertTrue(km._task_tracking_on())
-        out = km._adopt_peer_settings("TESTHOST", {"settings": {"taskTracking": False}, "settingsGt": {"task-tracking": 7000}})
-        self.assertIn("task-tracking", out)
-        self.assertFalse(km._task_tracking_on(), "adopted: this kernel's judges stand down too")
-        self.assertEqual(km._setting_stored_gt("task-tracking"), 7000, "…under the peer's stamp")
-        out = km._adopt_peer_settings("TESTHOST", {"settings": {"taskTracking": True}, "settingsGt": {"task-tracking": 6000}})
-        self.assertEqual(out, [], "an older stamp teaches nothing")
-        self.assertFalse(km._task_tracking_on())
+        leg = getattr(km, "_propose_peer_settings", None) or getattr(km, "_adopt_peer_settings")   # the base's road at the base
+        out = leg("TESTHOST", {"settings": {"taskTracking": False}, "settingsGt": {"task-tracking": 7000}})
+        self.assertTrue(km._task_tracking_on(), "nothing applied: the judges keep running here (the base turned the switch off)")
+        self.assertEqual(out, ["task-tracking"], "a proposal is pending")
+        self.assertEqual(km._setting_stored_gt("task-tracking"), 0, "the store's stamp did not move")
+        self.assertEqual(km._settings_proposals_map()["task-tracking"], [{"host": "TESTHOST", "value": False, "gt": 7000, "current": True}], "one record per proposing machine (round two)")
+        out = km._propose_peer_settings("TESTHOST", {"settings": {"taskTracking": True}, "settingsGt": {"task-tracking": 6000}})
+        self.assertEqual(out, [], "an older stamp teaches nothing, and its stale agreement drops no record")
+        self.assertIn("task-tracking", km._settings_proposals_map())
+        ack = km._answer_setting_proposal({"store": "task-tracking", "gt": 7000, "answer": "apply"})
+        self.assertTrue(ack["ok"], ack)
+        self.assertFalse(km._task_tracking_on(), "the user's Apply is what turns it off, under the peer's stamp")
+        self.assertEqual(km._setting_stored_gt("task-tracking"), 7000)
 
 
 class ThePushWhileOff(_Base):

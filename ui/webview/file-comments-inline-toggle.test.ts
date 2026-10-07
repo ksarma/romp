@@ -24,7 +24,10 @@ import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../tes
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
 const SETTINGS = web("settings.ts");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files section lives in docs/reference.md ("## The Files pane", up to the Artifacts pane) since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved every fork paragraph there).
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const REF_FILES = ((at: number) => REF.slice(at, REF.indexOf("\n## The Artifacts pane", at)))(REF.indexOf("\n## The Files pane\n"));
 const PLAN = fs.readFileSync(path.resolve(process.cwd(), "..", "plans", "file-review.md"), "utf8");
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
@@ -322,7 +325,8 @@ function rows(code: El, src: string): void {
   }));
 }
 const el = (tag: string, ...kids: Array<El | string>): El => { const e = new El(tag); for (const k of kids) e.appendChild(typeof k === "string" ? new Txt(k) : k); return e; };
-/** A file-authored inline element the sanitizer keeps: `<span data-act=… data-id=…>text</span>`. */
+/** A file-authored inline element carrying the panel's attribute names, `<span data-act=… data-id=…>text</span>`, handed to the
+ *  panel as written: the sanitizer strips an author's data-* (md-sanitize.ts), and the panel's own rule (owns) refuses it too. */
 const fileSpan = (act: string, id: string, text: string): El => { const s = el("span", text); s.dataset.act = act; s.dataset.id = id; return s; };
 /** marked's rendering of DOC, built by hand: one element per block, in order, holding the block's text. */
 function renderedDoc(box: El, intro?: El): void {
@@ -528,7 +532,7 @@ test("off: one click repaints at once with no status ask — no change mark in e
   assert.equal(w.body.querySelectorAll(".fc-hl").length, 1);
   // a poll's repaint keeps the person's choice (the field, not a per-paint read of the DOM)
   toggle(aside)!.click(); await flush();
-  w.ctx.reload();   // the viewer re-rendered the body: onRendered → paintAll
+  w.ctx.reload();   // the viewer re-rendered the body: onRendered → #latchCardState → paintPass
   await flush();
   assert.equal(marksOf(w).length, 0, "a repaint paints no mark while the toggle is off");
   assert.equal(toggle(aside)!.dataset.on, "0");
@@ -588,7 +592,7 @@ test("a flip elsewhere — the settings signal another pane or the gear raises, 
 
 test("pins: the delegate action, the header's order, the store's key and default, the paint guard, the tag guard, the listener's install, the guide and the plan", () => {
   assert.match(SRC, /fcinline: \(\) => this\.toggleInline\(\),/, "the toggle is one of the panel's own delegated actions (click-safe through the one root)");
-  assert.match(SRC, /private toggleInline\(\): void \{\n\s+this\.inline = !this\.inline;\n\s+saveSettings\(\{ changesInline: this\.inline \}\);\n\s+this\.paintAll\(\);\n\s+\}/, "flip, write the store, repaint — no request");
+  assert.match(SRC, /private toggleInline\(\): void \{\n\s+this\.inline = !this\.inline;\n\s+saveSettings\(\{ changesInline: this\.inline \}\);\n\s+this\.#latchCardState\("gesture"\);[^\n]*\n\s+\}/, "flip, write the store and repaint, the card-state rule's event 3 (file-comments.ts, #cardState's doc); no request; a source pin only, whose executed witnesses are this file's case on one click repainting at once with no status ask, and file-comments-changes-review2.test.ts's roads text-inline-over-content and text-inline-over-pane");
   const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
   const pos = (s: string) => { const i = head.indexOf(s); assert.ok(i >= 0, s); return i; };
   assert.ok(pos('btn("Track changes", "fctrack", "fileview-btn fc-toggle")') < pos('btn("Show changes inline", "fcinline", "fileview-btn fc-toggle")'), "beside Track changes, after it");
@@ -596,10 +600,10 @@ test("pins: the delegate action, the header's order, the store's key and default
   assert.match(head, /if \(s && \(s\.hunks \|\| \[\]\)\.length && !this\.ctx\.editing\(\)\) \{\n\s+const i = btn\("Show changes inline"/, "offered while the file has changes and the read view is up");
   assert.match(head, /i\.dataset\.on = this\.inline \? "1" : "0";\n\s+i\.setAttribute\("aria-pressed", this\.inline \? "true" : "false"\);/, "the two-state button's state, as Track changes wears it");
   assert.match(SRC, /inline = loadSettings\(\)\.changesInline;/, "read from the shared store when the panel is made");
-  assert.match(SRC, /private paintChanges\(root: Element, src: string, rendered: boolean, deferTrim = false\): void \{\n\s+const s = this\.status;\n\s+if \(!this\.inline\) return;/, "off: the change painters are not called, in either view");
-  assert.match(SRC, /\} else if \(!painted && this\.inline && !editing && !inFlux && src !== null && this\.ctx\.mode\(\) !== "media"\) \{\n[^\n]*\n\s+const t = el\("span", "fc-tag", "not shown"\);/, "the tag is claimed only while the marks are on");
+  assert.match(SRC, /private paintChanges\(root: Element, src: string, rendered: boolean, current: boolean, deferTrim = false\): void \{\n\s+const s = this\.status;\n\s+if \(!this\.inline\) return;/, "off: the change painters are not called, in either view; a source pin only, whose executed witness is this file's case on one click leaving no change mark in either view");
+  assert.match(SRC, /\} else if \(!painted && cs\.marks && !editing && !inFlux && cs\.shows\) \{\n[^\n]*\n\s+const t = el\("span", "fc-tag", "not shown"\);/, "the tag reads the marks as the card-state rule took them (file-comments.ts, #cardState's doc); a source pin only, whose executed witnesses are the tests that red when the tag reads the marks other than as the rule took them (measured with marksOn() read there): file-comments-changes-review2.test.ts's roads case (its first failing row text-inline-over-pane), its case \"Show changes inline turned on over a failure pane moves no change card\" and its orderings case");
   assert.doesNotMatch(SRC, /The Rendered view cannot show a deletion/, "the Rendered view shows deletions now: the tag's del-specific title is gone");
-  assert.match(SRC, /onExternalSettingsChange\(\(s\) => \{ if \(live && live\.inline !== s\.changesInline\) \{ live\.inline = s\.changesInline; live\.paintAll\(\); \} \}\);/, "one listener for the module, routed to the live panel");
+  assert.match(SRC, /onExternalSettingsChange\(\(s\) => \{ if \(live && live\.inline !== s\.changesInline\) \{ live\.inline = s\.changesInline; live\.settingsFlipped\(\); \} \}\);/, "one listener for the module, routed to the live panel, the card-state rule's event 3 (file-comments.ts, #cardState's doc); a source pin only, whose executed witnesses are this file's case on a flip elsewhere repainting the live panel (the marks, the header and the list) and file-comments-changes-review2.test.ts's case on Show changes inline and the filter flipped in another viewer, which reads the change cards at the flip");
   assert.ok(SRC.indexOf("onExternalSettingsChange((s) =>") > SRC.indexOf("function ensureListener(): void {") && SRC.indexOf("onExternalSettingsChange((s) =>") < SRC.indexOf("const KEY_ACTS"), "installed in ensureListener, once");
   assert.match(SETTINGS, /^\s+changesInline: boolean;/m, "a field of the shared settings (settings.ts), like subgoals: toggled from its surface, not the gear");
   // Pinned by value, not by the key's place in the literal: new settings are appended at its end (theme, then
@@ -612,8 +616,8 @@ test("pins: the delegate action, the header's order, the store's key and default
   assert.match(literal[0].replace("changesInline: true", "changesInline: true, later: false"), DEFAULT_ON, "…read by value: a setting appended after it keeps the pin green");
   assert.doesNotMatch(literal[0].replace("changesInline: true", "changesInline: false"), DEFAULT_ON, "…and a flipped default turns it red");
   assert.match(SETTINGS, /const KEY = "romp:settings";/, "the store this suite's stub localStorage holds");
-  // the guide: both views, both marks, the toggle by its label
-  const files = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")).replace(/\s+/g, " ");
+  // the reference's Files pane: both views, both marks, the toggle by its label
+  const files = REF_FILES.replace(/\s+/g, " ");
   for (const phrase of ["**Show changes inline**", "in both views", "deletion is struck", "insertion is tinted", "**Reveal**"]) assert.ok(files.includes(phrase), "guide: " + phrase);
   assert.doesNotMatch(files, /A deletion has nothing to mark in the Rendered view/, "the old sentence is gone");
   // the plan: the follow-on note beside the Slice 2 build note, the exclusion gone, the toggle in the UX paragraph

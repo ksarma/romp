@@ -13,6 +13,7 @@ If you're interested in reporting bugs and making PRs, please try to reproduce t
 ```bash
 python3 -m pytest -q       # the Python pipeline (kernel/, cli/, postal/)
 bats tests/*.bats          # the shell surfaces (hooks, postal, manager)
+node --test tools/ci-browser-legs.test.mjs   # the browser-legs roster against the tree (CI's vendored-tooling job, no npm ci)
 cd vscode-extension && npm ci && npm test
 ```
 
@@ -42,15 +43,109 @@ worker count, build the tests and start the runner yourself, from `vscode-extens
 `node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N
 'out-tests/**/*.test.js'`.
 
+CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg (a test
+module that launches a Playwright browser; `tests/ui-bench.test.mjs` under `ROMP_UI_BENCH_REQUIRE` and the
+served pytest files under `ROMP_SERVED_TESTS_REQUIRE` carry their own switch) skips at launch there. The
+legs named in `vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after
+the job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser` in
+`ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value counts), and under the switch,
+`inBrowser` fails a launch it cannot make, naming the switch and the reason, instead of skipping. A PR
+that wants its legs run adds their bundle paths to the roster and puts each leg's own whole-file seconds,
+measured, in its body: node runs the rostered files concurrently, so the step's total does not give one
+leg's time, and node's `--test-timeout` in the step's script, which cuts each file's whole run at its
+bound, has to sit above it.
+
+The roster rule: under the switch, a rostered leg passes only when `inBrowser` has launched Chromium, and
+the leg does nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing
+catches or settles `inBrowser`'s rejection, so the rejection fails its test; it does not change
+`ROMP_BROWSER_LEGS_REQUIRE`, and hands `inBrowser` no test context but the one node gave it; it does not
+end its own process, from a test, a hook or a timer; no condition the runner can leave unmet stands
+between a browser test and its `inBrowser` call; it skips and marks todo nothing). The reviewer of any PR
+that adds a roster line or changes a rostered leg's source or `inBrowser` checks the rule; the step does
+not. Nothing checks the whole rule for every rostered leg, so the step can read green a rostered leg that
+breaks it. Examples, not the whole set: a rostered leg that launches its own browser and swallows a failed
+launch without skipping; a rostered module that launches nothing; a leg that drives a browser from a child
+process and tolerates the child's failure; a todo test that passes beside a real pass; a leg that catches
+`inBrowser`'s rejection and passes (a try and catch around the awaited call, `.catch()`, .then's second
+argument or Promise's allSettled). A leg built to pass without a browser is outside what the step can
+detect. `tools/ci-browser-legs.test.mjs` runs a synthetic leg of each example and reads it green. Nothing
+checks that every browser leg in the tree is rostered, and main has no such check. A leg with no line runs
+only under the Test step, before the job installs a browser. `inBrowser`'s read of the switch changes
+`inBrowser`'s own skip alone: a leg's own skip is not turned into a failure by it, and its own failed
+launch is not `inBrowser`'s failure naming the switch. Chromium is the one engine the job installs, so a
+leg's Firefox and WebKit runs happen only in a local run. A Firefox or WebKit test in a rostered file
+breaks the roster rule, since the job installs Chromium alone and `inBrowser` launches the engine a leg
+names, Chromium by default. On the runner its skip is red, and a
+failed launch the leg does not swallow is node's red, but a leg can be built that holds such a test and
+reads green there when the bundle has a passing test of its own (the witness spelling: one that registers
+the test only where that engine is installed): a leg built to pass without a browser is outside what the
+step can detect. That witness is recorded from a run by hand on 2026-09-26, not executed:
+`tools/ci-browser-legs.test.mjs` runs a witness of each example above, and no witness of this spelling.
+
+The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
+line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
+that is not built. After `node --test` it reads its own reporter's record, and a rostered leg with no
+passing test, a skipped test, a failure inside a todo, or a file that failed as a whole is red, naming
+the leg or the test; a leg that follows the roster rule and whose launch failed under the switch is
+named with the remedy to check the Chromium install step. The script's header states which results those
+reads cover. Before you push,
+`node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's vendored-tooling job runs
+(no `npm ci` needed). From `vscode-extension/`,
+`bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,
+without starting a browser, and the step itself is `bash scripts/ci-browser-legs.sh` with
+`ROMP_BROWSER_LEGS_REQUIRE=1`, after `node esbuild.js --tests`.
+
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed
-(`brew install gitleaks`, or a release binary; `ROMP_GITLEAKS` names one that is
-not on `PATH`). Installing it also arms the credential half of the `pre-push`
-hook, which is worth having before you push anything.
+(`brew install gitleaks`, or a release binary, 8.25.0 or later; `ROMP_GITLEAKS`
+names one that is not on `PATH`). Installing it also arms the credential half of
+the `pre-push` hook, which is worth having before you push anything. The floor
+is 8.25.0 because the hook's flags need 8.24.0 and this repository's
+`.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks reads correctly
+from 8.25.0 on; CI pins 8.28.0, above that floor. Under an older gitleaks the
+hook refuses a push that has something to scan and names the version it found.
 
-The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
-Linux; the macOS cells run on demand from the Actions tab (they are billed even
-on a public repo, so they are not part of the per-push matrix).
+The `pre-push` hook scans under bash 5.1 or later. Under an older bash, such as
+the `/bin/bash` 3.2 that macOS ships, it runs itself again under a bash 5.1 or
+later at `/opt/homebrew/bin/bash` or `/usr/local/bin/bash`, where
+`brew install bash` puts one, and refuses the push when neither path has one.
+A clone with neither scan set up needs no newer bash: when the hook can tell
+that nothing is at the private-strings path, and either `ROMP_NO_GITLEAKS=1` is
+set or no gitleaks is on `PATH` with `ROMP_GITLEAKS` unset, it passes the push
+under any bash, printing that gitleaks is not installed unless
+`ROMP_NO_GITLEAKS=1` is set. When the hook cannot tell whether anything is at
+that path, for example because a directory above it cannot be searched, a
+symlink at the path leads nowhere, or `HOME` is unset with neither
+`ROMP_PRIVATE_STRINGS` nor `XDG_CONFIG_HOME` set, it refuses the push under
+every bash.
+
+On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
+each batch head, and GitHub's CI runs once per batch, on the push of the batch
+branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux under its
+full shape, as built, or across 3.12 and 3.14t alone under its smaller shape,
+where 3.10, 3.11 and 3.13 run on a weekly schedule (`ci.yml`'s header, THE SHAPE
+SWITCH: switching is a three-line change); member PRs and merges to main run none
+of it (`docs/batching.md`). Each Linux interpreter
+runs as four jobs, one for each shard of the test files, each with one pytest
+worker: one worker running the whole suite does not fit the private runner's
+8 GB. `tests/conftest.py` (its CI's shards section) states the rule that puts
+each test file under `tests/` in one shard, so a new test file there needs nothing to join one, and a run whose
+`ROMP_TESTS_SHARD` is unset, every local run, runs every file. The macOS cells
+never run on a batch push. A manual run of CI runs the Linux jobs alone unless you
+ask for macOS: tick the `macos` box in the Actions tab's "Run workflow" form, or
+run `gh workflow run CI --ref <branch> -f macos=true`. The box is off by default
+to control cost: the macOS cells bill at about ten times the Linux rate, about 8
+dollars per manual run. A weekly scheduled run also ran them until 2026-10-04;
+their weekly run stays paused until the first month's bill on the private runner
+is read, and the smaller shape's weekly run is Linux alone.
+CI's secret scan alone runs on every push of a branch or a tag whose commit
+carries `.github/workflows/secret-scan.yml`, once per push: it has no pull
+request trigger, since the private runner bills every run. Among the pushes
+that start no run of it: a push to a branch cut from main before that file
+landed, until the branch merges main; a tag on such a commit; and a push whose
+commit lacks the file because it or an earlier commit on its branch deleted it.
+That file's header lists these, what dropping the pull request trigger gave
+up, and GitHub's other limits.
 
 ## Measuring dashboard pane performance
 
@@ -147,7 +242,7 @@ it. A Node front server answers the page's WebSocket and proxies everything
 else to the subprocess.
 
 A recording holds real session data. `--record` connects to the running kernel
-as one more pane (the same URL and query, the token as the page's cookie),
+as one more pane (the same URL and query, with the serve token as `?token=`),
 sends the ready handshake and nothing else, and writes only under the system
 temp directory (private to your user: directory 0700, file 0600), refusing a
 path inside a git checkout or through a symlink. Never copy one into the repo;
@@ -160,7 +255,12 @@ keepalives and op replies).
 `tests/ui-bench.test.mjs` (`node --test tests/ui-bench.test.mjs`) covers the
 tool, including the recording client against a local WebSocket server and the
 Handler subprocess's isolation, and replays synthetic feed and timeline streams
-in a real browser, the timeline once more with the page hidden. The browser tests
+in a real browser, the timeline once more with the page hidden, and that hidden
+replay again with the page's clock standing still across each delivery (every
+bundle reading 0.0 ms: on a hidden page the report's bundle column is asserted
+as measured, not as having taken time, since a hidden page's delivery draws
+nothing and can read 0.0 at the clock's 0.1 ms steps; a visible page's column
+keeps the strict claim, its deliveries rendering inside the bracket). The browser tests
 skip, saying why, when no Chromium (either
 playwright's own, `cd vscode-extension && npx playwright install chromium`,
 which CI installs so the required check never rides the runner image's
@@ -178,8 +278,12 @@ without it a relation that did not hold is a diagnostic line in the output.
 Three things about the test environment are worth knowing, because all have
 produced confusing failures:
 
-- The bats suite takes about a minute on Linux and about fifteen on macOS. That
-  is expected, not a hang.
+- The bats suite is slow. In CI, among the finished runs on main, the batch
+  branches and the branches of the open and merged PRs (read at 03:32 UTC on
+  2026-10-04), the slowest Run bats step on Linux took 39 min 25 s (run
+  37128151383) and the slowest macOS Shell job took 48 min 1 s (run
+  37045964763). Those are CI's slowest runs, not its typical ones. A run that
+  long is expected, not a hang.
 - On macOS, run the bats suite with a modern bash (`brew install bash`; bats
   picks it up via `env bash` when `/opt/homebrew/bin` precedes `/bin` on PATH).
   The stock `/bin/bash` 3.2 does not fail a test on a mid-test `[[ ]]`

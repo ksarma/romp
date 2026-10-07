@@ -36,9 +36,10 @@ import {
 
 const HOST = "127.0.0.1";
 
-// The kernel serve token — required on EVERY kernel request, loopback included (Jupyter's model:
-// the 0600 state file, not the socket, is the same-user trust boundary; /healthz and /version stay
-// exempt). Same resolution order as the kernel's _load_token: env override, else the state file.
+// The kernel serve token: required on EVERY kernel request, loopback included, presented directly
+// or, by a browser, through a sign-in made with it (Jupyter's model: the 0600 state file, not the
+// socket, is the same-user trust boundary; /healthz and /version stay exempt). Same resolution
+// order as the kernel's _load_token: env override, else the state file.
 // Read per call (a tiny local file): a freshly minted token is picked up on the next
 // fetch/reconnect without a window reload.
 function serveToken(): string {
@@ -203,6 +204,12 @@ function copyInstallCommand(): void {
 
 // Ports are CONFIGURABLE so different VS Code windows can attach to different kernels (each kernel
 // scopes its own group of agents). Precedence: the VS Code setting (if set) → env var → default.
+// The kernel port must be the primary kernel's or that of a kernels.json profile whose stateDir no
+// other kernel uses. /ensure maps a port to a running kernel on it, else the profile on it, else the
+// primary for the manager's own kernel port, else the name k<port> (which a profile may carry). It
+// answers 409, starting nothing, for a kernel the manager refuses (a spec whose state root another
+// kernel holds, as a k<port> started for a port nothing else maps to would), and the attach toast shows that
+// error (bin/romp-manager idForPort, rootConflict).
 function cfgPort(key: "kernelPort" | "managerPort", env: string | undefined, dflt: number): number {
   const v = vscode.workspace.getConfiguration("romp").get<number>(key);
   if (typeof v === "number" && v > 0) return v;
@@ -405,8 +412,10 @@ function broadcastColorSync(m: { sid?: unknown; bg?: unknown }, from?: vscode.We
 
 // ---- the kernel: ENSURE-THEN-ATTACH (the manager owns it; we never spawn) ----
 // VS Code does NOT spawn the kernel. It attaches to a manager-owned kernel on romp.kernelPort; if none
-// is there, it asks the `romp up` manager to ENSURE one (the manager spawns + owns it), waits for it,
-// and attaches. A second front-end spawner would fight the manager for the port and re-create the
+// is there, it asks the `romp up` manager to ENSURE one, waits for it, and attaches. The manager spawns
+// and owns it, or answers 409 and starts nothing when that kernel would share another kernel's state
+// root, and the attach toast shows that error (cfgPort's comment above; bin/romp-manager rootConflict).
+// A second front-end spawner would fight the manager for the port and re-create the
 // invisible-orphan problem — so the only spawner is ever the manager (the user's 2026-06-13 ruling).
 // The decision sequence lives in ./kernel-attach (headless-testable); ensureKernel just supplies the
 // VS Code-flavoured deps (real healthz, a manager POST, real sleep) and turns failures into a toast.

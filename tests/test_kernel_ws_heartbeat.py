@@ -41,8 +41,9 @@ class Keepalive(unittest.TestCase):
         ]
         km._keepalive_all()
         dv = km._dist_ver()
-        self.assertEqual([json.loads(x) for x in got_a], [{"type": "ka", "dv": dv}], "feed client got one keepalive")
-        self.assertEqual([json.loads(x) for x in got_b], [{"type": "ka", "dv": dv}], "timeline client too — every app, not just one")
+        pv = km._panes_rev()   # the pane set's revision rides beside dv (plans/panes-as-data.md)
+        self.assertEqual([json.loads(x) for x in got_a], [{"type": "ka", "dv": dv, "pv": pv}], "feed client got one keepalive")
+        self.assertEqual([json.loads(x) for x in got_b], [{"type": "ka", "dv": dv, "pv": pv}], "timeline client too — every app, not just one")
 
     def test_keepalive_marks_a_broken_client_not_alive(self):
         def boom(_s):
@@ -156,7 +157,13 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
     standing rule is to follow upstream there). This ONE test is that ruling's safety net: it reads the constants and
     the three watchdog arms out of BOTH copies and asserts they agree, so a drift between them fails a test, not a
     phone. The shim's anti-duplicate guard above still holds (the shell uses its own SH_* names, so the shim is still
-    one), and the shell's connect cut is the design's named constant at today's 15 s."""
+    one), and the shell's connect cut is the design's named constant at today's 15 s.
+
+    iOS item 1a (2026-10-02) re-scoped it inside its PR: the two copies still agree on the constants and on the three
+    watchdog arms, verbatim; the shell now also cuts each dial on its own timer of SH_CONNECT_MS (so the cut's value is the
+    constant the agreement covers), keeping its tick's CONNECTING arm as the backstop for a timer the browser loses, while
+    the shim, upstream text the ruling leaves to upstream, keeps its cut on its tick. Two cases say so; the executed cases
+    are tests/test_kernel_mobile.py ShellLinkProbe's test_1a_* block."""
 
     def _shim_bounds(self):
         js = km._shim("chat")
@@ -191,18 +198,71 @@ class ShellLivenessMatchesTheShim(unittest.TestCase):
         # hung path, from the shell's own constants: the CONNECTING cut, the watchdog tick that performs it (up to one
         # tick late) and the blind redial that follows, rounded up to the next tick as a margin for late timers. The
         # 20 s bound this replaces omitted the redial and named an alive loop dead in its last two seconds.
+        # iOS item 1a (2026-10-02): the dial's own timer makes the cut at SH_CONNECT_MS, so the tick performs it only for a
+        # timer the browser lost, and cut + one tick + the blind redial (22 s) is that worst case now; on the timer the cycle
+        # is the cut plus the blind redial (17 s), or the cut plus the ladder's top rung for a refusal just inside the cut
+        # (under 19 s). The bound stays 25 s: still above every cycle, and a lower one would gain nothing on a live loop
+        # (connT also renews at every tick while the shell has a socket) while risking a false link-backstop row when timers
+        # run late after a resume. tests/test_kernel_mobile.py executes both halves (test_1a_a_shell_whose_tick_is_lost_...,
+        # and the round 3 linked cases).
         import re
         shim, shell = km._shim("chat"), self._shell_bounds()
         bound = int(re.search(r"L\.connT&&Date\.now\(\)-L\.connT>(\d+)\)", shim).group(1))
         self.assertIn("else shd=SH_BLIND_MS;", km._LANDING_MOBILE_JS, "the blind redial reads its named constant, so the derivation below reads the value the shell runs")
         cycle = shell["connect_cut"] + shell["tick"] + shell["blind"]
-        self.assertGreater(bound, cycle, "the bound exceeds the alive cycle's worst case (cut + one tick + the blind redial = %d ms)" % cycle)
+        self.assertGreater(bound, cycle, "the bound exceeds the alive cycle's worst case, a lost cut timer the tick backs up (cut + one tick + the blind redial = %d ms)" % cycle)
         self.assertEqual(bound, shell["connect_cut"] + 2 * shell["tick"], "...rounded up to the next tick: the cut plus two ticks")
         self.assertEqual(bound, 25000)
+        ladder = re.search(r"SH_LADDER=\[([\d,]+)\];", km._LANDING_MOBILE_JS)
+        self.assertIsNotNone(ladder, "the shell declares its refused ladder")
+        top = max(int(x) for x in ladder.group(1).split(","))
+        self.assertGreater(bound, shell["connect_cut"] + shell["blind"], "...and the cycle on the dial's own timer: the cut plus the blind redial")
+        self.assertGreater(bound, shell["connect_cut"] + top, "...and a refusal just inside the cut on the ladder's top rung (%d ms)" % top)
+
+    def test_the_shell_cuts_each_dial_on_its_own_timer_from_the_shared_constant(self):
+        # iOS item 1a (2026-10-02): shellWS arms the dial's cut with SH_CONNECT_MS, the constant the agreement above compares
+        # with the shim's 15 s tick arm, so the timer cannot drift from the shim's value either. A pin on WHERE the code lives:
+        # it locates the timer's read of the shared constant by text. The executed proof of that binding is
+        # tests/test_kernel_mobile.py ShellLinkProbe.test_1a_the_cut_timer_reads_sh_connect_ms_executed_with_the_constant_rewritten
+        # (the script run with the constant rewritten, which also fails a second SH_CONNECT_MS declared nearer the timer, a shape
+        # this text pin passes); the other test_1a_* cases prove what the timer does (the cut at exactly SH_CONNECT_MS, the clears
+        # at the open and the close, one socket).
+        mob = km._LANDING_MOBILE_JS
+        body = mob[mob.index("function shellWS(){"):mob.index("ws.onopen=function(){")]
+        self.assertRegex(body, r"setTimeout\(function shCut\(\)\{[^\n]*\},SH_CONNECT_MS\);",
+                         "each dial arms its own connect cut with SH_CONNECT_MS (the executed binding: test_kernel_mobile.py "
+                         "test_1a_the_cut_timer_reads_sh_connect_ms_executed_with_the_constant_rewritten)")
+
+    def test_the_shim_keeps_its_connect_cut_on_its_tick(self):
+        # the other half of 1a's re-scope: the shim's connect() arms no timer of its own for the cut (its 15 s cut is the tick
+        # arm the agreement above reads), so the shell's per-dial timer is the shell's alone. The pin reads the WHOLE of
+        # connect(): from its head to the next line that opens a function declaration, and the span must END with connect()'s
+        # last handler and closing brace (ws.onerror, then '}'), so a nested declaration on its own line inside connect()
+        # cannot end the read early. It finds one setTimeout( there: the onclose redial, setTimeout(connect,d). A per-dial cut
+        # spelled setTimeout( anywhere in connect() (window.setTimeout( included) makes it two and reddens this (a cut spelled
+        # setInterval( or with a space before the parenthesis is not counted), and a nested declaration
+        # that would hide one reddens the end check; a cut armed through a helper defined outside connect() is outside what
+        # it reads. A fold that brings a per-dial cut into the shim then reconciles the two copies' agreement on purpose
+        # rather than by accident.
+        import re
+        js = km._shim_core_js("chat")
+        head = "function connect(){"
+        self.assertEqual(js.count(head), 1, "the shim defines connect() once")
+        start = js.index(head)
+        nxt = re.search(r"\nfunction \w+\(", js[start:])
+        self.assertIsNotNone(nxt, "a function declaration follows connect()")
+        dial = js[start:start + nxt.start()]
+        self.assertTrue(dial.rstrip().endswith("ws.onerror=function(){try{ws.close();}catch(e){}};}"),
+                        "the span ends with connect()'s last handler and its closing brace, so a nested declaration did not end the read early: %r" % dial.rstrip()[-120:])
+        self.assertEqual(re.findall(r"setTimeout\(", dial), ["setTimeout("],
+                         "the whole of the shim's connect() arms one timer, its onclose redial: its connect cut is its watchdog tick's CONNECTING arm")
+        self.assertIn("setTimeout(connect,d);", dial, "...and that one timer is the redial")
+        self.assertIn("if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}", js)
 
     def test_the_two_copies_agree_on_the_tick_semantics(self):
         # both watchdogs carry the same three arms with the same bounds: an OPEN socket quiet past a bound is put down
-        # and redialed; a CONNECTING one past the 15 s cut is closed; a CLOSED one past the redial bound dials
+        # and redialed; a CONNECTING one past the 15 s cut is closed (the shim's cut; the shell's backstop for a lost cut
+        # timer since iOS item 1a); a CLOSED one past the redial bound dials
         shim = km._shim("chat")
         mob = km._LANDING_MOBILE_JS
         self.assertIn("if(ws.readyState===1){var bound=resumeProvisional?PROVISIONAL_MS:STALE_MS;", shim)

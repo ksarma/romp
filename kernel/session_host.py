@@ -31,12 +31,15 @@ helpers come from sdk_backend, which imports without the SDK and runs nothing at
 """
 from __future__ import annotations
 import asyncio
+import errno
 import importlib
 import importlib.metadata
 import json
 import os
+import re
 import signal
 import socket
+import stat
 import sys
 import time
 import traceback
@@ -54,7 +57,9 @@ JOURNAL_SEGMENT_BYTES = 64 * 1024 * 1024
 READER_BEHIND_RECORDS = 5000     # records read but not yet on disk before the host says so
 ACK_NONE = -1
 EXIT_FLUSH_S = 2.0               # how long the exiting host waits for an attached kernel to take its last frames
+REEXEC_DRAIN_S = 5.0        # the handover waits this long for an attached kernel to drain its socket backlog, else defers
 GAP_TYPE = "romp-journal-gap"     # a record the journal could not write: a marker keeps the numbering, readers skip it
+UNREADABLE = (None, 0)    # an index entry whose segment is gone (acknowledged and deleted): read_from skips it
 END_SENTINEL = object()          # on the stdin pump: close the CLI's stdin after everything queued before it
 
 # ── the SDK the host's private imports are written against ──────────────────────────────────────
@@ -107,7 +112,9 @@ class SdkInternalsMismatch(RuntimeError):
     message of the import error behind it), never a spec field or an environment value."""
 
 
-SDK_CAUSE_CAP = 200                          # the cause text appended to a mismatch, capped as main() caps the generic crash line
+SDK_CAUSE_CAP = 200                          # the cause's type and message appended to a mismatch text, bounded to this many
+#                                              characters: the host-composed row's cap. The generic host-crashed row carries the
+#                                              class, the errno and the frame, never text (main()), so no cap applies to it.
 
 
 def installed_sdk_version() -> "str | None":
@@ -306,8 +313,14 @@ class Journal:
     one is deleted at the next turn boundary."""
 
     def __init__(self, directory, segment_bytes=JOURNAL_SEGMENT_BYTES):
-        self.dir = Path(directory)
-        self.dir.mkdir(parents=True, exist_ok=True)
+        # the host's own creator of hosts/<sid>/ (the kernel's write_spawn_spec is the other), so the same owner-only
+        # shape: a symlink or a foreign directory standing at the path is refused before the first segment is opened
+        # (the review of the socket-mode fix, round 2, 2026-09-19: the bare mkdir here followed a planted symlink and
+        # wrote the journal through it). A refusal raises out of SessionHost's constructor, so main() never runs a host
+        # over a directory it does not own. What the kernel that launched the host sees is the exit code (1) and the
+        # traceback on the host's captured stderr (hosts/<sid>/host.stderr), not the OSError itself: no host.log row
+        # exists for a refusal here, since the constructor is what opens the directory (round 3, 2026-09-19).
+        self.dir = owner_only_dir(directory, "host directory")
         self.segment_bytes = int(segment_bytes)
         self.next_offset = 0
         self.acked = ACK_NONE
@@ -318,6 +331,53 @@ class Journal:
         self._fh = None
         self._pos = 0
         self._open_segment(0)
+
+    @classmethod
+    def reopen(cls, directory, segment_bytes=JOURNAL_SEGMENT_BYTES):
+        """The journal of a host that re-executed itself (the re-exec road): the index rebuilt from the segment files on
+        disk, the next offset from the last record, gaps from gaps.json, and the LAST segment opened for append at its
+        end. Nothing is written; a directory with no segments is an empty journal at offset 0. The rebuilt index equals
+        the live one entry for entry (tests/test_session_host.py pins the equality against the live journal): a gap is
+        one zero-length entry at the position of the record after it, in the segment that holds that record, wherever
+        the gap fell (round two of the re-exec review: a gap at a segment's head was counted at the previous segment's
+        tail AND the next one's head, so every offset past it read the record before); an offset whose segment is gone
+        (acknowledged and deleted) is UNREADABLE, as the live journal marks it at the deletion."""
+        j = cls.__new__(cls)
+        # the same owner-only shape as __init__ (owner_only_dir): the re-executed host reopens hosts/<sid>/ and appends
+        # to its last segment, so a symlink or a foreign directory standing at the path is refused here as well
+        j.dir = owner_only_dir(directory, "host directory")
+        j.segment_bytes = int(segment_bytes)
+        j.acked = ACK_NONE
+        j._index = []
+        j._seg_last = {}
+        j._fh = None
+        j._pos = 0
+        try:
+            j.gaps = set(json.loads((j.dir / "gaps.json").read_text()))
+        except Exception:
+            j.gaps = set()
+        segs = sorted((f, p) for p in j.dir.glob("journal-*.jsonl") for f in [_segment_first(p.name)] if f is not None)
+        n = 0
+        pos = 0
+        for first, p in segs:
+            while n < first:                                    # offsets before this segment that no file holds: deleted segments
+                j._index.append(UNREADABLE); n += 1
+            pos = 0
+            with open(p, "rb") as fh:
+                for line in fh:
+                    while n in j.gaps:                          # gaps before this record: zero-length entries at its position
+                        j._index.append((first, pos)); j._seg_last[first] = n; n += 1
+                    j._index.append((first, pos))
+                    j._seg_last[first] = n
+                    pos += len(line)
+                    n += 1
+        if segs:
+            while n in j.gaps:                                  # gaps after the last record, at the end of the last segment
+                j._index.append((segs[-1][0], pos)); j._seg_last[segs[-1][0]] = n; n += 1
+        j.next_offset = n
+        j._seg = segs[-1][0] if segs else 0
+        j._open_segment(j._seg)
+        return j
 
     def _path(self, seg: int) -> Path:
         return self.dir / ("journal-%d.jsonl" % seg)
@@ -406,6 +466,8 @@ class Journal:
                     os.unlink(self._path(seg))
                 except OSError:
                     pass
+                for off in range(seg, self._seg_last[seg] + 1):     # the entries of a deleted segment: unreadable, as a reopen rebuilds them
+                    self._index[off] = UNREADABLE
                 self._seg_last.pop(seg, None)
 
     def ack(self, offset: int) -> None:
@@ -430,6 +492,9 @@ class Journal:
                     offset += 1
                     continue
                 seg, pos = self._index[offset]
+                if seg is None:                                 # the segment is gone (acknowledged and deleted)
+                    offset += 1
+                    continue
                 if seg != cur_seg:
                     if fh is not None:
                         fh.close()
@@ -460,32 +525,36 @@ class Journal:
             self._fh = None
 
 
-def read_journal_dir(directory, offset: int = 0):
-    """Read an ORPHAN journal (its host is gone) from `offset` to the end without an index: segments in
-    first-offset order, each record numbered from its segment's first offset, so acknowledged-and-deleted
-    early segments cost nothing but the records they held. Pure on the files."""
-    d = Path(directory)
-    segs = sorted((f, p) for p in d.glob("journal-*.jsonl") for f in [_segment_first(p.name)] if f is not None)
-    try:
-        gaps = set(json.loads((d / "gaps.json").read_text()))
-    except Exception:
-        gaps = set()
-    for first, p in segs:
-        n = first
-        while n in gaps:            # an unrecorded gap at the segment's head
-            n += 1
-        with open(p, "rb") as fh:
-            for line in fh:
-                if n >= offset:
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        rec = None
-                    if rec is not None and rec.get("type") != GAP_TYPE:
-                        yield n, rec
-                n += 1
-                while n in gaps:    # an unrecorded gap between two records on disk: the numbering skips it
-                    n += 1
+def _opens_turn(obj: dict) -> bool:
+    """Whether a `user` line fed to the CLI opens a turn the CLI will answer with a result: a message whose content
+    carries text (a string, or a text block). A user line carrying only tool results or nothing is bookkeeping the CLI
+    absorbs into the running turn, never a turn of its own, so counting it left the open-turn count high for good."""
+    msg = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+    content = msg.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(isinstance(c, dict) and c.get("type") == "text" and str(c.get("text") or "").strip() for c in content)
+    return False
+
+
+# THE ORPHAN READER LIVES IN THE KERNEL'S MODULE (kernel/host_transport.py, read_journal_dir and journal_segments) since
+# the fork PR that follows #814 (2026-09-21, the item "the journal reads descend by descriptor" of the general notes'
+# small-asks file). Through #814 `read_journal_dir(directory, offset)` stood here and read by PATH, three of the item's
+# five sites: a glob over the directory for the segments, gaps.json by the directory's path, each segment by the path
+# the glob yielded; a `<sid>/` re-pointed between the kernel's descent and those reads was read through the link, and
+# a journal file a peer planted under a loose `<sid>/` of the kernel's uid was read with no owner check. The rewrite
+# takes the <sid> DESCRIPTOR the kernel's read descent holds, lists off it and opens each file by name under it through
+# the one reader every kernel read under hosts/<sid>/ goes through (the owner question before the open, the
+# O_NOFOLLOW|O_NONBLOCK open, the fstat of the descriptor), which is why it moved: that reader and the refusal classes
+# it answers with are the kernel's, and this module, the host's, imports nothing of the kernel's. THE HOST NEVER CALLED
+# THE PREDECESSOR: the host reads its own journal through Journal.read_from, off the in-memory index of the segments it
+# wrote itself under a directory owner_only_dir verified (0700, its own uid; Journal.__init__). It lists its directory
+# once, in Journal.reopen (upstream PR 1849's re-exec road, taken in the 2026-10-02 fold), on owner_only_dir's return,
+# to rebuild the index from the segments it wrote before the exec; the host side still has no caller of the orphan
+# reader to convert and asks no owner question of its own directory (tests/test_session_host.py JournalRules pins both,
+# by execution and by structure, that one listing included). The design in full is stated at
+# host_transport.read_journal_dir.
 
 
 # ── open control requests ───────────────────────────────────────────────────────────────────────
@@ -665,6 +734,302 @@ class PipeCliTransport:
         return self.proc.returncode if self.proc else None
 
 
+# The AF_UNIX path budget. sun_path is 108 bytes on Linux and 104 on macOS, and CPython's bind and connect refuse a
+# path that does not fit with its terminating NUL ("AF_UNIX path too long", socketmodule's getsockaddrarg), so the
+# longest path either side can use is one byte less. A published socket path over this is one the kernel can never
+# connect to, and _prepare_socket checks the PUBLISHED path against it before the CLI is spawned and so before any
+# lease exists (round 3 of this fix; the check sat in _serve_socket, after the lease, through round 2): the bind's own
+# check was the only enforcement of the budget on that path while the bind took the published name, and it moved onto
+# the temp name when the temp got a name of its own, so at a published path of exactly 108 bytes the temp bound, the
+# rename published an unreachable socket and the host logged socket-ready and kept its lease and its CLI, where the
+# code before failed the bind loudly (the review of this fix, 2026-09-19). tests/test_session_host.py SocketBudget
+# derives the number by binding throwaway sockets at the lengths around it, so this is a measured limit, not an
+# assumed one.
+SOCK_PATH_MAX = 103 if sys.platform == "darwin" else 107
+
+_TEMP_DIGITS = "0123456789abcdefghijklmnopqrstuv"        # base 32 as int(s, 32) reads it back
+_TEMP_NAME = re.compile(r"^([0-9a-v]{5})[0-9a-v]{4}\.tmp$")
+
+
+def _b32(n: int, width: int) -> str:
+    digits = []
+    while n:
+        n, r = divmod(n, 32)
+        digits.append(_TEMP_DIGITS[r])
+    return "".join(reversed(digits)).rjust(width, "0")
+
+
+def sock_names(sid: str) -> tuple[str, str]:
+    """The control socket's two file names under `hosts/`: the published `<sid8>.sock` (the name the kernel's host_sock
+    builds) and a fresh WRITER-UNIQUE temp it is bound at first: this process's pid in five base-32 digits (pid_max is
+    2^22 on Linux, four digits and a bit), 20 random bits in four more, then `.tmp`. Unique to the writer as write_reg's
+    and write_lease's temps are (kernel/sdk_backend.py), so the rename can only ever publish the socket this host bound:
+    the fixed `<sid8>.tmp` of the first cut was the shared-name hazard (the review of this fix, 2026-09-19: a second
+    host for the sid unlinking and rebinding that name between the first host's bind and its rename made the first
+    publish, and report ready on, a socket it never created). Exactly the published name's length, 13 bytes for the
+    uuid sids the kernel mints (host_sock takes the first 8 characters), because the published path is what the socket
+    path budget (SOCK_PATH_MAX) is spent on: under the test harness's deepest hosts-on root it sits at TMPDIR + 70 bytes
+    (one `romp-tests-*` level per process since 2026-09-21; two under xdist before, which put `hosts/<sid8>.sock` at 107
+    exactly under a 17-byte TMPDIR — tests/test_tempdir_hygiene.py HarnessSocketBudget derives the figure), so wherever
+    the published path fits the budget exactly a temp longer than it would fail the bind where the published name fits.
+    A sid shorter
+    than 8 characters is not a shape the kernel produces: its temp is longer than its published name, and a temp over
+    the budget fails the bind loudly (socket-bind-failed) rather than publishing anything. tests/test_session_host.py
+    SocketMode pins the form, the length and the uniqueness."""
+    rnd = int.from_bytes(os.urandom(3), "big") >> 4
+    return sid[:8] + ".sock", _b32(os.getpid(), 5) + _b32(rnd, 4) + ".tmp"
+
+
+def temp_owner_pid(name: str) -> int | None:
+    """The pid a socket temp name (sock_names) embeds, or None for any other name: the stale-temp sweep
+    (_sweep_stale_temps, run from _prepare_socket) unlinks a temp only when its owner is gone, and touches no name
+    whose form this code did not mint."""
+    m = _TEMP_NAME.match(name)
+    return int(m.group(1), 32) if m else None
+
+
+def owner_only_dir(path, what: str = "directory", parents: bool = False) -> Path:
+    """`path` as a directory made owner-only (0700), REFUSED when it is not ours, and kept so; returns it. The one shape
+    for every directory under `hosts/` this code creates: `hosts/` itself (hosts_dir) and each session's `hosts/<sid>/`
+    (the kernel's write_spawn_spec in kernel/host_transport.py, and Journal.__init__, the host's own creator of the same
+    directory). Round 1 of the socket-mode fix (2026-09-19) installed these checks on `hosts/` alone and left
+    `hosts/<sid>/`, made one line below by the same function with a bare mkdir and a chmod never read back, on the old
+    shape, so a symlink planted there was followed and the spec, host.log and the journal were written through it; the
+    review's round 2 asked for one helper both directories go through, not a second copy. The checks are
+    kernel/judge.py's _ensure_judge_scratch, taken whole: the mkdir carries the mode, so a fresh directory is born 0700
+    under any umask (never made by the umask of whichever process got there first); lstat, not stat, so a symlink
+    planted at the path is refused instead of passing every check on behalf of its target; a directory another uid owns
+    is refused; a loose one we own is tightened (every install before 2026-09-19 made `hosts/` at the umask's mode, 0775
+    under the 002 the live host runs at: ours, so a repair, not a guess), and the mode is read back, so a tighten that
+    did not take raises instead of returning. `parents` is False unless the caller says otherwise, because an
+    intermediate directory mkdir creates takes the umask's mode, the very shape this closes: hosts_dir makes `hosts/`
+    before anything below it is made. `what` names the directory in the refusals (`hosts directory`, `host directory`),
+    each of which carries the path, so a launch error or a traceback says which directory it was.
+    WHAT THIS CLOSES, AND WHAT IT DOES NOT (the review's round 2, from its refuters): the static shape, a symlink, a
+    foreign directory or a loose one standing at the path when the call runs. Not a re-point between the chmod's read-back
+    and the caller's open: a race-free version needs directory-descriptor-relative calls (mkdirat, openat, fchmod on the
+    descriptor), and the files written below these directories take paths. The reachable cases are narrow: an
+    attacker-owned target raises PermissionError at the chmod before any write, so what lands content is that TOCTOU
+    flip or a target the operator already owns, and either needs a state root that is not 0700 while a session starts.
+    On this deployment the root reads 0700 because kernel/judge.py chmods it at import, best-effort (the OSError
+    swallowed, the mode read back once and reported on stderr when it is not 0700), and nothing re-checks or guards it
+    afterwards (extra6-1, round 5 of the review, 2026-09-20: an attempt at startup, not a standing property of the
+    box). tests/test_judge_scratch_private.py OwnerOnlyParity runs this and the judge copy over one
+    table of setups and holds their outcomes equal."""
+    d = Path(path)
+    d.mkdir(mode=0o700, parents=parents, exist_ok=True)
+    st = os.lstat(d)                            # lstat, not stat: a symlink planted in our place would
+    if not stat.S_ISDIR(st.st_mode):            # otherwise pass every check below on behalf of its target
+        raise OSError("%s %s is not a directory" % (what, d))
+    if st.st_uid != os.geteuid():
+        raise OSError("%s %s belongs to uid %d, not to us (uid %d)" % (what, d, st.st_uid, os.geteuid()))
+    if st.st_mode & 0o077:                      # ours, but loose: an install from before the fix, a stray umask
+        os.chmod(d, 0o700)                      # we own it, so tightening is a repair, not a guess
+        if os.lstat(d).st_mode & 0o077:
+            raise OSError("%s %s stays group/world-accessible" % (what, d))
+    return d
+
+
+def hosts_dir(state_dir) -> Path:
+    """`<state>/hosts/`, made owner-only (0700), REFUSED when it is not ours, and kept so (owner_only_dir): the directory
+    that holds every host's control socket, the temp name each socket is bound at (`_serve_socket`), and the per-session
+    `hosts/<sid>/` directories. Both creators go through here (the kernel's write_spawn_spec in kernel/host_transport.py,
+    whose mkdir of `hosts/<sid>/` with parents=True used to leave `hosts/` itself at the umask's mode, and the host's own
+    constructor, before its journal opens a segment under `hosts/<sid>/` and before host.log or identity.json is written,
+    then again in _prepare_socket on run()'s road, before its CLI is spawned), so the mode is set by code, not by the
+    umask of the process that happened to create it (the review of this fix, 2026-09-19: the first cut named the judge
+    precedent and took half of it, a stat through a symlink and a chmod never read back). Loud on every refusal: the
+    host's constructor raises with nothing written, so the process exits 1 with the traceback on its captured stderr and
+    no host.log row (round 3, kernel-2); the host's prelude logs socket-bind-failed (step hosts-dir) and exits with no CLI
+    started and no lease written; and the kernel's spawn fails before it writes a spec. Pinned by tests/test_host_transport.py
+    SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened and
+    SpawnSpec.test_a_symlink_at_hosts_or_a_tighten_that_does_not_take_fails_the_spawn (the kernel's road, under a 000
+    umask) and tests/test_session_host.py HostsDir, SocketMode.test_hosts_is_owner_only_once_the_host_binds and
+    HostProcess.test_a_real_host_leaves_hosts_owner_only (the host's road, in-process and as a real process). The
+    parents=True is for the state root, which every install has (kernel/judge.py makes it 0700 at import: a mkdir, then
+    a chmod read back); nothing is made below `hosts/` until this has returned.
+    THE ROOT'S MODE WHEN THIS CALL MAKES IT (kernel-7, round 5 of the review, 2026-09-19; fixed at round 6): pathlib's
+    Path.mkdir applies `mode` to the leaf alone and makes each missing parent with its default 0777 masked by the process
+    umask, so a state root that is not on disk when this runs is born at the umask's mode (0775 under 002, 0755 under 022,
+    0700 under 077, 0777 under 000) while `hosts/` below it is 0700 in every case. The root matters: it is the parent of
+    `hosts/` (owner-only by this code) and of the registry and the parked-ops files (owner-only since fork PR #789), and
+    its traverse bit is what stands between a peer uid and any of them. THE FIX, the create road only: whether the root is
+    on disk is read BEFORE the mkdir, and when it was not, the root this call made is tightened to 0700 by a chmod the
+    line after `hosts/` is made, then READ BACK, and a read-back that is not 0700 is refused with the mode read and the
+    one-step remedy. The read and the chmod (round 6, corrected at round 4 of the review, kernel-4, 2026-09-20): the root
+    is read by lstat first, owner_only_dir's shape (a link or a non-directory at the path refused, a foreign uid refused),
+    then OPENED with O_DIRECTORY|O_NOFOLLOW, read again by fstat on that descriptor (the same directory and uid refusals,
+    decided on the object the chmod will act on), tightened by fchmod on the descriptor, and read back by fstat on it. So
+    a link present at the lstat is refused there, and a link swapped in between the lstat and the open fails the open
+    (ENOTDIR on Linux under O_DIRECTORY|O_NOFOLLOW, ELOOP elsewhere; both are refusals here) and is refused with the
+    reason: no mode reaches anything a link points at. Through round 6 the chmod took the
+    path, so a link swapped in after the lstat had whatever it pointed at (a directory or a file of ours) tightened to
+    0700 before the read-back refused, and a foreign target raised EPERM at the chmod; the uid check never read the
+    swapped target, since it had decided on the pre-swap root. A live symlink at the root's path, pointing at a
+    directory, is a root on disk to this call: exists() follows it, `hosts/` is made under its target, and the target
+    is never read back or tightened. Only
+    the root is touched: the ancestors the parents mkdir made on the way (an XDG parent such as `~/.local/state`, which
+    romp does not own) keep the umask's mode, and a root already on disk, at whatever mode, is left as it is (its mode is
+    the creator's business, kernel/judge.py's for every install's root; this call never reads or repairs it). Between the
+    parents mkdir and the fchmod the root holds `hosts/` alone, itself 0700 from its own mkdir, so nothing under the root
+    is readable by a peer uid during that stretch. What the root itself grants in that stretch depends on the umask
+    (extra5-1, round 4 of the review, 2026-09-20): under 000 (0777, every uid) and 002 (0775, the group; the umask the
+    live host runs at) it carries the write bit for the peer class, which on a non-sticky directory is create, rename
+    and unlink of any name in it, so the exposure is a SWAP of `hosts/` (a peer renaming `hosts/` out and putting a
+    symlink in its place), which is the TOCTOU residual owner_only_dir's docstring states for a state root that is not
+    0700; this stretch supplies that condition. Under 022 and 077 the peer class has no write bit there. The
+    create-only scope does not protect against a world-writable non-sticky state root, because the parent governs
+    creating and deleting entries: another user can rename or replace `hosts/` regardless of its 0700; the socket
+    inside is safe, the directory holding it is not. What narrows that swap on the roads that write: the kernel's
+    spawn road opens everything under `hosts/` through descriptors (kernel/host_transport.py open_host_dirs), and the
+    host re-reads `hosts/` by lstat just before its bind (_serve_socket). Where the create
+    road reaches: kernel/judge.py's import is the road every install's root takes, and it is a different creator; the kernel
+    writes the spawn specification in a process that made that root at import, and the host's two calls here (its
+    constructor and _prepare_socket) run over the specification's state_dir, so on the roads this code runs today the root
+    is on disk before this call and the create road is a caller's over a root no romp tool has made (a test's fresh root, a
+    host run by hand over one). tests/test_session_host.py StateRootByHostsDir pins the fix: the root reads 0700 under the
+    runner's umask, 002, 022, 077 and 000 when this call made it, with `hosts/` 0700 and the ancestor made on the way at
+    the umask's mode; a root pre-existing at 0755 or 0777 stays as planted with `hosts/` 0700 below it; a live symlink at
+    the root's path takes the pre-existing road, one swapped in after the exists() read is refused at the lstat with its
+    target's MODE untouched (an empty hosts/ of ours, 0700, is made through the link by the parents mkdir before the
+    lstat refuses), and one swapped in between the lstat and the open is refused at the open with its target's mode
+    unchanged; a root another uid owns is refused before any mode is set, whether the lstat or the descriptor's fstat
+    reads the uid; the read-back is an fstat on the descriptor, so a stat or an lstat by path that disagrees is inert;
+    and the refusal fires when the read-back disagrees."""
+    root = Path(state_dir)
+    made_root = not root.exists()               # the create road, decided before the mkdir: a root already on disk is left as it is
+    d = owner_only_dir(root / "hosts", "hosts directory", parents=True)
+    if made_root:
+        st = os.lstat(root)                     # lstat, as owner_only_dir: a symlink swapped in would otherwise be tightened
+        if not stat.S_ISDIR(st.st_mode):        # on behalf of its target
+            raise OSError("state root %s is not a directory" % root)
+        if st.st_uid != os.geteuid():
+            raise OSError("state root %s belongs to uid %d, not to us (uid %d)" % (root, st.st_uid, os.geteuid()))
+        # the chmod goes through a descriptor (kernel-4, round 4 of the review, 2026-09-20): opened O_DIRECTORY|O_NOFOLLOW
+        # right after the lstat, so a link swapped in between fails the open (ENOTDIR on Linux, ELOOP elsewhere) and is
+        # refused before any mode reaches what it points at, where a chmod by path tightened the link's target and refused only at the
+        # read-back; the fstat repeats the directory and uid checks on the object the fchmod acts on, and the read-back
+        # is an fstat on the same descriptor, never a stat by path
+        try:
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as e:
+            if e.errno == errno.ELOOP:
+                raise OSError("state root %s is a symlink, not a directory (swapped in after it was made)" % root) from None
+            if e.errno == errno.ENOTDIR:
+                raise OSError("state root %s is not a directory (replaced after it was made)" % root) from None
+            raise
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISDIR(st.st_mode):
+                raise OSError("state root %s is not a directory" % root)
+            if st.st_uid != os.geteuid():
+                raise OSError("state root %s belongs to uid %d, not to us (uid %d)" % (root, st.st_uid, os.geteuid()))
+            os.fchmod(fd, 0o700)                # born at the umask's mode by the parents mkdir above; ours, so a repair
+            mode = stat.S_IMODE(os.fstat(fd).st_mode)
+        finally:
+            os.close(fd)
+        if mode != 0o700:                       # read back, never assumed
+            raise OSError("state root %s reads mode %04o after its chmod to 0700: run chmod 700 on it, then start again" % (root, mode))
+    return d
+
+
+class _AdoptedProcess:
+    """A CLI this host did not spawn but inherited across its own execve (the re-exec road): the pid, the pipe
+    descriptors as asyncio streams, and a returncode learned from waitpid on a thread (the CLI is still this
+    process's child, since exec keeps the pid). Same surface PipeCliTransport reads: pid, stdin, stdout, stderr,
+    returncode, wait(), kill()."""
+    def __init__(self, pid: int, stdin, stdout, stderr):
+        self.pid = int(pid)
+        self.stdin, self.stdout, self.stderr = stdin, stdout, stderr
+        self.returncode = None
+        self.exited = False           # gone, exit unknown (reaped elsewhere): returncode stays None, the exit frame's word for unknown
+        self._waiter = None
+
+    async def wait(self):
+        if self.returncode is None:
+            if self._waiter is None:
+                loop = asyncio.get_running_loop()
+                self._waiter = loop.run_in_executor(None, self._waitpid)
+            await self._waiter
+        return self.returncode
+
+    def _waitpid(self):
+        try:
+            _pid, status = os.waitpid(self.pid, 0)
+        except ChildProcessError:
+            self.exited = True                             # reaped elsewhere: gone, exit unknown (round two: a zero here read as a clean exit)
+            return
+        self.returncode = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else (status >> 8)
+        self.exited = True
+
+    def kill(self):
+        if self.exited:
+            return                                          # the pid may be another process's by now
+        os.kill(self.pid, signal.SIGKILL)
+
+
+class AdoptedCliTransport(PipeCliTransport):
+    """PipeCliTransport over a CLI inherited across the host's execve: the same read, write, end and close roads, the
+    process an _AdoptedProcess built on the handoff's descriptors. `connect` adopts instead of spawning."""
+    def __init__(self, spec: dict, stderr_cb, handoff: dict):
+        super().__init__(spec, stderr_cb)
+        self.handoff = handoff
+
+    async def connect(self) -> None:
+        loop = asyncio.get_running_loop()
+        fds = self.handoff["fds"]
+        if not _pipe_fds_match_cli(self.handoff["cli_pid"], fds):     # the handoff is trusted only once the CLI's own table agrees
+            raise RuntimeError("the handoff's descriptors are not the CLI's pipes")
+        limit = int(self.spec.get("max_buffer_size") or 100 * 1024 * 1024)
+        stdout_reader = asyncio.StreamReader(limit=limit)
+        await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(stdout_reader), os.fdopen(int(fds["stdout"]), "rb", buffering=0))
+        stderr_reader = asyncio.StreamReader(limit=limit)
+        await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(stderr_reader), os.fdopen(int(fds["stderr"]), "rb", buffering=0))
+        w_transport, w_protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, os.fdopen(int(fds["stdin"]), "wb", buffering=0))
+        stdin_writer = asyncio.StreamWriter(w_transport, w_protocol, None, loop)
+        self.proc = _AdoptedProcess(int(self.handoff["cli_pid"]), stdin_writer, stdout_reader, stderr_reader)
+        self._stderr_task = asyncio.ensure_future(self._relay_stderr())
+
+
+def _pipe_fds_match_cli(pid, fds: dict) -> bool:
+    """On Linux, whether the three descriptors are the CLI's own pipes: each compared by inode with the CLI's
+    /proc/<pid>/fd/0, 1 and 2. Elsewhere True (no table to read). Read by the old process before it hands over and by
+    the new one before it trusts the handoff (round two of the re-exec review: the docs promised the second read)."""
+    if not sys.platform.startswith("linux"):
+        return True
+    for name, n in (("stdin", 0), ("stdout", 1), ("stderr", 2)):
+        try:
+            if os.stat("/proc/%d/fd/%d" % (int(pid), n)).st_ino != os.fstat(int(fds[name])).st_ino:
+                return False
+        except (OSError, KeyError, TypeError, ValueError):
+            return False
+    return True
+
+
+def cli_pipe_fds(transport) -> dict | None:
+    """The CLI's three pipe descriptors as this host holds them: stdin's write end, stdout's and stderr's read ends,
+    from the transport's asyncio pipe transports (the SDK's anyio Process wraps an asyncio Process; the pipe fallback
+    holds one directly). None when any is missing. On Linux each is confirmed against the CLI's own descriptor table
+    (/proc/<pid>/fd/0,1,2 by pipe inode), so a wrong descriptor is a refusal, never a CLI fed from the wrong end."""
+    proc = getattr(transport, "_process", None) or getattr(transport, "proc", None)
+    aproc = getattr(proc, "_process", None) or proc                # anyio.Process -> asyncio.subprocess.Process
+    ptrans = getattr(aproc, "_transport", None)
+    if ptrans is None:
+        return None
+    out = {}
+    for name, n in (("stdin", 0), ("stdout", 1), ("stderr", 2)):
+        pt = ptrans.get_pipe_transport(n) if hasattr(ptrans, "get_pipe_transport") else None
+        pipe = pt.get_extra_info("pipe") if pt is not None else None
+        try:
+            out[name] = int(pipe.fileno())
+        except Exception:
+            return None
+    pid = getattr(aproc, "pid", None)
+    if pid and not _pipe_fds_match_cli(pid, out):
+        return None
+    return out
+
+
 def sdk_importable() -> bool:
     import importlib.util
     return importlib.util.find_spec("claude_agent_sdk") is not None
@@ -682,17 +1047,34 @@ class SessionHost:
     """One host process: see the module docstring. Constructed from the spec path; `run()` is the
     whole life."""
 
-    def __init__(self, spec_path, lease_api=None, now=None):
+    def __init__(self, spec_path, lease_api=None, now=None, reexec_path=None):
         self.spec_path = Path(spec_path)
         with open(self.spec_path) as f:
             self.spec = json.load(f)
+        self.reexec = None                     # the handoff this process was re-executed with (the re-exec road), else None
+        if reexec_path:
+            with open(reexec_path) as f:
+                self.reexec = json.load(f)
+        self._reexec_pending = None            # (python, launcher) once a kernel asked and a turn was open: run at its result
+        self._reexec_running = False           # a handover is being decided or done: a second request is refused meanwhile
+        self._reader_hold = None               # an Event the stdout reader waits on between records; cleared for the handover
+        self._journal_skip: set = set()        # offsets the handover wrote itself; the writer passes them by
         self.sid = str(self.spec["sid"])
         self.name = str(self.spec.get("name") or self.sid[:8])
         self.state_dir = Path(self.spec["state_dir"])
         self.dir = self.spec_path.parent
-        self.sock_path = self.state_dir / "hosts" / (self.sid[:8] + ".sock")
+        self.sock_path, self.sock_tmp = (self.state_dir / "hosts" / n for n in sock_names(self.sid))
         self.log_path = self.dir / "host.log"
-        self.journal = Journal(self.dir)
+        # `hosts/` ours and 0700 BEFORE the journal opens a segment under it and before run() writes host.log and
+        # identity.json (review round 3, 2026-09-19, kernel-2: through round 2 the host's first check of hosts/ ran at the
+        # socket road, after those three files were written through a planted symlink and a real CLI had spawned; the
+        # kernel's write_spawn_spec guards the same directory before its first write, and this makes the host do the
+        # same). A refusal raises out of the constructor: main() never runs a host over a hosts/ that is not ours, the
+        # process exits 1 with the traceback on its captured stderr (hosts/<sid>/host.stderr), and no host.log row exists
+        # for it, which the kernel's spawn-wait message says. _prepare_socket calls hosts_dir again on run()'s road, so a
+        # hosts/ re-pointed between here and the socket road is still refused with a row (step hosts-dir).
+        hosts_dir(self.state_dir)
+        self.journal = Journal.reopen(self.dir) if self.reexec else Journal(self.dir)
         self.parked = Parked(float(self.spec.get("hook_self_answer_s") or HOOK_SELF_ANSWER_S))
         self.grace_s = float(self.spec.get("unattached_grace_s") or UNATTACHED_GRACE_DEFAULT_S)
         self.reader_behind_records = int(self.spec.get("reader_behind_records") or READER_BEHIND_RECORDS)
@@ -707,7 +1089,9 @@ class SessionHost:
         self.fsid = str(self.spec.get("resume") or self.spec.get("session_id") or "")
         self.attached = None            # the attached kernel's writer, or None
         self.kernel = None
-        self.inflight = 0               # user messages fed minus results seen (the idle judgement)
+        self.inflight = 0               # open turns: a text-bearing user line fed opens one; a result closes ALL of them (the CLI folds
+        #                                 queued lines into the running turn and answers with one result); an output row after the result
+        #                                 (an assistant or user row: the CLI running a queued line as its own turn) re-opens one
         self.idle_since = self.now()
         self.exit_info = None
         self.ending = None              # (deadline, cause) once `end` was requested
@@ -723,6 +1107,19 @@ class SessionHost:
         self._journal_faults = 0
         self._reader_behind_noted = False
         self._stdin_q: asyncio.Queue | None = None   # the kernel's `in` lines, written by their own task
+        if self.reexec:                                # the state the previous code of this same process handed over
+            h = self.reexec
+            self.cli_pid = int(h["cli_pid"]); self.cli_start = h.get("cli_start"); self.cli_spawned_at = h.get("cli_spawned_at")
+            self.fsid = str(h.get("fsid") or self.fsid)
+            self._read_count = int(h.get("read_count") or self.journal.next_offset)
+            self.inflight = int(h.get("inflight") or 0)
+            self.journal.acked = int(h.get("acked", ACK_NONE))
+            for rec in h.get("parked") or []:
+                try:
+                    self.parked.park(rec["record"], int(rec["offset"]), float(rec.get("t") or self.now()), attached=False)
+                except Exception:
+                    pass
+            self.parked.answered.update(str(x) for x in (h.get("answered") or []))
 
     # ── host.log: never a spec field, never an environment value ──
     def log(self, kind: str, **fields) -> None:
@@ -760,6 +1157,21 @@ class SessionHost:
         while self.exit_info is None:
             await asyncio.sleep(LEASE_HEARTBEAT_S)
             self._write_lease()
+
+    def _cli_gone(self) -> bool:
+        """Whether the CLI this host spawned is CONFIRMED gone: its pid no longer names a process with the start time
+        recorded at the spawn (lease_api's proc_start, the identity the lease carries and the kernel's lease_state reads;
+        a pid the kernel has since reused reads as gone too, by its different start). With no CLI identity recorded
+        there was no CLI and no lease of ours (_write_lease writes none without it), and the two methods test that
+        identity with the SAME predicate, `is None` on both fields: until review round 3 (2026-09-19) this one read
+        `not self.cli_start`, which agreed with _write_lease's `is None` only because sdk_backend.proc_start never
+        answers an empty string, an invariant stated at neither site; a start of "" now writes a lease AND reads as
+        present here, so the lease-kept arm never removes a lease _write_lease wrote for a CLI whose identity still
+        matches (pinned by tests/test_session_host.py SocketMode's no-identity case). Never the transport's word: see
+        run()'s failure arm, the one caller (the review of the socket-mode fix, round 2, 2026-09-19)."""
+        if self.cli_pid is None or self.cli_start is None:
+            return True
+        return self.lease_api["proc_start"](self.cli_pid) != self.cli_start
 
     # ── the CLI ──
     def _on_stderr(self, line: str) -> None:
@@ -801,12 +1213,171 @@ class SessionHost:
         self.cli_spawned_at = int(self.now())
         self._write_lease()
 
+    async def _adopt(self) -> None:
+        """The re-exec road's spawn: the CLI this process already holds, over the descriptors the handoff names (confirmed
+        against the CLI's own table first); the handoff file goes. The lease with THIS code's version is written by run()
+        once the socket is served, so a kernel that reads the new version finds a listener (round two of the review: the
+        lease came first, and a kernel could pass its wait and connect to a path nobody served yet)."""
+        self.transport = AdoptedCliTransport(self.spec, self._on_stderr, self.reexec)
+        await self.transport.connect()
+        if self.cli_start is None:
+            self.cli_start = self.lease_api["proc_start"](self.cli_pid)
+        try:
+            os.unlink(str(self.dir / "reexec.json"))
+        except OSError:
+            pass
+
+    def _reexec_check(self, frame: dict):
+        """(python, launcher) for a kernel's re-exec request, or a refusal reason: both paths must exist, and the CLI's
+        descriptors must be found (and, on Linux, confirmed against the CLI's own table)."""
+        python, launcher = str(frame.get("python") or ""), str(frame.get("launcher") or "")
+        if not python or not os.path.isfile(python) or not os.access(python, os.X_OK):
+            return None, "no such interpreter"
+        if not launcher or not os.path.isfile(launcher):
+            return None, "no such launcher"
+        if self.transport is None or self.cli_pid is None or self.exit_info is not None:
+            return None, "no CLI to hand over"
+        if self._reexec_running:
+            return None, "a re-exec is in progress"
+        if cli_pipe_fds(self.transport) is None:
+            return None, "the CLI's descriptors could not be confirmed"
+        return (python, launcher), None
+
+    async def _reexec_now(self, python: str, launcher: str) -> None:
+        """The handover. Hold the stdout reader (no further record is taken off the CLI; bytes not yet read stay in the
+        pipe, which survives the exec), drain what is queued for the CLI and for the disk, drain the attached kernel's
+        socket backlog (bounded), and then, with NO await from here to the exec, decide: the CLI is quiet (no turn
+        re-opened, the reader's stream buffer holds no bytes) or the exec is deferred to the next result, the event, the
+        reader released meanwhile. A kernel that does not drain within the bound defers it too. Quiet: any record the
+        reader took meanwhile (its read was already in flight) written synchronously so the handoff's count and the
+        journal agree; the handoff file; the descriptors marked inheritable; `reexec-now` written to the kernel, whose
+        backlog is empty, so the frame goes to the socket at once; the socket closed; the exec of this same process into
+        the kernel's code. A failure before the exec is a `reexec-failed` line, a fault to the kernel, and the host goes
+        on as it was. Round two of the review: the reader ran on through the handover, so records read after the flush
+        were counted in the handoff and lost with the process; round three: the quiet check preceded the drain's await,
+        so output arriving while a slow kernel drained entered the stream buffer after the check and was lost."""
+        self._reexec_pending = None
+        self._reexec_running = True
+        told = False
+        limits_set = False
+        written: list = []
+        w = self.attached
+        try:
+            self._reader_hold.clear()
+            flushed = asyncio.Event()
+            self._stdin_q.put_nowait(("flush", flushed)); await asyncio.wait_for(flushed.wait(), 30)
+            landed = asyncio.Event()
+            self._journal_q.put_nowait(("flush", landed)); await asyncio.wait_for(landed.wait(), 30)
+            fds = cli_pipe_fds(self.transport)
+            if fds is None:
+                raise RuntimeError("descriptors")
+            if w is not None:
+                # the kernel's backlog first, to empty (the buffer limits at zero, so drain waits for the last byte): the
+                # frame written after the check then reaches the socket at once, and nothing is decided under an await
+                try:
+                    w.transport.set_write_buffer_limits(0, 0); limits_set = True
+                    await asyncio.wait_for(w.drain(), REEXEC_DRAIN_S)
+                except asyncio.TimeoutError:
+                    self._defer(python, launcher, "kernel-behind")
+                    return
+                except Exception:
+                    pass                                    # a closed or failed writer: nothing to drain; the frame goes nowhere
+            pending = self._stdout_pending_bytes()          # no await from here to the exec
+            if self.inflight > 0 or pending:
+                self._defer(python, launcher, "output-arriving", pendingBytes=pending)
+                return
+            for off in sorted(self._unwritten):
+                if off == self.journal.next_offset:
+                    self.journal.append(self._unwritten[off])
+                    written.append(off)
+            if self._read_count != self.journal.next_offset:
+                raise RuntimeError("count")
+            handoff = {"cli_pid": int(self.cli_pid), "cli_start": self.cli_start, "cli_spawned_at": self.cli_spawned_at, "fsid": self.fsid,
+                       "fds": fds, "read_count": self._read_count, "inflight": self.inflight, "acked": self.journal.acked,
+                       "parked": [{"offset": v["offset"], "t": v["t"], "record": v["record"]} for v in self.parked.open.values()],
+                       "answered": sorted(self.parked.answered), "version_from": self.version, "t": self.now()}
+            hpath = self.dir / "reexec.json"
+            fd = os.open(str(hpath), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(handoff, f)
+            for fdn in fds.values():
+                os.set_inheritable(int(fdn), True)
+            buffered = None
+            if w is not None and self.attached is w:
+                told = True
+                self._send(w, {"t": "reexec-now"})
+                try:
+                    buffered = w.transport.get_write_buffer_size()   # 0: the frame is in the socket; else the kernel's socket is full
+                except Exception:
+                    buffered = None
+            self.log("reexec", python=python, launcher=launcher, journalNext=self.journal.next_offset, frameBuffered=buffered)
+            self.journal.close()
+            self._server.close()
+            argv = [python, launcher, str(self.spec_path), "--reexec", str(hpath)]
+            os.execv(python, argv)                          # the same pid, the same children, the descriptors marked above
+        except Exception as e:
+            self.log("reexec-failed", error=type(e).__name__, at=self._where(e))
+            self._journal_skip.update(written)
+            try:
+                os.unlink(str(self.dir / "reexec.json"))
+            except OSError:
+                pass
+            try:                                            # the exec did not happen: the journal reopens and the socket serves again
+                if self.journal._fh is None:
+                    self.journal = Journal.reopen(self.dir)
+                if self._server is not None and self._server.is_serving() is False:
+                    await self._serve_socket()          # the socket road's bind (a temp name, chmod, rename): never loose
+            except Exception as e2:
+                self.log("reexec-recover-failed", error=type(e2).__name__)
+            if self.attached is not None:
+                self._send(self.attached, {"t": "fault", "kind": "reexec-failed", "text": type(e).__name__})
+                if told:                                    # the kernel plans a reconnect: give it the stream's end it waits for
+                    w2 = self.attached
+                    self._detach(w2)
+                    try:
+                        w2.close()
+                    except Exception:
+                        pass
+        finally:
+            self._reexec_running = False
+            if limits_set and w is not None and not w.is_closing():
+                try:
+                    w.transport.set_write_buffer_limits()
+                except Exception:
+                    pass
+            if self._reader_hold is not None:
+                self._reader_hold.set()
+
+    def _defer(self, python: str, launcher: str, reason: str, **fields) -> None:
+        """The handover waits for the next result (the event) and the reader runs on meanwhile: output arriving (a turn
+        re-opened, bytes of a record not yet parsed) or a kernel that did not drain its socket within the bound."""
+        self._reexec_pending = (python, launcher)
+        self._reader_hold.set()
+        self.log("reexec-deferred", reason=reason, inflight=self.inflight, **fields)
+
+    def _stdout_pending_bytes(self):
+        """Bytes read off the CLI's stdout pipe and not yet parsed into a record, as far as the transport shows them (the
+        asyncio stream's buffer, under both transports); None when there is no such buffer to read. Bytes still in the
+        pipe survive an exec; these would not, so the handover waits while there are any. Not visible here: a partial
+        line the SDK's own framer holds between chunks, which only a record the CLI is mid-write on can leave."""
+        proc = getattr(self.transport, "_process", None) or getattr(self.transport, "proc", None)
+        aproc = getattr(proc, "_process", None) or proc
+        buf = getattr(getattr(aproc, "stdout", None), "_buffer", None)
+        return len(buf) if buf is not None else None
+
     async def _read_cli(self) -> None:
         """The stdout reader: never pauses for the disk (the writer task journals), never dies on one
         record's handling (a fault is a host.log row, the reading goes on). The stream's end is the CLI's
         exit; nothing else is."""
         try:
-            async for msg in self.transport.read_messages():
+            stream = self.transport.read_messages().__aiter__()
+            while True:
+                if self._reader_hold is not None and not self._reader_hold.is_set():
+                    await self._reader_hold.wait()      # the handover's hold: no record taken off the CLI while it is decided
+                try:
+                    msg = await stream.__anext__()
+                except StopAsyncIteration:
+                    break
                 off = self._read_count
                 self._read_count = off + 1
                 try:
@@ -849,7 +1420,14 @@ class SessionHost:
             item = await self._journal_q.get()
             if item is None:
                 return
+            if isinstance(item, tuple) and item and item[0] == "flush":   # the re-exec's drain: everything ahead is on disk
+                item[1].set()
+                continue
             off, msg = item
+            if off in self._journal_skip:                   # written by a handover that then failed: on disk already
+                self._journal_skip.discard(off)
+                self._unwritten.pop(off, None)
+                continue
             if delay:
                 await asyncio.sleep(delay)
             try:
@@ -885,9 +1463,21 @@ class SessionHost:
                 self.fsid = str(msg["session_id"])
                 self._write_lease()
         elif mt == "result":
-            self.inflight = max(0, self.inflight - 1)
-            if self.inflight == 0:
-                self.idle_since = self.now()
+            # ONE result closes everything fed: the CLI folds messages queued while it works into the running turn
+            # and answers them with a single result, so a fed-minus-resulted count stays above zero forever after a
+            # fold (the kernel's own settle learned this on 2026-07-09; the host re-created it, and every attach then
+            # adopted the stale count from the hello: a session that read Ready yet swallowed every send, 2026-09-18).
+            # A line the CLI runs as a SEPARATE turn instead re-opens the count from the output side below: its first
+            # assistant or user row after this result (its own user line was counted before the result, so nothing on
+            # the input side can tell a fold from a queue; the output can).
+            self.inflight = 0
+            self.idle_since = self.now()
+            if self._reexec_pending is not None:                  # a kernel asked mid-turn: the turn's end is the event
+                python, launcher = self._reexec_pending
+                asyncio.ensure_future(self._reexec_now(python, launcher))
+        elif mt in ("assistant", "user") and self.inflight == 0:
+            self.inflight = 1                              # output arriving with no turn counted: a queued line running as its own turn
+            self.log("turn-reopened", offset=off)
         elif mt == "control_request":
             self.parked.park(msg, off, self.now(), attached=self.attached is not None)
             self.log("request-open", requestId=str(msg.get("request_id") or ""),
@@ -981,6 +1571,22 @@ class SessionHost:
                         await self._attach(writer, frame)
                     elif t == "ping":
                         self._send(writer, {"t": "pong"})
+                    elif t == "reexec":
+                        target, why = self._reexec_check(frame)
+                        if target is None:
+                            self.log("reexec-refused", reason=why)
+                            self._send(writer, {"t": "reexec", "ok": False, "reason": why})
+                        elif self.inflight > 0:
+                            self._reexec_pending = target
+                            self.log("reexec-deferred", inflight=self.inflight)
+                            self._send(writer, {"t": "reexec", "ok": True, "when": "at-turn-end"})
+                        else:
+                            self._send(writer, {"t": "reexec", "ok": True, "when": "now"})
+                            try:
+                                await writer.drain()
+                            except Exception:
+                                pass
+                            asyncio.ensure_future(self._reexec_now(*target))
                     elif not attached_here:
                         self._send(writer, {"t": "fault", "kind": "not-attached", "text": "attach first"})
                     elif t == "in":
@@ -1089,7 +1695,7 @@ class SessionHost:
             self._send(writer, self.exit_info)
         await writer.drain()
 
-    def _queue_in(self, data: str) -> None:
+    def _queue_in(self, data: str) -> None:   # (the turn-opening test is _opens_turn, module level, so the kernel's tests can pin it)
         """One line from the kernel for the CLI's stdin: bookkeeping now, the write on the stdin pump. A user
         message opens a turn; a control_response for a request already answered is dropped."""
         try:
@@ -1097,7 +1703,7 @@ class SessionHost:
         except ValueError:
             obj = None
         if isinstance(obj, dict):
-            if obj.get("type") == "user":
+            if obj.get("type") == "user" and _opens_turn(obj):
                 self.inflight += 1
             elif obj.get("type") == "control_response":
                 rid = str(((obj.get("response") or {}).get("request_id")) or "")
@@ -1114,6 +1720,9 @@ class SessionHost:
             data = await self._stdin_q.get()
             if data is None:
                 return
+            if isinstance(data, tuple) and data and data[0] == "flush":   # the re-exec's drain: everything ahead reached the CLI
+                data[1].set()
+                continue
             if data is END_SENTINEL:
                 try:
                     await self.transport.end_input()
@@ -1128,7 +1737,150 @@ class SessionHost:
                     self._send(self.attached, {"t": "fault", "kind": "write-failed", "text": type(e).__name__})
 
     # ── life ──
+    def _sweep_stale_temps(self) -> None:
+        """Socket temps (sock_names) whose owner is gone, unlinked: a host killed between its bind and its rename leaves
+        one (a bind that fails unlinks its own). A temp whose pid is alive is another host's, mid-bind, and is left alone,
+        as is any name whose form this code did not mint; a signal-0 probe is the liveness test, and a pid the kernel has
+        since reused keeps its dead owner's temp until that pid is gone too (one owner-only file in a 0700 directory, the
+        leftover class a killed host's published socket already was). The first cut unlinked a fixed temp name here, which
+        is what made the name shared (the review of this fix, 2026-09-19). The cost is PROPORTIONAL TO THE ENTRIES IN
+        `hosts/`, not a constant: the glob reads the whole directory, and measured cold through the real launcher it took
+        39 us at 0 entries, 76 us at 100, 380 us median at 800, and 2.5 ms at 200 stale temps (the review's round 3; the
+        live root held 18 entries that day). That is why the sweep runs from _prepare_socket, BEFORE the CLI is spawned
+        and the lease written, and not between the lease and the bind, where the code through round 2 ran it: the
+        interval the kernel's lease-keyed attach roads race holds no directory read now. There is no per-launch cap on
+        the sweep (the reviewer's ruling, 2026-09-19): the cost is stated as proportional and kept out of that interval."""
+        for p in self.sock_path.parent.glob("*.tmp"):
+            pid = temp_owner_pid(p.name)
+            if pid is None or pid == os.getpid():
+                continue
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            except OSError:                          # a live process of another uid: not ours to judge
+                pass
+
+    def _socket_failed(self, step: str, e: OSError) -> None:
+        """The one row both halves of the socket road write on a refusal (_prepare_socket's steps hosts-dir, budget and
+        prelude; _serve_socket's bind-hosts, bind, chmod and rename): the step, the error class, its errno, the published path's byte
+        length and the limit, and the failing frame. Never the error's text, which carries the path: host.log carries no
+        spec field (the review of this fix, 2026-09-19)."""
+        self.log("socket-bind-failed", step=step, error=type(e).__name__, errno=e.errno,
+                 pathLen=len(os.fsencode(str(self.sock_path))), limit=SOCK_PATH_MAX, at=self._where(e))
+
+    def _prepare_socket(self) -> None:
+        """Everything the socket road needs that is not the bind itself, run from run() BEFORE the CLI is spawned and so
+        before any lease exists (round 3 of this fix, the reviewer's ruling of 2026-09-19; through round 2 these steps ran
+        inside _serve_socket, after _spawn had written the lease). In order: `hosts/` made ours and 0700 (hosts_dir: a
+        symlink, a foreign owner or a tighten that does not take is refused, step hosts-dir), the published path's LENGTH
+        checked in bytes against SOCK_PATH_MAX (step budget; the module comment there says why the check is ours and not
+        the bind's), a dead host's published socket unlinked and stale temps swept (_sweep_stale_temps, step prelude).
+        None of these reads the lease or needs the CLI's identity, and nothing in the kernel waits on the lease appearing
+        before them (shown by execution in that round, not by reading), so they cost the lease-to-socket interval nothing
+        once moved here: after _spawn's lease write only one lstat of hosts/ (the bind-hosts guard, round 4 of the
+        review), the bind, the chmod by path and the rename run (_serve_socket).
+        The trade is that the lease appears later in absolute terms by these steps' cost, which lengthens the interval
+        from host-started to the lease, the one a kernel reading a foreign host's state mid-start falls into (a
+        recovered orphan and a second host; queued as its own change). A refusal here is the socket-bind-failed row
+        naming the step and an OSError out of run() with NOTHING started: no CLI, no lease, no transport to close; run()
+        closes the journal and main() logs host-crashed, so the kernel's spawn wait reads an exit."""
+        step = "hosts-dir"
+        try:
+            hosts_dir(self.state_dir)                   # `hosts/` 0700 and ours before anything is bound in it
+            step = "budget"
+            if len(os.fsencode(str(self.sock_path))) > SOCK_PATH_MAX:   # the published path is what the kernel connects to
+                raise OSError(errno.ENAMETOOLONG, "AF_UNIX path too long")
+            step = "prelude"
+            try:
+                self.sock_path.unlink()                 # a dead host's published socket
+            except OSError:
+                pass
+            self._sweep_stale_temps()
+        except OSError as e:
+            self._socket_failed(step, e)
+            raise
+
+    async def _serve_socket(self) -> None:
+        """Serve `hosts/<sid8>.sock` owner-only from the moment the path exists, or fail loudly and serve nothing: one
+        lstat of `hosts/`, the bind, the chmod and the rename, and nothing else (round 3 moved every other step of the
+        road to _prepare_socket, which run() calls before the CLI is spawned). THE LSTAT AT THE BIND (extra6-1, round 4 of
+        the review, 2026-09-20): round 3's move put the CLI's whole start between the prelude's last look at `hosts/` and
+        the bind (about 1.1 s on the production road against 0.4 ms through round 2, both by strace in round 4's
+        review), so a `hosts/` re-pointed during the spawn was followed by the bind where round 2 refused it. The guard
+        sits at the bind again: `hosts/`, the directory the temp is bound in and the published path's parent (one
+        directory, one read), is lstat'd immediately before start_unix_server and refused as a symlink (ELOOP), not a
+        directory (ENOTDIR), another uid's or group/world-accessible (EPERM), step `bind-hosts`, before anything is bound.
+        It costs one lstat (about two microseconds, measured in that round) inside the lease-to-socket interval. What
+        remains between this lstat and the bind is the bind's own window, a re-point landing in those microseconds is
+        followed; and the guard narrows the band in which the HOST refuses, not the reach of a re-point after the
+        publish, which needs a state root that is not 0700 and is stated at owner_only_dir. asyncio.start_unix_server binds and listens at the umask's mode, and
+        until 2026-09-18 the chmod to 0600 came one line after the bind, so the published path stood at the umask's mode
+        for the gap (PR 789's round 1, finding fresh-5: the last member of the create-then-tighten class that PR closed
+        for the kernel's credential files; behind the owner-only state root, the one guard then, so a window, not a live
+        hole). The bind takes a writer-unique temp name beside the published one (sock_names: the pid and random digits,
+        the published name's length); the temp is tightened by PATH (fchmod on the listening descriptor is a no-op for a
+        bound AF_UNIX socket on Linux, verified 2026-09-18: the descriptor is the socket, not the file); os.rename then
+        moves it onto the published path, which is therefore born 0600. A connect through the new name reaches the same
+        listening socket (AF_UNIX resolves a path to its inode), so the kernel keeps connecting to the one documented
+        path (docs/reference.md) and no process-wide umask moves. During its brief life at the umask's mode (0775 under
+        the 002 the live host runs at, measured 2026-09-19; 0755 under 022) the temp has ONE guard, the mode of the
+        directory it is bound in: `hosts/` is owner-only BY CODE (hosts_dir, called from _prepare_socket and by the
+        kernel's write_spawn_spec, 0700 whatever the umask, a symlink or a foreign owner refused, an existing loose one
+        tightened and the tighten read back), so nothing outside the uid can reach the temp's name. The umask is not a
+        guard and the first cut's claim that it was one was false for the umask we run: 002 leaves the group write bit,
+        the permission an AF_UNIX connect needs (the review of this fix, 2026-09-19; pinned by tests/test_session_host.py
+        SocketMode's umask cases, which stat the temp at its chmod). The published path never exists at a loose mode.
+        This method runs AFTER _spawn has written the lease, so the four steps here are the whole of the lease-to-socket
+        interval the kernel's lease-keyed attach roads race (measured cold through the real launcher in round 3; the
+        prelude's directory read, proportional to the entries in `hosts/`, sat in that interval through round 2). Every
+        failure here is loud and leaves nothing: the socket-bind-failed row naming the step (_socket_failed), the bound
+        socket closed and its temp unlinked, then run()'s failure arm ends the CLI, drops the lease once that CLI is
+        confirmed gone (kept, with a lease-kept row, while it is not: that arm says why) and main() logs host-crashed, so
+        the kernel's spawn wait reads an exit, not a socket. Cleanup of the published path is unchanged: asyncio's
+        Server.close never unlinks a path on 3.12, and 3.13's cleanup compares the bound path's inode and finds the temp
+        gone, so run()'s own unlink stays the one."""
+        step, server = "bind-hosts", None
+        try:
+            st = os.lstat(self.sock_path.parent)        # hosts/: the temp's directory and the published path's parent
+            if stat.S_ISLNK(st.st_mode):
+                raise OSError(errno.ELOOP, "hosts directory is a symlink at the bind")
+            if not stat.S_ISDIR(st.st_mode):
+                raise OSError(errno.ENOTDIR, "hosts directory is not a directory at the bind")
+            if st.st_uid != os.geteuid():
+                raise OSError(errno.EPERM, "hosts directory belongs to another uid at the bind")
+            if st.st_mode & 0o077:
+                raise OSError(errno.EPERM, "hosts directory is group/world-accessible at the bind")
+            step = "bind"
+            server = await asyncio.start_unix_server(self._on_client, path=str(self.sock_tmp))
+            step = "chmod"
+            os.chmod(self.sock_tmp, 0o600)
+            step = "rename"
+            os.rename(self.sock_tmp, self.sock_path)
+        except OSError as e:
+            if server is not None:
+                server.close()
+            try:
+                self.sock_tmp.unlink()
+            except OSError:
+                pass
+            self._socket_failed(step, e)
+            raise
+        self._server = server
+        self.log("socket-ready", sock=self.sock_path.name, tmp=self.sock_tmp.name, pathLen=len(os.fsencode(str(self.sock_path))))
+
     async def run(self) -> int:
+        """The whole life, in this order: the host-started row and identity.json; the socket road's prelude
+        (_prepare_socket: the directory, the budget, a dead socket, stale temps, none of which needs the CLI or the
+        lease); the CLI (_spawn, which writes the lease at its end); the socket (_serve_socket: an lstat of hosts/, bind,
+        chmod, rename, the only steps after the lease); then the tasks until the CLI is gone. The directory work came before the CLI in
+        round 3 of the socket-mode fix (the reviewer's ruling, 2026-09-19): through round 2 it ran after the lease and
+        made up most of the lease-to-socket interval the kernel's lease-keyed attach roads race. Two failure arms, one
+        per half of the road: a prelude refusal has started nothing (no CLI, no lease, no transport), so it closes the
+        journal and raises; a refusal after the spawn ends the CLI and decides the lease by the CLI's confirmed exit."""
         self._stop = asyncio.Event()
         self._journal_q = asyncio.Queue()
         self._stdin_q = asyncio.Queue()
@@ -1137,10 +1889,22 @@ class SessionHost:
             (self.dir / "identity.json").write_text(json.dumps({"pid": os.getpid(), "start": self.lease_api["proc_start"](os.getpid()) or ""}))
         except OSError:
             pass
-        # the CLI first, the socket second: a kernel that finds the socket finds a CLI behind it (an attach
-        # before the spawn would report no CLI pid and fail its first write)
+        # the directory first, the CLI second, the socket third. A refusal of the prelude starts nothing: no CLI was
+        # spawned, so there is no transport to close and no lease was ever written, none to remove or keep (the
+        # lease-kept logic below is for the steps after the spawn); the row is written, the journal is closed, and
+        # main() logs host-crashed, so the kernel's spawn wait reads an exit.
         try:
-            await self._spawn()
+            self._prepare_socket()
+        except OSError:
+            self.journal.close()
+            raise
+        # the CLI before the socket: a kernel that finds the socket finds a CLI behind it (an attach before the spawn
+        # would report no CLI pid and fail its first write)
+        try:
+            if self.reexec:
+                await self._adopt()
+            else:
+                await self._spawn()
         except SdkInternalsMismatch:
             raise           # its text is the host's own and names the remedy: main's host-crashed record carries it whole
         except Exception as e:
@@ -1148,17 +1912,71 @@ class SessionHost:
             # the review, 2026-09-18): the SDK wraps a drifted call and a missing binary alike as a connection error,
             # and the chain records which was behind it for whoever reads the row. Never a message.
             chain = error_chain(e)
-            self.log("cli-spawn-failed", error=type(e).__name__, **({"causes": chain} if chain else {}))
+            self.log("cli-adopt-failed" if self.reexec else "cli-spawn-failed", error=type(e).__name__, at=self._where(e),
+                     **({"causes": chain} if chain else {}))
             self.exit_info = {"t": "exit", "code": None, "signal": None, "cause": "spawn-failed", "error": type(e).__name__}
             return 1
-        self.sock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self.sock_path.unlink()
+            await self._serve_socket()
         except OSError:
-            pass
-        self._server = await asyncio.start_unix_server(self._on_client, path=str(self.sock_path))
-        os.chmod(self.sock_path, 0o600)
-        self.log("socket-ready", sock=str(self.sock_path.name))
+            # a host that could not publish its socket serves nothing: the CLI it spawned is ended with it, and the lease
+            # goes ONLY once that CLI is confirmed gone. Reached from the bind, the chmod and the rename alone since round 3
+            # (a prelude refusal exits above, before any CLI or lease exists). The kernel's spawn wait reads the exit (code
+            # 1, main()'s host-crashed after the socket-bind-failed row); what its orphan road then does depends on the
+            # lease (the review of this fix, 2026-09-19: at a published path over the budget the first cut logged
+            # socket-ready and kept both the lease and the CLI, and nothing could ever connect; round 1 then removed the
+            # lease as soon as transport.close() RETURNED, and a returning close is not proof the CLI is gone). The lease
+            # is the one thing the kernel's orphan road waits on: with it removed and the CLI alive, the next connect finds
+            # a lease-less leftover, waits for nothing, and starts a SECOND CLI on the same transcript. So the exit is
+            # confirmed by pid and start-time identity (_cli_gone, the lease's own reader) and never by the transport: the
+            # SDK transport has no returncode attribute at all, so this module's _cli_alive returns False, meaning gone,
+            # for a live SDK CLI, in exactly the case that matters here. Unconfirmed, the lease stays and a lease-kept row
+            # says so (the kind and the CLI's pid, nothing else): the kernel reads that lease as an orphan's and waits
+            # for the CLI to finish, as it did before this fix, with no bound on that wait (the reviewer queued the bound
+            # as a change of its own). That lease-kept row IS the operator's handle (kernel-5's clause, round 5 of the
+            # review, 2026-09-19). Its fields, read by execution from the row this arm writes: t, kind ("lease-kept") and
+            # cliPid, and tests/test_session_host.py SocketMode's kept-lease case pins the set as exactly those three. The
+            # row names the pid to end, and ending that pid is the recovery: over the kept lease the kernel's connect
+            # road waits and spawns nothing while the pid the lease names lives, and spawns once after it is gone
+            # (KeptLease, on the real backend). So the one state on this road that needs a human to clear is visible,
+            # with the pid, to the human who clears it. NOTHING ELSE CLEARS IT (kernel-5 as filed in round 3 of the
+            # review; its Fix line applied in round 5's second addendum, 2026-09-19): the kept lease clears on the CLI's
+            # exit alone, and the operator's recovery is to end the CLI pid this row names. Derived from the callers of
+            # kernel/sdk_backend.py's remove_lease, the one function in the tree that unlinks a lease file: this arm's
+            # call above, gated on _cli_gone; run()'s exit below, after the CLI is gone; the kernel's orphan road
+            # (_host_orphan_recover), after its wait for the lease's pid and start to be gone; the boot census's orphan
+            # reap and its dead-lease sweep (lease_census), which SPARE this shape while the CLI lives, since a host-held
+            # lease whose holder is gone and whose CLI is alive is "host-gone-finishing", owned and not reaped, at its
+            # two predicates `why == "holder-gone" and holder.kind == "host"`, so a kernel restart is not a backstop; and
+            # _lease_close, the kernel-held lease's closer, which the connect loop's finally skips for a hosted session
+            # and the shutdown drain reaches only for a session it reaps. Two roads a reader might take for backstops
+            # are not: the shutdown drain (drain) reaps only a session whose thread is still alive at its bound and is
+            # not detached (every session with a host or a host intent is latched detached), and this session's thread
+            # ended on its launch error, so the drain reaps nothing for it and closes no lease; kill(sid) with a session
+            # object calls shutdown(), which touches no lease, and with none ends a host through its lease only when
+            # host_lease_state reads "attach", where this lease reads "orphan" (its holder is gone), so it returns having
+            # done nothing. Once the CLI has exited, the next connect's orphan road or the next boot's dead-lease sweep
+            # removes the lease. The residual predates this change: on the base a bind or chmod failure raised out of
+            # run() with the lease as it was and the CLI running, with no removal at all, and the census's sparing
+            # branch is older than this change too (it cites T315, the per-session hosts' arrival).
+            try:
+                await self.transport.close()
+            except Exception:
+                pass
+            if self._cli_gone():
+                try:
+                    self.lease_api["remove_lease"](self.state_dir, self.sid)
+                except Exception:
+                    pass
+            else:
+                self.log("lease-kept", cliPid=self.cli_pid)
+            self.journal.close()
+            raise
+        if self.reexec:                                 # the new version's lease AFTER the socket: a reader of the lease finds a listener
+            self._write_lease()
+            self.log("reexeced", cliPid=self.cli_pid, version=self.version, journalNext=self.journal.next_offset, readCount=self._read_count)
+        self._reader_hold = asyncio.Event()
+        self._reader_hold.set()
         tasks = [asyncio.ensure_future(self._journal_writer()), asyncio.ensure_future(self._read_cli()),
                  asyncio.ensure_future(self._beat()), asyncio.ensure_future(self._self_answer_loop()),
                  asyncio.ensure_future(self._grace_loop()), asyncio.ensure_future(self._stdin_pump())]
@@ -1207,21 +2025,32 @@ def _lease_api() -> dict:
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if len(argv) != 1:
-        sys.stderr.write("usage: romp-session-host <spawn.json>\n")
+    if len(argv) == 3 and argv[1] == "--reexec":
+        host = SessionHost(argv[0], reexec_path=argv[2])
+    elif len(argv) == 1:
+        host = SessionHost(argv[0])
+    else:
+        sys.stderr.write("usage: romp-session-host <spawn.json> [--reexec <reexec.json>]\n")
         return 2
-    host = SessionHost(argv[0])
     try:
         return asyncio.run(host.run())
     except SdkInternalsMismatch as e:
-        # whole, not the bounded last traceback line below: the text is the host's own (two version strings, a
+        # whole, not the class, errno and frame the arm below logs: the text is the host's own (two version strings, a
         # module path, the repin command), and the kernel's launch error reads this row (host_transport.py,
         # host_exit_reason), so the card names the versions and the command instead of "see host.log"
         host.log("host-crashed", error=str(e))
         sys.stderr.write("romp-session-host: %s\n" % e)
         return 1
-    except Exception:
-        host.log("host-crashed", error=traceback.format_exc().splitlines()[-1][:200])
+    except Exception as e:
+        # the class, the errno and the failing frame, never the text: an OSError's text carries the path it failed on, a
+        # spec field (the state root), and host.log carries no spec field (the review of this fix, 2026-09-19, which found
+        # the bind-failure road writing the root's absolute path here through this row). The errno came back in round 3
+        # (fresh-1: the base carried it and the redaction dropped it), guarded twice: the exception must be an OSError and
+        # its errno an int, because a two-argument OSError(path, text) puts the PATH in .errno, and log() passes a str
+        # through, so a typed guard alone would reopen the leak this row closed. A non-OSError's .errno, whatever it
+        # holds, is never read.
+        err_no = e.errno if isinstance(e, OSError) and isinstance(e.errno, int) else None
+        host.log("host-crashed", error=type(e).__name__, errno=err_no, at=SessionHost._where(e))
         return 1
 
 

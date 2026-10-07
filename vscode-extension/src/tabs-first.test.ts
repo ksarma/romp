@@ -10,8 +10,9 @@ import * as path from "node:path";
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
-test("a tabMeta map holds the kernel's name+color per tab (and its emoji since 2026-09-06)", () => {
-  assert.match(RENDER, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string \}>\(\);/);
+test("a tabMeta map holds the kernel's name+color per tab (its emoji since 2026-09-06, its count of open user todos since 2026-09-22)", () => {
+  assert.match(RENDER, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string; userTodos\?: number \}>\(\);/,
+    "the roster row's fields, the count included (ui/webview/tab-usertodo-skeleton.test.ts pins its readers)");
 });
 
 test("applyTabOrder REBUILDS tabMeta from the authoritative payload (closed tabs don't linger)", () => {
@@ -54,7 +55,11 @@ test("the placeholder shows the mini romp swirl loader (not a whole-tab opacity 
   // the user 2026-07-03: a still-building tab shows the spinning romp swirl glyph — the loader motif — rather
   // than the old .tab-ph-pulse opacity breathing on the whole tab.
   assert.match(RENDER, /swirl\.src = mediaSrc\("romp-swirl-glyph\.svg"\)/);
-  assert.match(RENDER, /tab\.appendChild\(swirl\);/);
+  assert.match(RENDER, /slot\.appendChild\(swirl\);/, "the swirl rides the status dot's slot (plans/tab-placeholder-width.md): the loading tab is as wide as the loaded one");
+  assert.match(RENDER, /applyTabStatus\(tab, \{ id, status: \{\} \}\);\s*\n\s*const slot = tab\.querySelector<HTMLElement>\("\.tab-dot"\);/, "the slot is the dot widget's own, drawn through the one shared chip helper for an unknown status");
+  assert.match(RENDER, /const end = el\("span", "tab-ph-end"\); end\.textContent = "×";/, "the end spacer wears the close glyph's metrics and is never a control");
+  assert.match(CSS, /\.tab-dot\.loading \.tab-ph-swirl \{ position: absolute; left: 50%; top: 50%; margin: -6px 0 0 -6px; \}/);
+  assert.match(CSS, /\.tab-ph-end \{ visibility: hidden; font-size: 1\.1em; line-height: 1; padding: 0 2px; \}/);
   assert.match(CSS, /\.tab\.tab-placeholder \{ cursor: pointer; \}/);   // clickable while loading (2026-08-25)
   assert.match(CSS, /\.tab-ph-swirl \{[\s\S]*?animation: tab-ph-swirl-spin/);
   assert.match(CSS, /@keyframes tab-ph-swirl-spin \{ to \{ transform: rotate\(-360deg\); \} \}/);

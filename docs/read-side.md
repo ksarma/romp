@@ -162,7 +162,14 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   `top` when any changed — and an unchanged board sends such a client nothing at
   all. A federated dashboard's relay sockets announce it too (`federation.ts`
   `REMOTE_DIAL_CAPS`, since 2026-09-18; the relay forwards the dial's query
-  whole). A consumer that announces nothing and dials no `delta=1` (a bundle
+  whole), and since 2026-09-19 a relay dial carries beside it the held members
+  its conn's own bases give it (`held:feed:<gen>.<rev>` from the pair beside the
+  raw feed base, `held:bars:<gen>.<rev>` from the receiver's bars base), each
+  omitted while its base holds no gen, which is every dial against a kernel that
+  stamps no generation on its frames; never the page's own caps, whose held
+  member, once the page's caps carry one, is the pair the page holds for its
+  LOCAL kernel (no page's caps carry one today).
+  A consumer that announces nothing and dials no `delta=1` (a bundle
   before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
   VS Code extension before 2026-09-16) stays on the full-frame path, which
   keeps its 60 s repost of the unchanged frame; one that dials `delta=1`
@@ -173,7 +180,19 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the frame the merge reads and a remote host's delta onto the raw frame it
   holds for that host (`applyRemoteFeedDelta`), and re-emits a merged full
   frame, so every consumer still sees whole `feed` frames; a delta it cannot
-  apply gets a `needFullFeed` to the kernel that sent it and a re-base. A
+  apply gets a `needFullFeed` to the kernel that sent it and a re-base, and
+  since 2026-09-20 a delta whose apply THROWS (a malformed frame) is refused
+  the same way on both roads, bounded by progress: one bare ask per stall,
+  a `feedDelta-apply` row naming the road (wire or local), and after the
+  answering full a second throw stops the asking and tells the shell once,
+  the pane staying on its last frame until the next full or applying delta
+  lands (a full lands and shows whatever the latch; an applying delta alone
+  lifts the stop, so a throw after a quiet interval with no applying delta
+  between is read as the same stall and asks nothing); the remote bound
+  resets with its socket, the local one with the page alone, by choice: the
+  shim redials the local socket in-page and announces the reopen to the
+  manager (a `romp:wsup` event and an in-band `wsup` frame), and a reset on
+  that reopen is left to the maintainer. A
   remote host's view-delta patches (the timeline's bars; the feed from a kernel
   too old to read the caps term) are reassembled per relay socket
   (`Conn.viewDeltas`) before the merge. A build that carries no `ledgers`
@@ -211,19 +230,23 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   push did; and a row in the dashboard's Log (at most five drop rows, none older
   than an hour, so they never crowd out a backend problem). Every close the
   browser reports for a socket that opened leaves a `wsclose` breadcrumb (code,
-  reason, socket age, and `bundleReady`: whether the bundle had said ready when
-  the socket closed) in `client-diag.jsonl` (rotated to `.1` at 8 MB), and the
-  kernel stamps every client-diag row with `reconnect`: whether the socket that
-  carried the row declared the redial term. Every client-diag row from a
-  browser stops while that browser's gear switch "Stop all timing rows from
-  this browser" (`perfMute` under `romp:settings`) is on, the rows the shim
-  queued for a redial included, so a browser that leaves no breadcrumbs may
-  have the switch on, not a broken sink. The queued `wsclose` row rides the
-  redial, so the pair names the redial's kind: both true is a declared redial of
-  a page that was live; both false is a socket that died before the bundle said
-  ready and redialed as a fresh page; `reconnect` false with `bundleReady` true
-  is a ready that reached the shim while its socket was going down and rode the
-  redial as the page's own, so the redial carried no term. A socket
+  reason, socket age, and the shim's ready state at the close: `bundleReady`,
+  `readyAcked`, `readyQueued`) in `client-diag.jsonl` (rotated to `.1` at 8 MB).
+  The kernel stamps every row a page posts through its socket (the `clientDiag`
+  rows) with `reconnect`, whether the socket that carried the row declared the
+  redial term (`?reconnect=1`), so the queued `wsclose` row, which rides the
+  redial, names the redial's kind: `reconnect` true, a declared redial of a
+  page the kernel had served whole; false with `bundleReady` false, the socket
+  died before the bundle said ready (or the ready landed after the close) and
+  the redial dialed as a fresh page; false with `readyQueued` true, the ready
+  reached the shim while the socket was going down and rode the redial as the
+  bundle's own; false with `bundleReady` true, `readyAcked` false and
+  `readyQueued` false, the ready left on the socket and no caps frame answered
+  it, so the redial dialed fresh and re-posted the ready. Every client-diag row
+  from a browser stops while that browser's gear switch "Stop all timing rows
+  from this browser" (`perfMute` under `romp:settings`) is on, the rows the
+  shim queued for a redial included, so a browser that leaves no breadcrumbs
+  may have the switch on, not a broken sink. A socket
   the shim abandons leaves none — the watchdog's own `watchdog-close` row went
   down the quiet socket before the abandon (the foreground path's abandon sends
   none, but its `return` row queues for the redial), so an armed socket's raise,
@@ -245,9 +268,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   off screen on the phone; the parked paragraph below) carries no `awaitLink`
   and files no `return-fresh` until its tap. A `return-fresh` in such a
   dashboard carries `linkUpMs`: for an unparked return the
-  foreground-to-link-up gap; for a parked return the row files at the tap,
-  with `parked: true`, and `linkUpMs` measures from the tap, 0 when the
-  shell's link stood. Either way the path's own recovery reads apart from the
+  foreground-to-link-up gap; for a parked return the row files at the show
+  word that un-parks the pane (the tap, or the layout leaving the phone's;
+  the parked paragraph below), with `parked: true`, and `linkUpMs` measures
+  from that word, 0 when the shell's link stood. Either way the path's own
+  recovery reads apart from the
   code-owned wait (`ms` minus `linkUpMs`). The shell's own socket files one
   `return-probe` row (surface `shell`) per return that found it dead or quiet:
   the `decision` (`redial-closed` or `redial-stale`; a standing socket files
@@ -255,7 +280,17 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   boot dial is the probe), the `hiddenMs` and `quietMs` gaps, and the path's
   recovery on that one socket, `attempts`, `firstFailMs` and `ms` (foreground to
   open); `ms` and `firstFailMs` are -1 when the next return came before the
-  open, the row filed at that return with the attempts as they stood. A pane
+  open, the row filed at that return with the attempts as they stood. Each
+  attempt that hangs is cut on the dial's own timer 15 s after its dial, but
+  `firstFailMs` is stamped at the close event that follows the cut, so on a
+  return whose first attempt hung `ms` minus `firstFailMs` reads 15,000 (or a
+  millisecond under, since the timer can fire while the clock reads a
+  millisecond short) plus the timer's lateness and the close event's delay
+  after the cut. A reading well above 15,000 means a late timer or a late
+  close event. Earlier builds also waited for the next 5 s watchdog tick
+  before the cut, so they read 15,000 to 20,000 plus the same delays, and on
+  the phone some returns after a resume read above even that, which only a
+  late timer or a late close event explains. A pane
   whose wait outlived the shell's loop-alive stamp (its `connT`, the later of
   its last dial and its watchdog's last tick with a socket to watch, 25 s stale)
   dials on its own and files a `link-backstop` stale row, the loud sign that the
@@ -269,17 +304,95 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   answers the show carries `parked: true` too, with `ms` and `linkUpMs`
   counted from the show word rather than the return. A return in a shell that
   told a word and did not park says `parked: false`; a standalone page's row
-  carries no `parked` field.
+  carries no `parked` field. On the phone layout the Outline, the Sessions
+  band, the Waiting pane and the Files pane load on their first tap (since
+  2026-09-18; the chat, the feed and the tab the phone was left on load at
+  boot, the last unless the gear has that pane off), so a pane the phone never
+  showed has no document and files no rows of any kind: its absence from the
+  rows is the saving, not a field. A lazy pane whose document fails to load
+  (the load event over an error page, which commits no readable document, or
+  no committed document by the 30 s backstop) is put back where a tap finds
+  it and says so over the pane area with a control to retry; it files no
+  row. A 200 the kernel served at the
+  pane's url that carries no pane shim (its own "needs the ui/ modules" page;
+  the kernel stamps every text/html 200 it writes whose body carries an
+  `<html>` tag with `data-romp-served=200` on that tag, so every text/html 200
+  at a pane url carries the stamp once, which the census tests read off the
+  writers and off a lab kernel (`tests/test_pane_state_broadcast.py`,
+  `tests/test_return_from_background_served.py`); a body with no `<html>` tag
+  is served as it came, unstamped, so at a pane url it would read as a
+  failure (the paste-the-token page at `/` and `/login` is such a body today,
+  and neither is a pane url); and the shell reads that stamp) is not a
+  failure: the shell cannot classify it, so it is shown as served (the loader
+  clears, the src stays), the same page state as the pane's own document, and
+  it files no row either, so nothing the page records tells the two apart. A
+  document at the url with neither the shim nor the stamp
+  (the kernel's 403 line, which a pane url answers only to a browser holding
+  no session cookie this kernel accepts, since a page opens on that cookie
+  alone; its 500 page; a proxy's 502 body) is a failure like an error page:
+  re-parked with the retry control (since 2026-09-19). On the desktop layout a pane a flip promoted is judged the
+  same way (its promotion arms the same load listener and 30 s backstop): the
+  episode's first failure hands the url back to `data-src` and promotes once
+  more; the second is the bound, which drops a document the kernel sent (the
+  frame to about:blank, the url under `data-lazy-src`) and keeps the browser's
+  own error page (pass 5, the author's label); a fetch still in flight at the
+  backstop is held on its kept src and its load ends the episode. No loader and
+  no retry control outside the phone layout: a flip to the phone parks a bound
+  or held pane with the failed state, where a tap recovers it, and a reload is
+  the other road.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
   as a fresh page. A page whose ready was never answered dials fresh for its
   life (the bundle posts ready once), so each of its redials is served whole.
-  On a declared redial the kernel sends the active tab in full and lists every
-  other session as a `skeleton` on the tab strip with one small `status` frame
-  each, and the chat pane loads a skeleton on click or one at a time in idle,
-  never while the tab is hidden; one `skeleton` client-diag row (count, active)
-  records the regime.
+  On a declared redial the kernel sends the active tab in full, or, when a
+  reveal is parked for the window and the kernel lists its session, that
+  session in full (pass 4b, the author's label; for a one-column window alone:
+  the shell declares its chat column count with the tap and the kernel reads
+  the columns' sockets beside it, a split page keeping the active tab, pass 5),
+  and lists every other session as a `skeleton` on the tab strip with one small
+  `status` frame each, and the chat pane loads a skeleton on click or one at a
+  time in idle, never while the tab is hidden; one `skeleton` client-diag row
+  (count, active) records the regime, and a `[reveal]` journal line names the
+  parked session the kernel served whole in place of the page's hint (pass 5). On
+  the phone layout the chat pane's first dial declares `skeleton=1` too (since
+  2026-09-18), so a cold open there is served the same way: the strip, one
+  full for the stored tab, or for the parked reveal's session as above, and a
+  status per other tab, and the `skeleton` row records it; a cold open on a
+  push notification's deep link makes the notified session the stored tab
+  first, on the phone layout alone (the shell's head seeds the chat blob
+  before the chat pane dials; on the desktop the reveal lands the focus as
+  before). The idle chain's
+  start gate runs on every layout (the desktop's panes and dial are unchanged;
+  a desktop redial's first background ask follows that one full instead of the
+  strip's paint): the chain starts from the moment the stored tab's full has
+  applied, from a tap onto a tab already served whole, or from the local strip
+  when it lists no such local tab, because the stored tab ended while the phone
+  was away or because it is another host's, whose full arrives on that host's
+  relay socket and is not waited for (as before). On the phone the chain also
+  waits for the chat pane to be on screen: a phone opened on another tab arms it
+  when the Chat tab is shown.
+  A return on the phone (the redial that follows a socket the background left
+  dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
+  kernel re-skeletons the other tabs on the new socket as before, and each of
+  them loads when tapped. The hold lasts the socket's life (decided
+  2026-09-19): a tap loads the tapped tab and nothing else, and the chain does
+  not resume after the first tap, because the owner's answer was that the
+  other tabs reload only when tapped. It covers every phone redial after the
+  first connection, a kernel restart and a dropped link while the app is in
+  the foreground included. The shim can tell them apart (its visibility
+  handler records `pendingWhy` before it enqueues the redial's frame), but the
+  `wsup` frame carries no reason field today, a restart's redial and a
+  foreground drop each cost one full at the tap per tab tapped under the
+  rule, and the one rule is chosen for simplicity; a drop redialed by a
+  throttled timer while the page is still hidden reads `reconnect`, so the
+  word is exact for the two named cases only.
+  The desktop's redial keeps today's chain, and the hold follows the layout
+  (since 2026-09-19): the shell re-tells its panes word with the layout on every
+  flip across the phone breakpoint, and its link word, the one a split chat
+  column hears, carries the same layout term, so a rotation to the desktop
+  inside the socket's life lifts the hold in every chat document and the grid
+  gets its chain, and a rotation to the phone after a redial sets it.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
@@ -392,8 +505,11 @@ is caught by the maildir claim/retry and stuck-mail warnings either way.
      input), continuously refreshed as the session gains turns. The index + the
      TOC header.
 2. **A thin real-time live-state read**: `states/<sid>.jsonl` (working / permission /
-   compacting / idle / closed transitions) + the event tree's open turn. Drives the
-   chip, the timeline stripes, the hard-block floor, and the mid-turn pulse.
+   idle / closed transitions) + the event tree's open turn + the backend's own
+   compacting bracket (set when romp delivers a `/compact` or the CLI's stream says a
+   compaction started, automatic or manual; cleared by the stream's compaction result,
+   the `compact_boundary` or the turn's result). Drives the chip, the timeline stripes,
+   the hard-block floor, and the mid-turn pulse.
 
 ## The three panes (each a thin projection)
 
@@ -958,19 +1074,25 @@ The Python kernel (`kernel/kernel.py`) closes it.
   origin plus known local client origins (the browser at the kernel's host, the
   `vscode-webview://` extension, the timeline), reject everything cross-site. This
   kills ClawJacked for free; legit local clients send the right Origin/Host.
-- **Token REQUIRED on every gated route, loopback included** (Jupyter's model:
-  loopback is one network stack shared by every local UID, so the `0600` token
-  file — not the socket — is the same-user trust boundary; the gate keeps a
-  same-host co-tenant out of `/send` and the bus). Accepted forms: `?token=`
-  (browser bootstrap, seeds a `SameSite=Strict` cookie so it never re-prompts),
-  the cookie, and `X-Romp-Token` (CLI/hooks/daemons, read from the file). The
+- **Token REQUIRED on every gated route, loopback included, directly or through
+  a browser sign-in made with it** (Jupyter's model: loopback is one network
+  stack shared by every local UID, so the `0600` token file, not the socket, is
+  the same-user trust boundary; the gate keeps a same-host co-tenant out of
+  `/send` and the bus). Accepted forms: `X-Romp-Token`
+  (CLI/hooks/daemons, read from the file) and `?token=`, from any client; a
+  browser presents `?token=` once, and that response signs it in with a session
+  cookie that opens only the page documents and static files, a page key in site
+  storage sent as `X-Romp-Key` (or `k=` on a socket dial), and a per-file
+  capability in each `/file` URL the page builds (`SECURITY.md` states each). The
   token is baked into how the kernel launches (env/autostart), never a manual
   per-launch flag; a bare browser open of `/` gets a paste-the-token login page
-  (bare `romp` prints the link + opens a browser). Two kinds of route are exempt:
-  the no-side-effect liveness probes (`/healthz`, `/version`, `/busy`; bus
-  `/ping`) so liveness never breaks token-less monitors, and the install files
-  (`/manifest.webmanifest`, plus three icon names under `/media/`, an allowlist
-  rather than a prefix) because a browser fetches a manifest and its icons with
+  (bare `romp` prints the link + opens a browser). The exempt routes: the
+  no-side-effect liveness probes (`/healthz`, `/version`, `/busy`; bus `/ping`)
+  so liveness never breaks token-less monitors; the sign-in page (`/login`, a
+  static form); the push worker's acknowledgement (`POST /push/ack`, admitted by
+  the push's own unguessable id, since a worker's fetch carries no token); and
+  the install files (`/manifest.webmanifest`, plus three icon names under
+  `/media/`, an allowlist rather than a prefix) because a browser fetches a manifest and its icons with
   credentials omitted, so a gated manifest 403s the moment "Add to Home Screen"
   consults it. The install files are static (a JSON literal, three PNG files)
   and read no session state. `tailscale serve` traffic needs the token
@@ -978,7 +1100,8 @@ The Python kernel (`kernel/kernel.py`) closes it.
   same proxy) must still never be enabled for this port, since the token would
   then be the only gate with no device identity in front of it.
 - Regression tests: a cross-site `/ws` upgrade with a foreign `Origin` must be
-  rejected, and a token-less loopback request to any gated route must 403
+  rejected, and a loopback request to any gated route that carries neither the
+  token nor a browser sign-in made with it must 403
   (tests/test_kernel_auth_hardening.py, tests/test_kernel_ws_auth.py,
   tests/test_postal_token.py).
 

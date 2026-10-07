@@ -56,7 +56,7 @@ test("the wiring: the dismiss branch, the unfocused body, the composer, the rest
   assert.match(dismiss, /const next = focusAfterDismiss\(why, mru, order, goingToo\);\s*\n\s*activeId = next\.activeId;\s*\n\s*if \(next\.unfocused\) \{ vanishedId = id; vanishedWhy = why; vanishedName = name; vanishedByDecline = false; \}/);
   assert.match(dismiss, /if \(why !== "close"\) \{[\s\S]*?ta\.blur\(\);[\s\S]*?renderComposerNote\(id, why, name\);/, "the T236 note above the box still says whose box went away");
   // the pick (and the restore) end the unfocused state
-  assert.match(fn("setActive"), /activeId = id;\s*\n\s*vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null;/, "a pick ends the unfocused state AND the awaited tab");
+  assert.match(fn("setActive"), /activeId = id;\s*\n\s*gateOnShow\(skeletonTabs, id\);[^\n]*\n\s*vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null;/, "a pick ends the unfocused state AND the awaited tab (the idle prefetch's show half sits between, stage 0 review round 1: skeleton-tabs-wiring.test.ts pins it)");
   assert.match(fn("setActive"), /persistActive\(id\);/, "the pick persists id and name");
   assert.match(fn("persistActive"), /activeId: id, activeName: liveSession\(id\)\?\.name \|\| tabMeta\.get\(id\)\?\.name \|\| ""/, "the name persists beside the id for the reload's body");
   assert.match(RENDER, /if \(adopted\) \{ activeId = msg\.id; assertPeekFor\(msg\.id\); loadComposerFor\(msg\.id, true\); persistActive\(msg\.id\); vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null; vanishedByDecline = false; \}/, "an adopted tab asserts its peek and is persisted like a pick (the review's lows)");
@@ -95,7 +95,7 @@ test("the wiring: the dismiss branch, the unfocused body, the composer, the rest
   // the reload road (the review's HIGH): the persisted tab is awaited at boot, the body names it, nothing adopts
   assert.match(RENDER, /^let wantActiveName: string = /m);
   assert.match(fn("paintEmptyState"), /const awaited = !vanishedId && wantActive \? wantActive : null;/);
-  assert.match(RENDER, /renderBgTasks\(\);\s*\n(\s*renderPinnedNotes\(\);[^\n]*\n)?\s*\} else if \(!activeId\) \{[\s\S]{0,300}?showActive\(\);\s*\n\s*\}/, "a frame landing on an unfocused pane paints the body, adopting nothing (this fork's pinned-notes strip repaints on the same frame)");
+  assert.match(RENDER, /renderBgTasks\(\);\s*\n(\s*renderPinnedNotes\(\);[^\n]*\n)?\s*renderNotices\(\);\s*\n\s*\} else if \(!activeId\) \{[\s\S]{0,300}?showActive\(\);\s*\n\s*\}/, "a frame landing on an unfocused pane paints the body, adopting nothing (this fork's pinned-notes strip repaints on the same frame; the approval box renders beside the background box, 2026-09-19)");
   assert.match(fn("paintEmptyState"), /why: "awaited" as const, dialing: hostIsDialing\(awaited\)/);
   assert.match(fn("paintEmptyState"), /const nameOf = \(id: string, carried = ""\) => carried \|\| wantActiveName \|\| tabMeta\.get\(id\)\?\.name \|\| sessions\.get\(id\)\?\.name \|\| "a session";/, "never a raw sid in the body, on any branch");
   assert.match(RENDER, /if \(wantActive && \(isSubId\(wantActive\) \|\| isProvisionalId\(wantActive\)\)\) \{ wantActiveGone = wantActive; wantActive = null; \}/, "an id that can never be listed again is not awaited");

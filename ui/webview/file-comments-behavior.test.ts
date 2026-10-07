@@ -280,7 +280,7 @@ function rows(code: El, src: string): void {
 }
 function world(over: { path?: string; sid?: string | null; todoId?: string | null; src?: string } = {}): World {
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body";
+  const body = new El("div"); body.className = "fileview-body"; body.rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox); every selection rect below sits inside
   const actions = new El("div"); actions.className = "fileview-actions"; actions.appendChild(new Txt("Rendered · Raw"));
   const wrap = new El("div"); wrap.className = "fileview-code";
   const pre = new El("pre"); pre.className = "fileview-pre fileview-wrap";
@@ -482,7 +482,7 @@ test("rawTarget: the refused block's own occurrence wins over an earlier copy; t
 
 // ── the close ask: what the panel tells the viewer is at stake ──────────────────────────────────────
 
-test("the panel's draft ask (guardClose) names the unsaved comment for the viewer to ask about, and nothing when the composer is empty, closed or a re-place; the viewer, not the panel, puts the question (a confirm on the web, the notice bar in the VS Code webview)", async (t: TestContext) => {
+test("the panel's draft ask (guardClose) names the unsaved comment for the viewer to ask about, and nothing when the composer is empty or closed; the viewer, not the panel, puts the question (a confirm on the web, the notice bar in the VS Code webview)", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   assert.ok(w.closeAsk, "registered at mount, through the seam");
@@ -781,7 +781,7 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /const src = c\.text === undefined \? null : c\.text;\n\s*if \(c\.range && src !== null\) \{ args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start; \}/,
     "the anchor is built over the text the range indexes");
   assert.match(SRC, /if \(!c \|\| c\.kind !== "comment" \|\| !c\.range \|\| c\.text !== src\) return \[\];/, "the presel paints only over the text its range indexes (and paints nothing, no marks returned, otherwise: repaintPresel reads the marks' line boxes, since the Slice 4 review's round 15)");
-  assert.match(SRC, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; this\.paintAll\(\); \} \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at); a reflow re-measures the marks' collapsed blanks (trimBlanks, anchor-map.ts trimCollapsedMarks) and re-places the cards, a paint ends the record of a re-fetch the panel asked (reloadOut, the Slice 7 review's round 4) and runs the pass");
+  assert.match(SRC, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; if \(ctx\.error\(\) === null\) this\.#latchCardState\("paint"\); else \{ this\.#replaced\+\+; this\.paintAll\(\); \} \} \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at); a reflow re-measures the marks' collapsed blanks (trimBlanks, anchor-map.ts trimCollapsedMarks) and re-places the cards; a paint ends the record of a re-fetch the panel asked (reloadOut, since the Slice 7 review) and runs the pass, a content paint as the card-state rule's event 1 and a failure pane counted in #replaced (file-comments.ts, #cardState's doc); a source pin only, whose executed witness is file-comments-changes-review2.test.ts's roads of the card-state rule");
   assert.match(SRC, /this\.errors\.set\("head", \{ text: e\.error, reload: true \}\);/, "a refused refresh offers Reload");
   assert.doesNotMatch(SRC, /Reading the file's comments/, "no line claims a read");
 });
@@ -837,7 +837,8 @@ test("the paint pass stands down while the editor is up (Slice 5): a repaint mar
   // ...recording the selection as the editor's take of the body left it first (afterPaint), so the offer's record holds no node of
   // the read view the editor replaced (the Slice 5 review, round 1)
   // (since the round 2 review of Slice 7 the branch also reads a standing failure row against the editor's entry, syncFailedRow, after the record and before the render)
-  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.afterPaint\(\); this\.syncFailedRow\(this\.ctx\.error\(\)\); this\.render\(\); return; \}/, "the first line of the pass");
+  assert.match(SRC, /private paintPass\(current: boolean\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.afterPaint\(\); this\.syncFailedRow\(this\.ctx\.error\(\)\); return; \}/, "the first line of the pass; a source pin beside this case's executed repaints under the editor and after it");
+  assert.match(SRC, /  paintAll\(\): void \{\n\s*this\.paintPass\(this\.#cardState\.current\);\n\s*this\.#latchCardState\("refile", false\);[^\n]*\n\s*this\.render\(\);\n\s*\}/, "the pass, the card-state rule's event 1 filing (file-comments.ts, #cardState's doc), then the render, so the panel renders while the editor is up as after any pass; a source pin only, whose executed witnesses are this case's repaint under the editor (the cards still render) and md-config-paint-presel-refile-browser.test.ts (the filing)");
 });
 
 // The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the

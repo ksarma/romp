@@ -18,7 +18,9 @@ import { standInPip } from "./tab-snapshot";
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const CSS = ui("webview", "styles.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// the fork's tab-groups paragraph lives in docs/reference.md ("### Tags and groups in the tab strip") since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 merged it there with the project's copy)
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
 
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 // the header's stand-in block, where the member-derived marks live: from `if (hidden.length) {` (folded, the unpinned
@@ -72,9 +74,13 @@ test("executed: a resolved todo clears the flag on the next frame — the same f
   assert.equal(sectionTodoFlag([{ name: "tests", userTodos: [] }]), null);
   assert.equal(sectionTodoFlag([{ name: "tests", userTodos: null }]), null);
   assert.equal(sectionTodoFlag([{ name: "tests" }]), null, "a host too old to send the field contributes nothing");
-  // render.ts: the header reads the live store at render time (sessions.get), never a copy…
-  assert.match(FOLDED, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/,
-    "…over the members the fold hides (a member pinned to show through carries its own glyph; tab-groups.test pins that)");
+  // render.ts: the header reads the live store at render time, never a copy: the live session (liveSession, undefined for
+  // a skeleton, whose stale pre-outage entry must not speak for it), else the strip meta, whose userTodos is the roster's
+  // count (2026-09-22; the flag rule's count cases are the last test in this file; the composition itself, liveSession(id) ??
+  // tabMeta.get(id), is executed in tab-snapshot-pane.test.ts over the real makeGroupHead and liveSession: a member with no
+  // session entry, a skeleton's stale entry, a loaded member)…
+  assert.match(FOLDED, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/,
+    "…over the members the fold hides (a member pinned to show through carries its own glyph; tab-groups.test pins that; executed: tab-snapshot-pane.test.ts, the composition; this file, the flag rule over rows and counts)");
   // …and the chat delta that carries the field asks for the strip repaint in the same handler; the frame IS
   // the event. Since the 2026-09-07 fold the ask is upstream's scheduleRenderTabs (one rebuild per animation
   // frame, however many tails a pusher cycle lands): the flag still clears on that frame, with no timer
@@ -182,8 +188,8 @@ test("the flag wears the tab glyph's class and the header's count size; the butt
   assert.doesNotMatch(CSS.match(/\.tab-group-flag \{[^}]*\}/)![0], /font-size/, "no new font-size: the glyph and count keep their own");
 });
 
-test("docs: the guide's tab-groups paragraph says a folded section keeps the flag and the click opens it", () => {
-  assert.match(GUIDE, /A folded header keeps the ⚑ flag\s+of any session in it that has asked you for something; when several have, the flag shows how\s+many, and hovering it names them\. Click the flag to open the section\./);
+test("docs: the reference's tab-groups paragraph says a folded section keeps the flag and the click opens it", () => {
+  assert.match(REF, /A folded header keeps the ⚑ flag\s+of any session in it that has asked you for something; when several have, the flag shows how\s+many, and hovering it names them\. Click the flag to open the section\./);
 });
 
 test("executed + pinned: BOTH member-derived marks ride a folded header — the state pip, then the flag — over the hidden members only; open headers carry neither", () => {
@@ -230,4 +236,21 @@ test("a push while the flag holds focus puts focus back on the rebuilt FLAG, not
   assert.match(RENDER, /\(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| \(focusedDoor && h\.querySelector<HTMLElement>\("\.tab-group-door"\)\) \|\| h\)\.focus\(\);/,
     "the rebuilt header's flag when the flag held it (the open header's count button the same, tab-hide.test); the header when this push resolved the todo and the header has none");
   assert.match(RENDER, /const refocusTab = bar\.contains\(document\.activeElement\);\s*\n\s*bar\.replaceChildren\(\);/, "the tab rule's two-line shape stands (chat-focus-model.test)");
+});
+
+test("executed: the roster count (a skeleton or placeholder member's strip meta, 2026-09-22) raises the flag as the rows do; 0 is a real value; rows and counts mix under federation", () => {
+  // a member whose payload this page has not been served has no live session entry: the header reads its tabOrder meta
+  // (render.ts liveSession(id) ?? tabMeta.get(id)), whose userTodos is the kernel's COUNT of open todos (the roster row,
+  // tab-meta.ts), while a loaded member's is its session's rows. One rule over both shapes.
+  assert.deepEqual(sectionTodoFlag([{ name: "tests", userTodos: 2 }]), { count: 1, names: ["tests"] }, "a count of two: one session flagged");
+  assert.deepEqual(sectionTodoFlag([{ name: "tests", userTodos: 1 }, { name: "old1", userTodos: 3 }]), { count: 2, names: ["tests", "old1"] }, "sessions, not todos, as with rows");
+  assert.equal(sectionTodoFlag([{ name: "tests", userTodos: 0 }]), null, "0 is a real value: nothing open (the strip after every todo resolves)");
+  assert.equal(sectionTodoFlag([{ name: "tests", userTodos: 0 }, { name: "old1", userTodos: [] }]), null, "an empty count and an empty list agree");
+  assert.equal(sectionTodoFlag([{ name: "tests" }]), null, "an older kernel's roster row has no count: nothing");
+  assert.equal(sectionTodoFlag([{ name: "x", userTodos: NaN }, { name: "y", userTodos: -1 }]), null, "not a count a kernel sends: nothing open, never a flag");
+  // federation: one host's member loaded (rows on its session frame), another's a skeleton (a count on its roster row),
+  // a third's cleared on the roster, a fourth's cleared on its frame; strip order kept, host-prefixed names as the tabs show
+  assert.deepEqual(sectionTodoFlag([{ name: "TESTHOST-A:web", userTodos: todo(1) }, { name: "TESTHOST-B:api", userTodos: 1 },
+                                    { name: "TESTHOST-B:tests", userTodos: 0 }, { name: "TESTHOST-A:old", userTodos: [] }]),
+    { count: 2, names: ["TESTHOST-A:web", "TESTHOST-B:api"] }, "rows and counts mix under one rule");
 });

@@ -79,8 +79,8 @@ class SplitSourcePins(unittest.TestCase):
         self.assertEqual(shim_key.group(1) + shim_key.group(2), shell_key.group(1))
         self.assertIn("st.activeId=sid;try{localStorage.setItem(BK+n,JSON.stringify(st));}catch(e){}}", km._LANDING_SPLIT_JS)
         self.assertIn('var SKEL=new URLSearchParams(location.search).get("skeleton")==="1";', self.shim)
-        self.assertIn('+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":""));', self.shim,
-                      "the term follows the column; the Outline's capability term (empty for a chat column, plans/outline-pane-provisional-row.md) closes the connect query")
+        self.assertIn('+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":"")+(window.__rompKeyQ?window.__rompKeyQ():""));', self.shim,
+                      "the term follows the column; the Outline's capability term (empty for a chat column, plans/outline-pane-provisional-row.md) and then the page key's term close the connect query")
         self.assertIn('+((everConnected&&bundleReady&&readyAcked&&!readyQueued)?"&reconnect=1&proto="+readyProto:"")', self.shim,
                       "the redial gate is untouched (tests/test_pane_shim_return.py runs it)")
 
@@ -475,6 +475,7 @@ global.document = {
 };
 global.getComputedStyle = (el) => ({ display: el === BYID['mtabs'] ? (MOBILE ? 'flex' : 'none') : 'block' });
 global.window = global;
+window.__rompPaneSourceOk = () => true;   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
 global.addEventListener = (t, f) => { (WL[t] = WL[t] || []).push(f); };
 global.removeEventListener = (t, f) => { if (WL[t]) WL[t] = WL[t].filter((g) => g !== f); };   // gutterV's up() detaches its live mousemove/mouseup
 global.dispatchEvent = (ev) => { CALLS.events.push(ev); (WL[ev.type] || []).forEach((f) => f(ev)); return true; };

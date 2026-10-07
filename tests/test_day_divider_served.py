@@ -41,23 +41,22 @@ before the high-water mark, a second "Yesterday" in `api`). The T344 half is red
 bundle as is: the echoes then sat in the last turn, so `web`'s rows stepped back in time and its "Yesterday" opened the
 10:00 row (not the 09:47 echo), and `api` had no weekday divider leading the transcript (its stale run sat among
 yesterday's rows, with nothing opening its day). Skips LOUDLY without the extension deps or a Playwright browser; the
-extension CI job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a
+served-pages CI job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a
 failure there. SYNTHETIC fixtures only (sessions web and api, invented notice texts, the notes-api demo world)."""
 import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -69,14 +68,6 @@ from test_rail_relative_served import relative_label, relative_lines   # noqa: E
 
 SID_A = "aaaaaaaa-1111-2222-3333-444444444444"   # web: rows across three days, an echo in two of the gaps
 SID_B = "bbbbbbbb-1111-2222-3333-444444444444"   # api: the same read a day later, both echoes before the first turn
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -254,11 +245,11 @@ class ServedDayDivider(unittest.TestCase):
     @classmethod
     def _boot(cls):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served guard needs them; CI's extension job has them and requires this file to run")
+            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served guard needs them; CI's served-pages job has them and requires this file to run")
         probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
                                 os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
-            raise unittest.SkipTest("no playwright browser on this box — the served guard needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served guard needs one; CI's served-pages job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="day-divider-")
         cls.before = os.environ.get("DD_BEFORE_DIST", "")
         dist = os.path.join(cls.lab, "dist")
@@ -282,24 +273,20 @@ class ServedDayDivider(unittest.TestCase):
             os.makedirs(proj, exist_ok=True)
             Path(proj, sid + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in _records(sid, cls.now, shift)))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
-        cls.port, cls.token = _free_port(), "testtok-daydivider"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-daydivider"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _divider_shape(self, d, m, theme):
@@ -337,7 +324,7 @@ class ServedDayDivider(unittest.TestCase):
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box — the served guard needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served guard needs one; CI's served-pages job installs Chromium and requires this file to run")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])

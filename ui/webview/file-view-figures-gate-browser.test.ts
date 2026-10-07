@@ -46,7 +46,7 @@ const NOTE = [
 ].join("\n");
 // a URL document is same-origin by the viewer's own fetch mode (file-view.ts openUrlView, `mode: "same-origin"`), so its HOSTNAME is
 // the page's, and a figure on the page's own origin (fx-own, the relative one) passes remoteHost without the arm. The arm
-// (file-view.ts mdBlock, `gateRemoteFigures(box, document.baseURI, [own])`) decides for a figure on that hostname under another
+// (file-view.ts mdBlock, `gateRemoteFigures(clean, document.baseURI, [own])`, over the sanitizer's body before the adoption) decides for a figure on that hostname under another
 // scheme or port: another ORIGIN, which remoteHost reports as the host "romp.test", and which only the arm's entry in the
 // allowed set lets load on open (fx-alt, fx-port). The list gates the rest (fx-far). Without the arm, fx-alt and fx-port are
 // placeholders naming romp.test.

@@ -25,6 +25,7 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_sevents", os.path.join(BIN, "romp-kernel"))
+sb = load_source("romp_sdk_backend_sevents_route", os.path.join(BIN, "romp_sdk_backend.py"))
 
 SID = "11111111-2222-4333-8444-000000000304"
 BOOT = 1_700_000_100
@@ -67,6 +68,25 @@ class SessionEventsRoute(unittest.TestCase):
                 return r.status, json.loads(r.read().decode())
         except urllib.error.HTTPError as e:
             return e.code, None
+
+    def test_the_spawns_pick_not_seeded_row_is_listed_on_the_session_with_its_fields(self):
+        # round 1 of the review of fork PR #819 (its correctness-3): the row the spawn writes when a flag-less remembered
+        # pick is left unseeded and the new session bills another account (SdkBackend._note_pick_not_seeded, through
+        # problem_row with a ring key) is a session-events row like any other, so the dashboard's read lists it on the
+        # session with the fields the spawn wrote (pick, bills; why only for an unbillable pick) and counts it as a
+        # problem since the boot; the ring key is _log's and never a ledger field
+        sb.problem_row(self.tmp, "auth (web): the last per-session Billing pick, the machine's own login, no longer seeds a "
+                       "new session, so this session starts unpicked and bills the API key (the helper rule)",
+                       "auth.pick-not-seeded", sid=SID, name="web", key="auth.pick-not-seeded:login", pick="login", bills="key")
+        code, d = self._get()
+        self.assertEqual(code, 200)
+        top = d["rows"][0]
+        self.assertEqual((top["kind"], top["sid"], top["name"], top["pick"], top["bills"], top["host"]),
+                         ("auth.pick-not-seeded", SID, "web", "login", "key", "TESTHOST"), d["rows"])
+        self.assertIn("the last per-session Billing pick", top["text"])
+        self.assertNotIn("why", top, "a billable pick: no reason field")
+        self.assertNotIn("key", top, "the ring key rides to _log, not into the ledger row")
+        self.assertEqual(d["count"], 3, "the orphan reap, the crash heal, and this row")
 
     def test_rows_newest_first_since_boot_with_host_and_count(self):
         code, d = self._get()

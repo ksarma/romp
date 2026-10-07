@@ -26,6 +26,10 @@ const MENU = ui("webview", "tag-menu.ts");
 const VIEWS = ui("webview", "session-views.ts");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// the strip's own detail moved to the reference (CLAUDE.md "The documentation front pages"): the
+// sentences are pinned where they live, and "this retired sentence is gone" is asked of both pages.
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const DOCS = GUIDE + "\n\n" + REF;
 
 // the strip's drop handler, read by name at BOTH ends (the tab-keys.test.ts rule): an absent anchor reads -1 and slice(at, -1)
 // runs to the file's end minus one character, which is what the four drop cases below read once the handler's old end literal
@@ -522,17 +526,20 @@ test("executed + pinned: with stripGroupRows off (the fork default) the rebuild 
   assert.match(GEAR, /sr\.addEventListener\('change', function \(\) \{ var s = load\(\); s\.stripGroupRows = sr\.checked; save\(s\); \}\);/);
   assert.match(GEAR, /if \(sr\) sr\.checked = s\.stripGroupRows === true;/);
   assert.doesNotMatch(GEAR, /stripGroupRows: true/, "the gear's defaults mirror agrees: off");
-  // the guide says so in one sentence
-  assert.match(GUIDE, /The groups follow one another across the\s+strip and wrap as they need \(a header left at a row's end with its first tab on the next row moves\s+down to join it, when the two fit on one row\); the gear's \*\*One tag group per row in the tab strip\*\*\s+starts every group on its own row instead\./,
+  // the docs say so in one sentence. These pins read the reference's "### Tags and groups in the tab strip" paragraph, like the
+  // rest of this file: fold 4 moved the fork's strip paragraph out of the guide (the front pages are the project's, CLAUDE.md
+  // "The documentation front pages") and merged it with the project's copy there, keeping the fork's default (inline, the
+  // setting off) where the project's text described its default-on strip
+  assert.match(REF, /The groups follow one another across the\s+strip and wrap as they need \(a header left at a row's end with its first tab on the next row moves\s+down to join it, when the two fit on one row\); the gear's \*\*One tag group per row in the tab strip\*\*\s+starts every group on its own row instead\./,
     "the guide says how the inline flow wraps (the keep-with-next rule, tab-row-keep.test.ts) and names the per-row setting");
   // the paragraph's opening describes the fork's default layout too: the trail sits behind a divider, not on a row of its
   // own (W1 KEEP OFF; upstream's "on a row of their own at the end" pin re-aimed to the divider line, the 2026-09-15 pull-in)
-  assert.match(GUIDE, /the untagged sessions after a\s+divider\s+at the end\./, "the paragraph's opening describes the default layout: the trail behind the divider");
+  assert.match(REF, /the untagged sessions after a\s+divider\s+at the end\./, "the paragraph's opening describes the default layout: the trail behind the divider");
   // the packing of folded neighbours (upstream #1792) sits in the same paragraph, phrased for the setting on this fork (W1 KEEP
   // OFF: on the default inline strip there is no row to share, so the guide states the rule under "when every group starts on
   // its own row"); matched from the clause onward, across the guide's line wraps
   const packing = "folded groups that follow one another in the tag order share one row, since each is only its header; an open group always starts a row of its own, and so do the untagged sessions, so a folded group between two open ones keeps its row too.";
-  assert.match(GUIDE, new RegExp(packing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+")), "…and the packing of folded neighbours follows it in the same paragraph, stated for the setting");
+  assert.match(REF, new RegExp(packing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+")), "…and the packing of folded neighbours follows it in the same paragraph, stated for the setting");
 });
 
 test("executed: FOLDED NEIGHBOURS SHARE A ROW — two folded groups side by side pack onto one row (no break between); folded-open-folded is three rows; an open pair is two; a pinned member ends the run; the trail never packs; the phone packs nothing (the user 2026-09-16)", () => {
@@ -806,8 +813,12 @@ test("executed: the folded header's user-todo flag counts HIDDEN members only �
   const both = setPinned(st, ARCH, "old3", true);
   const none = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, both, "web", false)).find((h) => h.head.name === "archived")!;
   assert.equal(sectionTodoFlag(none.hidden.map((id) => sessions.get(id))), null, "every flagged member shown → no header flag");
-  // render.ts reads the plan's hidden list for the flag, as for the count and the pip
-  assert.match(MAKE_HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/);
+  // render.ts reads the plan's hidden list for the flag, as for the count and the pip: the live session's rows, else the strip
+  // meta's count for a skeleton or placeholder member (2026-09-22; executed: tab-snapshot-pane.test.ts, the folded header over a
+  // member with no session entry, a skeleton's stale entry and a loaded member; tab-group-flags.test.ts runs the flag rule over
+  // rows and counts)
+  assert.match(MAKE_HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/,
+    "the header's flag reads liveSession(id) ?? tabMeta.get(id) over the hidden members (executed: tab-snapshot-pane.test.ts, the composition; tab-group-flags.test.ts, the flag rule over rows and counts)");
 });
 
 test("executed: LOCAL ONLY — the entry carries the name and the id; a rename the client watched follows by name, one it missed matches by id; delete, a member moved out and a closed session prune it", () => {
@@ -1841,7 +1852,7 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   const p = planStrip(["web", "old1", "old2"], viewTagUnion(VP), setPinned(parseTabGroups(null), ARCH, "old2", true), "web", true);
   assert.deepEqual(p.items.map((i) => ("head" in i ? `#${i.head.name}${i.folded ? "(folded)" : ""}` : i.id)), ["#infra", "web", "#archived", "old1", "old2"]);
   // docs: the guide says the setting survives the group's rename
-  assert.match(GUIDE, /A tab set to show when folded keeps that setting when its\s+group is renamed\./);
+  assert.match(REF, /A tab set to show when folded keeps that setting when its\s+group is renamed\./);
 });
 
 test("executed: a folded section whose EVERY member is pinned stays folded — the chevron tells the truth — and its header says so: the total, not 0, and why nothing is hidden", () => {
@@ -1882,7 +1893,7 @@ test("executed: a folded section whose EVERY member is pinned stays folded — t
   assert.match(MAKE_HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);\s*\n\s*head\.title = words\.title;/);
   assert.match(MAKE_HEAD, /n\.textContent = words\.count;/);
   assert.ok(!MAKE_HEAD.includes("hidden.length : total"), "no second count rule beside the pure one");
-  assert.match(GUIDE, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
+  assert.match(REF, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
 });
 
 test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's and the flag's phrases), and the active section's header is the same button, marked current", () => {
@@ -2158,20 +2169,20 @@ test("executed + pinned: a pick of a folded-away session under several tags open
 });
 
 test("the guide states the every-tag rule (T264b)", () => {
-  assert.match(GUIDE, /A session with several tags appears under each of them; every copy is the same\s+session/);
-  assert.doesNotMatch(GUIDE, /sits under the first of them in your tag order/, "the retired home-tag sentence is gone");
+  assert.match(REF, /A session with several tags appears under each of them; every copy is the same\s+session/);
+  assert.doesNotMatch(DOCS, /sits under the first of them in your tag order/, "the retired home-tag sentence is gone");
 });
 
 test("the guide's small-dot sentence says the dot shows only in the pip's four states and names them in the rule's order (tab-state.ts sectionPip): red for blocked or waiting on you, else yellow for something waiting on you, else gold for working, else amber for an API retry", () => {
   const prose = (t: string) => new RegExp(t.replace(/[.()]/g, "\\$&").split(" ").join("\\s+"));   // the guide wraps its lines
-  assert.match(GUIDE, prose("a small dot after it shows when one of them is busy or needs you: red when one is blocked or waiting on you, otherwise yellow when one has something waiting on you, otherwise gold when one is working, otherwise amber when one hit an API error and is retrying on its own (hover it for their names)."));
-  assert.doesNotMatch(GUIDE, prose("red when one is blocked or waiting on you, otherwise gold when one is working"), "the three-state sentence is gone: the ask yellow sits between red and gold");
-  assert.doesNotMatch(GUIDE, prose("a small dot after it says when one of them is working or waiting on you"), "the two-state sentence is gone");
+  assert.match(REF, prose("a small dot after it shows when one of them is busy or needs you: red when one is blocked or waiting on you, otherwise yellow when one has something waiting on you, otherwise gold when one is working, otherwise amber when one hit an API error and is retrying on its own (hover it for their names)."));
+  assert.doesNotMatch(DOCS, prose("red when one is blocked or waiting on you, otherwise gold when one is working"), "the three-state sentence is gone: the ask yellow sits between red and gold");
+  assert.doesNotMatch(DOCS, prose("a small dot after it says when one of them is working or waiting on you"), "the two-state sentence is gone");
 });
 
 test("the guide lists the header's parts in the built order: the tag's color and name, then the chevron and the count (T284)", () => {
-  assert.match(GUIDE, /Each header shows the tag's color and name, then a chevron and a\s+member count\./);
-  assert.doesNotMatch(GUIDE, /Each header shows a chevron, the tag's color/, "the pre-T284 caret-first sentence is gone");
+  assert.match(REF, /Each header shows the tag's color and name, then a chevron and a\s+member count\./);
+  assert.doesNotMatch(DOCS, /Each header shows a chevron, the tag's color/, "the pre-T284 caret-first sentence is gone");
   // The guide names the parts in the order the builder appends them (the structure pin above), and that is
   // the order the reader sees only while the header's flex row keeps DOM order: no rule on the header or on
   // one of its parts may reorder them (headerReorderRules below names the forms).

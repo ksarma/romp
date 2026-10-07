@@ -59,11 +59,12 @@ costs nothing here:
 4. The BOUND COARSENING: the memory-fraction bounds (BOUND_KEYS: `capBytes`, `budgetBytes`, `cap`, `bound`,
    `stageRingMax`, wherever the key appears) are kept and rounded UP to a power of two (public_bound), the key
    kept and the occupancy beside it untouched, so a bound that binds stays visible next to its `bytes` or
-   `entries`. Each is a fixed fraction of the machine's MemTotal (`recordCache.budgetBytes` is half of it,
-   `heap.hydrated.capBytes` a thirty-second, `checkpoints.docMemo.capBytes` and `asmCheckpoint.asmDocMemo.capBytes`
-   a five-hundred-twelfth, `asmIndex.cap` the memory over 32 KiB, `pusher.stageRingMax` one per 256 MiB,
-   `builds.feed.memo.bound` and `memos.spendTree.bound` a sixty-fourth, `memos.notices.bound` and
-   `memos.summaryAnchor.bound` a two-hundred-fifty-sixth; the judge child's copies of its tables carry the same
+   `entries`. Each is a fixed fraction of the machine's MemTotal (`recordCache.budgetBytes` is half of it in resident
+   bytes, converted to the file bytes the cache counts, `heap.hydrated.capBytes` a thirty-second,
+   `checkpoints.docMemo.capBytes` and `asmCheckpoint.asmDocMemo.capBytes` a five-hundred-twelfth, `asmIndex.cap`
+   the memory over 32 KiB, `pusher.stageRingMax` one per 256 MiB, `builds.feed.memo.bound` and
+   `memos.spendTree.bound` a sixty-fourth, `memos.notices.bound` and `memos.summaryAnchor.bound` a
+   two-hundred-fifty-sixth; the judge child's copies of its tables carry the same
    keys), so every export from one machine shared all ten exactly and one of them gave the machine's RAM to the
    kilobyte: a value derived from a machine fact is a machine string in a number's clothing (the third review
    round, 2026-09-18). A constant that happens to sit under one of the keys is coarsened too, at no cost.
@@ -111,10 +112,10 @@ IDENT = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
 # against the live state directory, which the cli/ readers never do.
 HTTP_ROUTES = {
     "GET": (
-        "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
+        "/", "/analytics", "/api-health", "/api-health/frame", "/artifacts", "/boards", "/busy", "/chat", "/classify",
         "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
-        "/fleet", "/followup-preview", "/handoff", "/healthz", "/logins", "/manifest.webmanifest",
-        "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
+        "/fleet", "/followup-preview", "/handoff", "/healthz", "/login", "/logins", "/manifest.webmanifest",
+        "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/panes", "/perf", "/push/pending",
         "/push/vapid-key", "/session-events", "/sessions", "/sessions/by-fsid", "/settings",
         "/spend/detail", "/ssh-hosts", "/sw.js", "/timeline", "/tunnels", "/tunnels/of",
         "/tunnels/pairs", "/update-check", "/usage", "/usage/fleet", "/version", "/views", "/waiting",
@@ -124,12 +125,12 @@ HTTP_ROUTES = {
         "/file",
     ),
     "POST": (
-        "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
+        "/board", "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
         "/flag", "/fleet-restart", "/fork", "/fork-comment", "/fork-promote", "/group", "/interrupt",
         "/judge-settings", "/logins", "/mesh-settings", "/move", "/new", "/notice", "/notify-all",
-        "/notify-turns", "/order", "/perf", "/pinnote", "/postal-notice", "/push/ack", "/push/dropped",
+        "/notify-turns", "/order", "/pane", "/perf", "/pinnote", "/postal-notice", "/push/ack", "/push/dropped",
         "/push/landed", "/push/relay", "/push/subscribe", "/push/superseded", "/push/test",
-        "/push/unsubscribe", "/redial", "/rename", "/restart", "/reveal", "/send", "/tag", "/tick",
+        "/push/unsubscribe", "/redial", "/rename", "/restart", "/reveal", "/send", "/setting-proposal", "/tag", "/tick",
         "/tunnels", "/tunnels/askpull", "/tunnels/autoupdate", "/tunnels/checkin", "/tunnels/detach",
         "/tunnels/forget", "/tunnels/pull", "/tunnels/start", "/tunnels/trust", "/tunnels/trust-mirror",
         "/tunnels/trust-remote", "/tunnels/update", "/unpinnote", "/update", "/update-dismiss",
@@ -138,7 +139,7 @@ HTTP_ROUTES = {
     ),
 }
 HTTP_ROUTES["OPTIONS"] = tuple(sorted(set(HTTP_ROUTES["GET"]) | set(HTTP_ROUTES["HEAD"]) | set(HTTP_ROUTES["POST"])))
-HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/remote/*")
+HTTP_FAMILIES = ("/dist/*", "/media/*", "/glossary/*", "/pane/*", "/remote/*")
 _ROUTE_SETS = {m: frozenset(v) for m, v in HTTP_ROUTES.items()}
 
 
@@ -164,7 +165,8 @@ def http_key_ok(key):
 
 def http_public_key(key):
     """The public form of one http key: the kernel's own collapse of the high-cardinality families (a bundle name
-    under /dist/ or /media/, a glossary TERM, an attached HOST under /remote/), the way _perf_http_key spells them,
+    under /dist/ or /media/, a glossary TERM, a defined pane's id under /pane/, an attached HOST under /remote/),
+    the way _perf_http_key spells them,
     then the register; anything else is `other`. A kernel from before the served-leak fixes counted the raw paths,
     so a saved snapshot of its /perf carries them; a current kernel's keys pass through unchanged."""
     if not isinstance(key, str) or key == OTHER:
@@ -178,6 +180,8 @@ def http_public_key(key):
         path = "/media/*"
     elif path.startswith("/glossary/"):
         path = "/glossary/*"
+    elif path.startswith("/pane/"):
+        path = "/pane/*"
     elif path.startswith("/remote/") and not path.startswith("/remote/*"):
         rest = path[len("/remote/"):]
         i = rest.find("/")
@@ -285,7 +289,7 @@ def public_uptime(value):
 # (heap.hydrated.capBytes, checkpoints.docMemo.capBytes, asmCheckpoint.asmDocMemo.capBytes, asmIndex.cap,
 # recordCache.budgetBytes, pusher.stageRingMax, builds.feed.memo.bound, memos.notices.bound, memos.spendTree.bound,
 # memos.summaryAnchor.bound; the judge child's copies of its tables carry the same keys) is a fixed fraction of the
-# machine's MemTotal, so every export from one machine shared all ten exactly and recordCache.budgetBytes, half of
+# machine's MemTotal, so every export from one machine shared all ten exactly and recordCache.budgetBytes, then half of
 # MemTotal, gave the machine's RAM to the kilobyte: a value derived from a machine fact. Rounded UP to a power of two
 # (public_bound), the key kept and the occupancy beside it untouched, so a bound that binds stays visible next to its
 # bytes or entries. Keyed on the name at any depth, like UPTIME_KEYS; a constant under one of the keys

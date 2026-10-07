@@ -82,16 +82,72 @@ def remove_made_dirs():
 # is the inside of the root), so it is not recorded. The state dir below is minted AFTER the redirect,
 # through the hook, and so sits INSIDE the root; nothing a run makes sits outside it.
 # Under pytest-xdist this runs in the controller and in every worker: each imported this package and
-# so owns a root of its own (a worker's sits inside the controller's, since it inherits that TMPDIR).
-# The system temp dir — the one the RUN was handed, before any redirect — is recorded once, by the
-# first process to import this package: an xdist worker inherits the controller's record along with
-# its TMPDIR (setdefault, not an assignment: a worker's own gettempdir() is the controller's root, and
-# recording that put the worker's fallback one level deeper than a socket path can bear under a
-# long TMPDIR — four socket tests failed at bind under -n 2). A test that must leave the root (an
-# AF_UNIX socket path that would not fit sun_path under a nested root) falls back to it, and only
-# to it — a literal system path in a `dir=` would bypass the redirect (one did).
-os.environ.setdefault("ROMP_TESTS_SYSTEM_TMPDIR", tempfile.gettempdir())
-TMP_ROOT = _REAL_MKDTEMP(prefix="romp-tests-")
+# so owns a root of its own. The system temp dir — the one the RUN was handed, before any redirect — is
+# recorded once, by the first process to import this package (setdefault, not an assignment: a worker
+# inherits the controller's record along with its TMPDIR). A test that must leave the root (an AF_UNIX
+# socket path built to an exact length) falls back to it, and only to it — a literal system path in a
+# `dir=` would bypass the redirect (one did).
+# BESIDE, NOT INSIDE (2026-09-21): a process handed a `romp-tests-*` root as its temp dir — an xdist
+# worker, a nested pytest, any child of a run that imports this package — mints its own root in the
+# recorded system dir, beside its parent's, never inside it: beside whenever the recorded system dir
+# exists, differs from the handed dir and is the handed dir's own parent (parent_root below); otherwise
+# inside the handed dir, as before 2026-09-21 (a record gone or unwritable falls back to inside too, and
+# tests/test_tempdir_hygiene.py PrivateTempRoot's every-root-directly-under-it pin reds on that shape,
+# so a run that fell back says so). Until then a worker's root nested inside
+# the controller's, and each level cost 20 bytes (`/romp-tests-XXXXXXXX`) of the AF_UNIX path budget:
+# the deepest hosts-on lab (tests/test_session_host_restart.py, `host-served-XXXXXXXX/xdg/romp` plus the
+# host's `hosts/<sid8>.sock`) came to TMPDIR + 90 bytes under -n and TMPDIR + 70 alone, so at a 17-byte
+# TMPDIR the socket path was 107 = SOCK_PATH_MAX exactly: at 18 bytes that lab's test (ServedRestart)
+# overflowed under xdist and passed alone, and the TMPDIR + 72 shapes (tests/test_session_host.py
+# HostProcess, test_host_transport EndToEnd and AttachStandDown: a bare mkdtemp root, `tmp` + tail)
+# overflowed from a 36-byte TMPDIR under -n; 76 sweep logs read the red as a flake. Beside, every process is
+# one level under the handed dir whatever the worker count, and the bound is TMPDIR + 70 <= 107 (a
+# 37-byte TMPDIR; tests/test_tempdir_hygiene.py HarnessSocketBudget derives it from the roots the
+# harness makes and the tests' own lab shapes). A nested process appends its pid and root to
+# `<parent root>/romp-tests-children`, and to the same file in every root above its parent up to the
+# run's first (the lineage, below), and the parent's removal (remove_tmp_root below, conftest's
+# _remove_run_dirs) takes the root of any listed child whose owner is DEAD before its own, so a worker
+# that died without its hooks (SIGKILL, an OOM kill, a crashed node) is cleaned by its parent as the
+# nesting cleaned it before; a live child keeps its root and removes it itself. The name stays the
+# same 19 bytes: the whole gain is the level. The mint is in a function so the pin can exercise the
+# placement by execution on synthetic paths.
+TEST_ROOT_PREFIX = "romp-tests-"                     # the kernel's sdk_backend.TEST_ROOT_PREFIX agrees
+TEST_ROOT_CHILDREN = "romp-tests-children"           # inside a root: one JSON line {"pid", "root"} per child that minted beside it
+
+
+def parent_root(handed, system):
+    """The `romp-tests-*` root a NESTED process was handed as its temp dir, or None for a run's first process. Nested
+    means: the handed dir is a root by name, it sits DIRECTLY under the recorded system dir (realpath of its parent is
+    the realpath of `system`), and that system dir exists to mint in. The placement test is on the parent, not the name
+    alone (the review of 2026-09-21): the package's own `romp-tests-state-*` dir and conftest's `romp-tests-claude-*`
+    are `romp-tests-*` by name too, and sit INSIDE a root, so a process handed one of those as its TMPDIR mints inside
+    it, as any first process does. Pure on its arguments; the module applies it to what this process was handed."""
+    try:
+        if (os.path.basename(handed).startswith(TEST_ROOT_PREFIX) and os.path.isdir(system)
+                and os.path.realpath(os.path.dirname(os.path.abspath(handed))) == os.path.realpath(system)):
+            return handed
+    except OSError:
+        pass
+    return None
+
+
+def mint_root(handed, system):
+    """(root, parent): a private root minted with the REAL mkdtemp — in `system`, beside the parent's, when `handed`
+    is a parent's root; in `handed` itself for a first process. A record that cannot be minted in (gone, unwritable)
+    falls back to inside, as before 2026-09-21: an import must never fail on it."""
+    parent = parent_root(handed, system)
+    if parent:
+        try:
+            return _REAL_MKDTEMP(prefix=TEST_ROOT_PREFIX, dir=system), parent
+        except OSError:
+            pass
+    return _REAL_MKDTEMP(prefix=TEST_ROOT_PREFIX, dir=handed), None
+
+
+_HANDED = tempfile.gettempdir()                      # what THIS process was handed: the system dir, or a parent's root
+os.environ.setdefault("ROMP_TESTS_SYSTEM_TMPDIR", _HANDED)
+SYSTEM_TMPDIR = os.environ["ROMP_TESTS_SYSTEM_TMPDIR"]
+TMP_ROOT, PARENT_ROOT = mint_root(_HANDED, SYSTEM_TMPDIR)
 tempfile.tempdir = TMP_ROOT
 os.environ["TMPDIR"] = TMP_ROOT
 
@@ -107,32 +163,151 @@ os.environ["TMPDIR"] = TMP_ROOT
 TEST_ROOT_OWNER_MARKER = "romp-tests-owner.json"     # the kernel's sdk_backend.TEST_ROOT_OWNER_MARKER agrees
 
 
-def write_owner_marker(d):
+def write_owner_marker(d, lineage=()):
     if not d:
         return
     try:
         with open(os.path.join(d, TEST_ROOT_OWNER_MARKER), "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"pid": os.getpid(), "started": time.time(),
-                                 "argv": [os.path.basename(a) for a in sys.argv[:3]]}))
+                                 "argv": [os.path.basename(a) for a in sys.argv[:3]], "lineage": list(lineage)}))
     except OSError:
         pass                                 # a root we cannot write into is one we cannot leak into either
 
 
-write_owner_marker(TMP_ROOT)
+# The lineage (2026-09-24, round 2 of fork PR #894's review, the reviewer's ruling on correctness-1): every root a
+# nested process sits under, the run's first root first, which the process records itself in (record_child_root,
+# below) at mint time. Until then a nested process listed itself only in its PARENT's root, and a parent that exited
+# normally took that list with it: an xdist worker removes its root at its unconfigure, before the controller's
+# run-end check (conftest.py, the comment above LEAK_EXIT_BOUND_S) reads the lists, and a nested pytest inside a
+# nested pytest is gone before the outermost run's test returns, so a process leaked two levels down held a root
+# no surviving list named and the run ended green. Recorded in the run's first root, which stands until the
+# controller's unconfigure, after its check: every nested root of the run, at any depth, is in the one list the
+# check reads first, whatever became of the processes between. Carried in the owner marker, not in the environment:
+# nesting is decided by placement (the TMPDIR a process was handed is a root directly under the system dir that
+# ROMP_TESTS_SYSTEM_TMPDIR records, parent_root above), so the parent's marker is there for exactly the processes that
+# nest, and no name is added to every test process's environment (the ruling offered a setdefault variable instead).
+# Nesting needs that inherited name as well as the TMPDIR: a child handed a root as its TMPDIR without it (an
+# environment built with TMPDIR alone) records the handed root as its system dir, is no nested process (no parent, no
+# lineage), mints its root INSIDE the handed root and lists itself nowhere; its root is a path under a run root, so the
+# run-end check reads it all the same. What neither reaches is a process that is not nested whose root lies outside
+# every run root: one handed a TMPDIR that is no root mints inside that dir, and its root is a path under a run root
+# only when that dir is (conftest.py names the class). A marker that cannot be read or carries no lineage makes the
+# parent the lineage's only root: the list the parent's own removal takes with it, the recording before this change.
+def root_lineage(parent):
+    """The roots above a process handed `parent` as its temp dir, the run's first root first: the lineage `parent`'s
+    owner marker records, then `parent` itself; [] for a run's first process (no parent)."""
+    if not parent:
+        return []
+    try:
+        with open(os.path.join(parent, TEST_ROOT_OWNER_MARKER), encoding="utf-8") as fh:
+            above = json.load(fh).get("lineage")
+    except (OSError, ValueError, AttributeError):
+        above = None
+    if not isinstance(above, list) or not all(isinstance(r, str) and r for r in above):
+        above = []
+    out = []
+    for r in above + [parent]:
+        if r not in out:
+            out.append(r)
+    return out
+
+
+LINEAGE = root_lineage(PARENT_ROOT)
+write_owner_marker(TMP_ROOT, LINEAGE)
+
+
+def _pid_alive(pid):
+    """Is the owner of a listed child root still running? On Linux `/proc/<pid>/stat` decides, and a ZOMBIE (state Z:
+    exited, not yet reaped by its parent) is DEAD here — a worker xdist has not collected yet, or a child whose parent
+    never waits, owns nothing any more and its root is for the taking, where signal 0 would still call it alive. Where
+    there is no procfs, or the stat file cannot be read (a race with the exit), the kernel's rule (sdk_backend._pid_alive):
+    signal 0, and only "no such process" means dead. A pid that is not a number is left alone (alive)."""
+    try:
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return True
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            stat = fh.read()
+        # the comm field is in parentheses and may hold spaces or a ')': the state is the first field after the LAST ')'
+        state = stat[stat.rindex(b")") + 1:].split()[0]
+        if state == b"Z":
+            return False
+        return True
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def record_child_root(parent, root):
+    """One line into `<parent>/romp-tests-children`: a nested process tells its parent where it minted, so the parent
+    can remove the root of a child that died without its own removal. O_APPEND and one short line per child, so
+    concurrent workers never interleave; a parent root already gone is nothing to tell."""
+    if not parent or not root:
+        return
+    try:
+        with open(os.path.join(parent, TEST_ROOT_CHILDREN), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"pid": os.getpid(), "root": root}) + "\n")
+    except OSError:
+        pass
+
+
+def remove_dead_children(root, system=None, depth=3):
+    """Remove every root listed in `<root>/romp-tests-children` whose owner is DEAD, each after its own dead children;
+    return the paths of the dead ones still standing afterwards, each once (a root is listed in every root above it,
+    so one that resists removal is met more than once). A listed root whose owner is alive is left to that
+    owner (it removes its own at exit); a line not ours by shape — no `romp-tests-*` basename, a symlink, not directly
+    under the recorded system dir — is left alone too. Never raises."""
+    system = os.path.realpath(system or SYSTEM_TMPDIR)
+    survivors = []
+    try:
+        with open(os.path.join(root, TEST_ROOT_CHILDREN), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return survivors
+    for line in lines:
+        try:
+            rec = json.loads(line)
+            child, pid = rec["root"], int(rec["pid"])
+            if (not os.path.basename(child).startswith(TEST_ROOT_PREFIX) or os.path.islink(child)
+                    or not os.path.isdir(child) or os.path.realpath(os.path.dirname(child)) != system):
+                continue
+            if _pid_alive(pid):
+                continue
+            if depth > 0:
+                survivors += remove_dead_children(child, system, depth - 1)
+            shutil.rmtree(child, ignore_errors=True)
+            if os.path.isdir(child):
+                survivors.append(child)
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    return list(dict.fromkeys(survivors))
+
+
+for _above in LINEAGE:                   # the parent's list and every list above it, the run's first root's first
+    record_child_root(_above, TMP_ROOT)
 
 
 def remove_tmp_root():
-    """Remove the root whole, whatever the hook's sweep could not see. Idempotent and silent: under
-    pytest, conftest's pytest_unconfigure does the same first and names a survivor; this is the exit
-    fallback for a bare run and for a pytest exit that skipped the hooks."""
+    """Remove the root whole, whatever the hook's sweep could not see, after the roots of its dead children (beside
+    it, listed inside it). Idempotent and silent: under pytest, conftest's pytest_unconfigure does the same first and
+    names a survivor; this is the exit fallback for a bare run and for a pytest exit that skipped the hooks."""
+    remove_dead_children(TMP_ROOT)
     shutil.rmtree(TMP_ROOT, ignore_errors=True)
 
 
 # atexit runs the last registration first: the root's removal is registered BEFORE the sweep's, so at
 # exit the sweep runs first (every tracked directory, all inside the root) and the root goes after it,
 # whole. Nothing runs after an os._exit (pytest-timeout's thread method ends a hung run that way, and a
-# kill is the same), so such a run leaves ONE top-level entry in the system temp dir, this root with
-# its marker, for the kernel's sweep.
+# kill is the same), so such a run leaves its root, marked, as a top-level entry in the system temp dir
+# for the kernel's sweep (one per process that died that way: a controller's and its workers' stand
+# beside each other there).
 atexit.register(remove_tmp_root)
 atexit.register(remove_made_dirs)
 
@@ -164,6 +339,11 @@ sys.modules.setdefault("romp_load", _romp_load)
 from . import lab_dist as _lab_dist  # noqa: E402
 sys.modules.setdefault("lab_dist", _lab_dist)
 
+# `import lab_ports` in the served-lab modules (tests/lab_ports.py, the one door to a lab kernel's ports and its
+# readiness wait) resolves the same way: most of them import it at the top, before they put tests/ on sys.path.
+from . import lab_ports as _lab_ports  # noqa: E402
+sys.modules.setdefault("lab_ports", _lab_ports)
+
 # `import lab_dist_stub` in the two real-tree pins (tests/lab_dist_stub.py, the node preload standing in for the bare
 # packages a checkout without the extension's node_modules lacks) resolves the same way.
 from . import lab_dist_stub as _lab_dist_stub  # noqa: E402
@@ -177,3 +357,13 @@ sys.modules.setdefault("fs_clock", _fs_clock)
 # runner, registered the same way for the same reason.
 from . import git_fixture as _git_fixture  # noqa: E402
 sys.modules.setdefault("git_fixture", _git_fixture)
+# `import sdk_blocker` in the two no-SDK controls, in tests/test_session_host.py's SDK gate (its probe of what a spawned
+# host imports) and in tests/test_ci_sdk_pin.py's RequireSwitch (tests/sdk_blocker.py, 2026-09-20): the self-witnessing
+# sitecustomize that hides an installed SDK from a spawned host or a child pytest, the probe that asks a child interpreter
+# whether it imports the SDK, and the assertions on the witness, registered the same way.
+from . import sdk_blocker as _sdk_blocker  # noqa: E402
+sys.modules.setdefault("sdk_blocker", _sdk_blocker)
+# `from env_ring_census import census` (tests/env_ring_census.py, review round 6 of the env-pick door, 2026-09-19): the
+# ring-keyed census of the problem ring's doors that tests/test_session_env.py pins, registered the same way.
+from . import env_ring_census as _env_ring_census  # noqa: E402
+sys.modules.setdefault("env_ring_census", _env_ring_census)

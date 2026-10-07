@@ -84,17 +84,19 @@ function out(o){process.stdout.write(JSON.stringify(o));}
 """
 
 
-def _run(scenario, pre="", app="test", **shim_kw):
+def _run(scenario, pre="", app="test", before="", **shim_kw):
     """`app` and `shim_kw` reach km._shim_core_js as a served page's would (D2, review round 1, 2026-09-18: the park's
     feed exemption and the chat pane's fresh hold are keyed on APP, so a test names the pane it builds; the Files pane's
-    no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte."""
+    no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte. `before` runs after
+    the harness and BEFORE the core (the seam _run_linked has): a write to the harness's stubs the core reads at its load
+    (parentMobileVal for the phone dial's probe; `pre` runs ahead of the harness, whose own declarations reset it)."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(pre + HARNESS + km._shim_core_js(app, **shim_kw) + "\n" + scenario)
+        f.write(pre + HARNESS + before + km._shim_core_js(app, **shim_kw) + "\n" + scenario)
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -888,7 +890,7 @@ class ShellLedReturn(unittest.TestCase):
     the link.
 
     parentLinkVal is the shell's {up,connT}; fireWin("message",{romp:'panes',link:...}) hands the pane the shell's word
-    as a pane frame hears it, fireWin("message",{romp:'link',link:...}) as the settings frame or a split chat column
+    as a pane frame hears it, fireWin("message",{romp:'link',link:...,mob:...}) as the settings frame or a split chat column
     hears it (review round 1, 2026-09-18: a link word of its own, since a panes word would replace those frames' set)."""
 
     def test_await_with_the_link_down_puts_the_socket_down_and_dials_nothing_across_two_ticks(self):
@@ -928,7 +930,8 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
     def test_the_shells_link_word_ends_the_await_at_the_words_time_not_the_backstop_ticks(self):
         # review round 1 (correctness-1): the settings frame and a split chat column are shim-bearing iframes the panes
         # word never reached, so they ended a shell-led await only on the 5 s backstop poll and their linkUpMs absorbed
-        # it. The shell now tells them a link word of their own ({romp:'link',link}); the shim ends its await on it.
+        # it. The shell now tells them a link word of their own ({romp:'link',link,mob}; the shim takes the link alone, render.ts the
+        # layout term); the shim ends its await on it.
         r = _run(r"""
 open();recv({type:"ka"});hide();NOW+=46000;
 parentLinkVal={up:false,connT:NOW};show();
@@ -1036,7 +1039,10 @@ out({delays:connectTimers().map(function(t){return t.ms;}),awaiting:awaitLink,ws
         # constants (the 15 s cut, the tick that performs it, the 2 s blind redial: 22 s, rounded up to the next tick,
         # 25 s; tests/test_kernel_ws_heartbeat.py pins the sum). The 20 s bound omitted the redial, so a pane tick landing
         # in the loop's last two seconds called an alive loop dead. Two-sided: nothing at the cycle's worst case (22 s)
-        # nor at 24,999 ms; a dial and a link-backstop row at 25,001 ms.
+        # nor at 24,999 ms; a dial and a link-backstop row at 25,001 ms. Since iOS item 1a (2026-10-02) the shell cuts each
+        # hung dial on its own timer at 15 s, so 22 s is the worst case only for a cut timer the browser lost (the tick then
+        # performs the cut); on the timer the cycle is 17 s, or under 19 s for a refusal just inside the cut on the ladder's
+        # top rung, and the bound stays 25 s above all of them.
         r = _run(r"""
 open();recv({type:"ka"});hide();NOW+=46000;
 parentLinkVal={up:false,connT:NOW};show();                         // connT fresh at the return: the shell's loop is alive
@@ -1051,7 +1057,7 @@ backstop:rows(sock(),"link-backstop").length});""")
         self.assertIs(r["awaiting"], True)
         self.assertEqual(r["dialedAtReturn"], 1, "no dial at the return while the link is down")
         self.assertEqual(r["afterFirstTick"], 1, "no dial while the link is down and its loop young")
-        self.assertEqual(r["at22000"], 1, "no dial at 22 s stale: the shell's loop can still be alive there (cut + tick + blind redial)")
+        self.assertEqual(r["at22000"], 1, "no dial at 22 s stale: the shell's loop can still be alive there (cut + tick + blind redial, when the tick backs up a lost cut timer)")
         self.assertEqual(r["at24999"], 1, "no dial one ms under the bound")
         self.assertEqual(r["at25001"], 2, "the backstop dials anyway once the shell's connT is stale past the whole cycle")
         self.assertEqual(r["backstop"], 1, "...and files a loud link-backstop diag row")
@@ -1497,7 +1503,7 @@ rf:dialed?rows(sock(),"return-fresh").map(function(x){return x.data;}):[]});""" 
             self.assertEqual(r["rf"], [])
 
     def test_a_parked_pane_hears_the_shells_own_link_word_and_dials_nothing_until_its_tap(self):
-        # PR 768's round 1 (2026-09-18) gives every shim-bearing iframe a link word of its own ({romp:'link',link}) beside the
+        # The first round of PR 768's review (2026-09-18) gives every shim-bearing iframe a link word of its own ({romp:'link',link,mob}: the shim takes the link alone, render.ts the layout term) beside the
         # panes word's link field, and the shim's link listener accepts both. A parked pane must hear it without dialing: a park
         # never awaits the link (the park branch returns before the D3 block sets awaitLink), so the listener's `awaitLink&&!ws`
         # gate holds, and connect()'s parked guard would hold a dial anyway. The tap still dials once, through the link now up.

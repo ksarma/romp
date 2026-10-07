@@ -158,7 +158,9 @@ test('the Tests section\'s about bullet names this module and says what it holds
 const adr = read('docs', 'adr', '0002-file-comments-in-the-track-changents-sidecar.md');
 const host = read('tools', 'file-comments-host.mjs');
 const settings = read('ui', 'webview', 'settings.ts');
-const guide = read('docs', 'guide.md').replace(/\s+/g, ' ');
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front
+// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there
+const guide = read('docs', 'reference.md').replace(/\s+/g, ' ');
 const slice2Lead = between(plan, 'User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and', 'Acceptance: accept changes the sidecar only');
 const d45 = between(plan, '45. **A comment names the changes it is about by stored ids the person picks', '46. **Resolve answered');
 const docsSection = between(plan, '\n## Docs', '\n## Deliberately not in v1');

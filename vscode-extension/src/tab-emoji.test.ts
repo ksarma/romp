@@ -14,7 +14,10 @@ import { INTENT_OPS } from "./pipe-intent";
 
 const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's emoji paragraph, the user-level account, leads docs/reference.md's "### A session's tab emoji" since the front
+// pages became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved it out of docs/guide.md).
+const EMOJI_DOC = ((r: string) => r.slice(r.indexOf("\n### A session's tab emoji\n"), r.indexOf("\n- **The tab.**", r.indexOf("\n### A session's tab emoji\n"))))(
+  fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8"));
 
 function slice(from: string, to: string): string {
   const i = SRC.indexOf(from);
@@ -53,7 +56,8 @@ test("the strip renders the emoji BEFORE the name on real and placeholder tabs, 
 
 test("the session and the tab meta carry the field; a frame without it (an older kernel) keeps the last value", () => {
   assert.match(SRC, /interface Session \{ id: string; name: string; color: Color \| null; emoji\?: string;/);
-  assert.match(SRC, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string \}>\(\);/);
+  assert.match(SRC, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string; userTodos\?: number \}>\(\);/,
+    "the tab meta carries the emoji beside the name, the colour and the count of open user todos (2026-09-22)");
   assert.match(SRC, /emoji: \("emoji" in msg\) \? String\(msg\.emoji \|\| ""\) : \(prev \? prev\.emoji : undefined\)/);
   assert.match(SRC, /emoji: typeof t\.emoji === "string" \? t\.emoji : undefined/);
 });
@@ -183,7 +187,7 @@ test("the op is user intent: the VS Code pipe holds it across a reconnect like s
   assert.ok(INTENT_OPS.has("setSessionColor"));
 });
 
-test("the guide says an accepted emoji is drawn with the viewer's font and can still show as a box on an older machine", () => {
+test("the docs say an accepted emoji is drawn with the viewer's font and can still show as a box on an older machine", () => {
   // the validator's tables are Unicode 16.0; acceptance is the kernel's, rendering is the viewing machine's
-  assert.match(GUIDE, /draws the emoji with the viewing\s+machine's own emoji font, so one from the newest Unicode release, accepted by\s+Romp, can still show as an empty box on a machine whose font predates it\./);
+  assert.match(EMOJI_DOC, /draws the emoji with the viewing\s+machine's own emoji font, so one from the newest Unicode release, accepted by\s+Romp, can still show as an empty box on a machine whose font predates it\./);
 });

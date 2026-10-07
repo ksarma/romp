@@ -1,14 +1,16 @@
 """The served WINDOW LAB base (T366; T386 stage 2): a hermetic kernel over a synthetic transcript long enough that older history
 stays on the server and the page's run is a tail, driven by Playwright through the driver head below (DRIVER_HEAD: the pad, sentOf,
 state and frame hooks). The regions labs (test_history_regions_browser.py, test_landing_notice_browser.py)
-build on WindowLab; this module holds no tests of its own since stage 2 retired the paused strip and the detached client (the tail
-run is always resident and live, so no window ever pauses live updates: plans/chat-history-regions.md Part B).
+build on WindowLab; stage 2 retired the paused strip and the detached client (the tail run is always resident and live, so no
+window ever pauses live updates: plans/chat-history-regions.md Part B), so the tests here are the driver head's own: a misspelled
+ROMP_LAB_ENGINE fails the lab instead of skipping it (UnknownEngineFailsLoudly; PR E, the maintainer's round 1 addendum), and so does a
+name that is one of the Playwright module's other exports, since the guard is membership of the three browser types and not the export's
+truthiness (the maintainer's round 5 ruling, fresh-1).
 """
 import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -17,11 +19,14 @@ import unittest
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
+# the one skip the engine test shares with the lab: the extension's deps (Playwright) are absent, so no driver head can run
+DEPS_ABSENT = "extension deps absent (npm ci not run here): the served guard needs them"
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
 
@@ -36,22 +41,26 @@ AUQ_RESULT_UUID = "66666666-7777-8888-9999-%012d" % (2 * AUQ_TURN)
 AUQ_QUESTION = "Which bound do we keep for the retry curve?"
 
 
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
-
-
 DRIVER_HEAD = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
-const { chromium } = require("playwright");
+const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+// the engine: Chromium unless ROMP_LAB_ENGINE names another Playwright BROWSER (webkit: the phone's engine, which has no scroll
+// anchoring; the compact stream lab runs under both). The legal set is the module's three browser types, stated here: a name outside
+// it exits 1, a failure, whether a misspelling or one of the module's other exports (devices, errors, selectors, request are truthy
+// objects; _electron is a launcher whose launch throws with no app). Exit 3 is the harness's "no playwright browser on this box", a
+// skip unless ROMP_SERVED_TESTS_REQUIRE=1: a misspelled engine once turned the whole lab into that silent skip
+// (the maintainer's round 1 addendum), and a guard on the export's truthiness then let a non-browser export through to a launch that
+// threw into the same exit (the maintainer's round 5 ruling, fresh-1); a launch of a browser that fails keeps 3 (the browser is missing,
+// which is what 3 says)
+const engineName = process.env.ROMP_LAB_ENGINE || "chromium";
+const BROWSERS = ["chromium", "firefox", "webkit"];
+if (!BROWSERS.includes(engineName)) { console.error("unknown ROMP_LAB_ENGINE: " + engineName + " (one of " + BROWSERS.join(", ") + ")"); process.exit(1); }
+const engine = playwright[engineName];
 let browser;
-try { browser = await chromium.launch(cfg.launch || {}); }   // a lab may ask for classic scrollbars (the settle lab's drag road): Playwright hides them headless by default
+try { browser = await engine.launch(cfg.launch || {}); }   // a lab may ask for classic scrollbars (the settle lab's drag road): Playwright hides them headless by default
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
 // every frame the page sends its kernel, by type: the window asks, the older asks and the re-attach ask are the evidence
@@ -105,12 +114,68 @@ const older = (k0, k1) => Array.from({ length: k1 - k0 }, (_, i) => k0 + i).flat
   { uuid: "22222222-3333-4444-5555-" + pad(2 * k + 1), kind: "assistant", md: "Answer " + k + ": the handler reads the note by id and returns it.", ts: new Date((cfg.base + 2 * k + 1) * 1000).toISOString() }]);
 """
 
+# R3, the shared bottom assertion (the client merge guard, 2026-09-19), appended to the driver head so every window lab and the reload
+# lab run the same check as their LAST measurement: after any history action the bottom of the view is the transcript's newest row.
+R3_CHECK = r"""
+// the transcript's record uuids in file order (plus whatever rows a lab appended or injected live, which it concatenates itself)
+const transcriptOrder = () => fs.readFileSync(cfg.transcript, "utf8").split("\n").flatMap((ln) => { try { const r = JSON.parse(ln); return r && r.uuid ? [r.uuid] : []; } catch (e) { return []; } });
+// R3 (2026-09-19): scrollTop is written to the bottom until two consecutive scrollHeight reads agree (the re-window runs in an animation
+// frame) and, bounded, until the last rendered row is `newest`; then: the last rendered 36-char uuid, the distance to the bottom (at the
+// bottom within 2px), and whether the rendered uuids stand in TRANSCRIPT order: with `order` (transcriptOrder() and any rows the lab
+// added) they must be a subsequence of it; without one the 12-digit suffix the labs' synthetic uuids encode the record index in must
+// rise. The last unit is assumed a plain turn: a folded tool group stamps its FIRST tool uuid and an overlay card carries a word, so a
+// lab whose transcript ends in a tool call must name its own `newest`. The regions are read as a model check (runs ordered by lo, the
+// open-ended run last), which one merged run satisfies trivially.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const inOrder = (us, ord) => {
+  let misordered = null;
+  if (Array.isArray(ord) && ord.length) { const pos = new Map(ord.map((u, i) => [u, i])); let p = -1; for (const u of us) { const i = pos.has(u) ? pos.get(u) : -1; if (i <= p) { misordered = u; break; } p = i; } }
+  else { let p = -1; for (const u of us) { const k = Number(u.slice(-12)); if (!(k > p)) { misordered = u; break; } p = k; } }
+  return { ordered: misordered === null, misordered };
+};
+// the rendered transcript rows as they stand (no scroll), checked against the order: a seam's reading
+const renderedOrder = (order) => page.evaluate(([ord, src]) => {
+  const inOrderFn = new Function("return " + src)();
+  const us = Array.from(document.querySelectorAll("#content .turn[data-uuid]")).map((t) => t.dataset.uuid).filter((u) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(u));
+  return Object.assign({ rendered: us.length, first: us[0] || null, last: us.length ? us[us.length - 1] : null }, inOrderFn(us, ord));
+}, [order || null, inOrder.toString()]);
+const bottomCheck = (newest, order) => page.evaluate(([nu, ord, src]) => new Promise((done) => {
+  const inOrderFn = new Function("return " + src)();
+  const c = document.getElementById("content");
+  const rendered = () => Array.from(document.querySelectorAll("#content .turn[data-uuid]")).map((t) => t.dataset.uuid).filter((u) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(u));
+  let lastSh = -1, same = 0, passes = 0;
+  const finish = (us) => {
+    const rs = typeof window.__rompRegions === "function" ? window.__rompRegions() : null;
+    const runs = rs ? rs.filter((r) => r.kind === "run") : [];
+    const runsOrdered = runs.every((r, i) => i === 0 || r.lo >= runs[i - 1].lo) && (!runs.length || runs[runs.length - 1].hi == null);
+    const dist = c.scrollHeight - c.scrollTop - c.clientHeight;
+    done(Object.assign({ last: us.length ? us[us.length - 1] : null, newest: nu, dist, atBottom: dist <= 2, rendered: us.length, runsOrdered, regions: rs, passes }, inOrderFn(us, ord)));
+  };
+  const step = () => {
+    c.scrollTop = c.scrollHeight;
+    passes++;
+    const sh = c.scrollHeight, us = rendered();
+    if (sh === lastSh) same++; else { same = 0; lastSh = sh; }
+    if ((same >= 2 && ((us.length && us[us.length - 1] === nu) || passes > 200)) || passes > 300) return finish(us);   // a landing's settle re-lands its anchor under this write for a moment (land-realign): the wait outlasts it and ends as soon as the newest row is last
+    requestAnimationFrame(step);
+  };
+  step();
+}), [newest, order || null, inOrder.toString()]);
+"""
+DRIVER_HEAD = DRIVER_HEAD + R3_CHECK
+
 # road 1 and road 2 in one page: the unasked window first (the reader attached, above the bottom), then the deep link
 class WindowLab(unittest.TestCase):
     """The boot: a hermetic kernel over a synthetic transcript longer than the wire tail, the real /chat page served
     from a copy of the built bundle. Subclassed by this module's tests and by the landing lab (T386,
-    tests/test_landing_settles_browser.py); carries no tests of its own."""
+    tests/test_landing_settles_browser.py); carries no tests of its own.
+
+    AGENTIC_TAIL_PAIRS (PR E, 2026-09-19): a subclass may end the transcript's LAST turn with that many (Bash tool, assistant
+    text) pairs before its closing text, so the resident tail is one long agentic turn: in compact mode each lone tool between
+    two texts is a unit of its own, and the 80-unit tail window then holds a single user row (the shape the phone showed while a
+    long turn streamed). Zero, the default, leaves the transcript as it was for every other lab."""
     maxDiff = None
+    AGENTIC_TAIL_PAIRS = 0
 
     @classmethod
     def _skip(cls, why):
@@ -121,8 +186,9 @@ class WindowLab(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            cls._skip("extension deps absent (npm ci not run here) — the served guard needs them")
+            cls._skip(DEPS_ABSENT)
         cls.lab = tempfile.mkdtemp(prefix="live-paused-window-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
@@ -182,6 +248,23 @@ class WindowLab(unittest.TestCase):
                              "toolUseResult": {"questions": [{"question": AUQ_QUESTION}], "answers": {AUQ_QUESTION: "upper"}}})
                 pa = AUQ_RESULT_UUID
                 text = "Upper it is: the retry curve keeps its upper bound."
+            if k == TURNS - 1 and cls.AGENTIC_TAIL_PAIRS > 0:
+                # the last turn's long agentic middle: a tool call, its result, a line of text, repeated (PR E; see the class docstring)
+                for i in range(cls.AGENTIC_TAIL_PAIRS):
+                    tu_id = "toolu_tail_%03d" % i
+                    tuu = "77777777-8888-9999-aaaa-%012d" % (10 * k + i)
+                    tru = "88888888-9999-aaaa-bbbb-%012d" % (10 * k + i)
+                    txu = "99999999-aaaa-bbbb-cccc-%012d" % (10 * k + i)
+                    recs.append({"type": "assistant", "uuid": tuu, "parentUuid": pa, "timestamp": ta, "sessionId": SID,
+                                 "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "tool_use",
+                                             "content": [{"type": "tool_use", "id": tu_id, "name": "Bash", "input": {"command": "true # step %d" % i}}]}})
+                    recs.append({"type": "user", "uuid": tru, "parentUuid": tuu, "timestamp": ta, "sessionId": SID,
+                                 "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tu_id, "content": "ok"}]},
+                                 "toolUseResult": {"stdout": "ok", "stderr": "", "interrupted": False, "isImage": False}})
+                    recs.append({"type": "assistant", "uuid": txu, "parentUuid": tru, "timestamp": ta, "sessionId": SID,
+                                 "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "end_turn",
+                                             "content": [{"type": "text", "text": "Step %d checked: the handler still reads the note by id." % i}]}})
+                    pa = txu
             recs.append({"type": "assistant", "uuid": a, "parentUuid": pa, "timestamp": ta, "sessionId": SID,
                          "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "end_turn",
                                      "content": [{"type": "text", "text": text}]}})
@@ -195,31 +278,28 @@ class WindowLab(unittest.TestCase):
         cls.tool_quote = "which bound do we keep for the retry curve"
         cls.auq_result_uuid = AUQ_RESULT_UUID                     # the answered question's row anchor (round six)
         cls.base = base
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-livepaused"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            cls._skip("hermetic kernel never served /healthz here")
+            cls._skip("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self, script, name, extra=None):
+        # exit 3 below is the driver's "no browser" (the launch failed): a skip, or a failure under ROMP_SERVED_TESTS_REQUIRE=1. An unknown
+        # engine NAME is not that and exits 1, so it reaches the assertion below with its stderr (the maintainer's round 1 addendum)
         cfg = os.path.join(self.lab, name + ".json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
@@ -248,6 +328,54 @@ class WindowLab(unittest.TestCase):
         if isinstance(r, dict):
             r["_klog"] = klog[-1500:]   # the kernel's own words for the run, beside the measure (a passing run's log is otherwise lost with the lab dir)
         return r
+
+
+class UnknownEngineFailsLoudly(unittest.TestCase):
+    """PR E, the maintainer's round 1 addendum (fresh-4): a misspelled ROMP_LAB_ENGINE must FAIL the served lab, never skip it. The driver head exits 3 for a
+    browser that will not launch, which _drive reads as "no playwright browser on this box" (a skip unless ROMP_SERVED_TESTS_REQUIRE=1);
+    an unknown engine name once took the same exit, so `ROMP_LAB_ENGINE=Webkit` made every lab under it a silent skip and nothing checked
+    in ever ran the WebKit leg the body's claims rest on. The head's engine lines run alone here (the head sliced before its launch), so
+    this needs the extension's deps and no browser; the only skip is the deps-absent one, and a misspelled engine never skips."""
+
+    def test_a_misspelled_engine_exits_one_and_names_itself(self):
+        if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
+            WindowLab._skip(DEPS_ABSENT)
+        head = DRIVER_HEAD[:DRIVER_HEAD.index("let browser;")]
+        lab = tempfile.mkdtemp(prefix="lab-engine-")
+        try:
+            cfg = os.path.join(lab, "cfg.json")
+            Path(cfg).write_text("{}")
+            driver = os.path.join(lab, "engine.mjs")
+            Path(driver).write_text(head)
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=120,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, ROMP_LAB_ENGINE="Webkit"))
+        finally:
+            shutil.rmtree(lab, ignore_errors=True)
+        self.assertEqual(p.returncode, 1, "an unknown engine is the lab's failure, never the no-browser skip (3):\n" + p.stdout[-1000:] + p.stderr[-2000:])
+        self.assertIn("unknown ROMP_LAB_ENGINE: Webkit", p.stderr)
+
+    def test_a_truthy_non_browser_export_exits_one_and_names_itself(self):
+        """The maintainer's round 5 ruling, fresh-1: the guard keyed on the TRUTHINESS of `playwright[name]`, so ROMP_LAB_ENGINE naming any of
+        the module's other exports (devices, errors, selectors, request: objects; _electron: a launcher with a `launch` of its own that
+        throws with no app) passed it, `engine.launch` threw inside the launch try, the driver exited 3 and _drive read 3 as "no playwright
+        browser on this box", the silent skip this class exists to close. The guard is membership of the legal set, the module's three
+        browser types, stated in the head; a truthy non-browser export exits 1 and is named, with a launcher of its own or without one."""
+        if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
+            WindowLab._skip(DEPS_ABSENT)
+        head = DRIVER_HEAD[:DRIVER_HEAD.index("let browser;")]
+        for name in ("devices", "_electron"):
+            lab = tempfile.mkdtemp(prefix="lab-engine-")
+            try:
+                cfg = os.path.join(lab, "cfg.json")
+                Path(cfg).write_text("{}")
+                driver = os.path.join(lab, "engine.mjs")
+                Path(driver).write_text(head)
+                p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=120,
+                                   env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, ROMP_LAB_ENGINE=name))
+            finally:
+                shutil.rmtree(lab, ignore_errors=True)
+            self.assertEqual(p.returncode, 1, "%s: a truthy export that is not a browser type is refused as an unknown engine (1), never passed to a launch that fails into the no-browser skip (3), and never through (0):\n" % name + p.stdout[-1000:] + p.stderr[-2000:])
+            self.assertIn("unknown ROMP_LAB_ENGINE: " + name, p.stderr, name)
 
 
 if __name__ == "__main__":

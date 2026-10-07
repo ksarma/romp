@@ -27,23 +27,22 @@ quiet), the yesterday markers do
 not change, and every turn's box (top, height, left, width) is exactly where it was: the transcript did not move. The
 sticky stamp over a today turn scrolled past the top line wears the same two-line label. With RT_SHOTS=<dir> the driver
 writes screenshots: the today run (`web`) and the yesterday run (`api`), dark and light. Skips LOUDLY without the extension
-deps or a Playwright browser; the extension CI job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1,
+deps or a Playwright browser; the served-pages CI job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1,
 which turns any skip into a failure there. SYNTHETIC fixtures only (sessions web and api, the notes-api demo world)."""
 import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -57,14 +56,6 @@ SID_B = "bbbbbbbb-1111-2222-3333-444444444444"   # api: four rows yesterday (the
 
 # the today rows' distance from the fixture's clock, oldest first: one label of each kind
 TODAY_OFFSETS = [125 * 60, 60 * 60, 59 * 60, 5 * 60, 60, 5]
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -331,11 +322,11 @@ class ServedRailRelative(unittest.TestCase):
     @classmethod
     def _boot(cls):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served guard needs them; CI's extension job has them and requires this file to run")
+            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served guard needs them; CI's served-pages job has them and requires this file to run")
         probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
                                 os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
-            raise unittest.SkipTest("no playwright browser on this box — the served guard needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served guard needs one; CI's served-pages job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="rail-relative-")
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
@@ -363,24 +354,20 @@ class ServedRailRelative(unittest.TestCase):
             os.makedirs(proj, exist_ok=True)
             Path(proj, sid + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in _records(sid, cls.now, shift)))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
-        cls.port, cls.token = _free_port(), "testtok-railrelative"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-railrelative"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _expect_rail(self, m, where):
@@ -426,7 +413,7 @@ class ServedRailRelative(unittest.TestCase):
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box — the served guard needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served guard needs one; CI's served-pages job installs Chromium and requires this file to run")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])

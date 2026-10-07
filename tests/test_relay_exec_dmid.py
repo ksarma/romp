@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 from romp_load import load_source
+from tests.conftest import restore_env
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -20,11 +21,23 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
 Path(_SESS).write_text(json.dumps([{"id": "sess-web", "name": "web", "dir": "/tmp/notes-api",
                                     "state": "waiting", "working": ""}]))
-os.environ["ROMP_SESSIONS_FILE"] = _SESS
 ps = load_source("romp_postal_dmid", os.path.join(BIN, "romp-postal-service"))
 
 
-class ReceiptCarriesDeliveryMid(unittest.TestCase):
+class _Seam(unittest.TestCase):
+    """The sessions-file seam, per test (2026-09-22): the bus reads ROMP_SESSIONS_FILE at call time, and until now this
+    module wrote it at import, which held for every test in the process and for every child any test spawned (a real
+    bus started from another module's test inherited such a seam and, with one live row to count, never autostopped:
+    fork PR #813's CI). Set here for each test and put back by a cleanup registered right after the write
+    (tests/README.md; tests/test_hermetic_kernel_postal.py holds the repo-wide rule)."""
+
+    def setUp(self):
+        prior = os.environ.get("ROMP_SESSIONS_FILE")
+        os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+
+
+class ReceiptCarriesDeliveryMid(_Seam):
     def test_consuming_relayed_mail_queues_a_dmid_receipt(self):
         # relayed-in mail: deliver with the relay headers, then the session reads its box
         ps.deliver("sess-web", "api", "id-api", "please review the schema", kind="question",

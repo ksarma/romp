@@ -20,8 +20,12 @@ import { isProvisionalId } from "./provisional";
 import { isSubId } from "./subagent-view";
 import { StagedStack } from "./staged-messages";
 import { syncSessionsFromTabMeta } from "./tab-meta";
+import { snapshotRow } from "./tab-snapshot";   // the section snapshot's row, composed here over the parsed strip meta (the roster count's third reader)
 import { reconcileTabOrder, retainLiveOmitted, localStrip, stripHost } from "./tab-order";
+import { paneArranges } from "./frame-listener";
+import { applyViewOrder, readViewOrder } from "./view-order";
 import { hostOf } from "./host-prefix";
+import { gateOnStrip } from "./skeleton-tabs";   // the idle prefetch's start gate (stage 0, 2026-09-18): applyTabOrder opens it on the local strip; the real rule over a fresh state here
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -332,22 +336,24 @@ test("adoptSessionState joins every slice onto what is already here, persists on
 const U = "11111111-2222-3333-4444-555555555509";
 const T3 = [{ id: WEB, name: "web" }, { id: API, name: "api" }, { id: TESTS, name: "tests" }];
 const T2 = [{ id: WEB, name: "web" }, { id: TESTS, name: "tests" }];
-type StripHooks = { posts: Record<string, unknown>[]; renders: string[][]; dismissed: [string, string][]; toasts: string[]; shown: number; asked: [string, string][] };
+type StripHooks = { posts: Record<string, unknown>[]; renders: string[][]; dismissed: [string, string][]; toasts: string[]; shown: number; asked: [string, string][]; armed: number };   // armed: the idle chain's arms (schedulePrebuild) the lifted function made
 type StripApi = {
-  frame: (o: string[], tabs: { id: string; name: string }[], report: { reemit?: boolean; freshHost?: string } | undefined, live: string[]) => void;
+  frame: (o: string[], tabs: { id: string; name: string; userTodos?: unknown }[], report: { reemit?: boolean; freshHost?: string } | undefined, live: string[]) => void;
+  meta: (id: string) => { name: string; color: unknown; emoji?: string; userTodos?: number } | undefined;   // the strip meta applyTabOrder rebuilt for a listed id (tabMeta), the roster count among its fields (2026-09-22)
   cross: (id: string) => void;
   tick: (ms: number) => void;
-  state: () => { tabOrderSeen: boolean; order: string[]; tabMeta: string[]; closing: string[]; colEmptyPosted: boolean; hostsSeen: string[]; kernelListed: string[] };
+  state: () => { tabOrderSeen: boolean; order: string[]; tabMeta: string[]; closing: string[]; colEmptyPosted: boolean; hostsSeen: string[]; kernelListed: string[]; gate: boolean };
 };
 function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string | null }): { api: StripApi; HOOKS: StripHooks; W: { sets: ColSets | null } } {
-  const HOOKS: StripHooks = { posts: [], renders: [], dismissed: [], toasts: [], shown: 0, asked: [] };
+  const HOOKS: StripHooks = { posts: [], renders: [], dismissed: [], toasts: [], shown: 0, asked: [], armed: 0 };
   const W = { sets: o.sets };
   const PARENT = { postMessage(m: Record<string, unknown>) { HOOKS.posts.push(m); }, __rompChatSets: () => W.sets };
   const win = hideEdges({ parent: PARENT, frameElement: { id: "f-chat-" + o.col } });
   const js = requireCjs("esbuild").transformSync(
     [line("heldHere"), line("tabInView"), fn("stripLists"), fn("ackClosingTabs"), fn("applyTabOrder"), fn("noteColumnEmptiness")].join("\n"), { loader: "ts" }).code;
   const prelude = `
-    const { columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, HOOKS } = W;
+    const { columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, gateOnStrip, HOOKS,
+            paneArranges, applyViewOrder, readViewOrder } = W;   // the arrangement read (2026-09-19): real functions; with no localStorage here readViewOrder is [] and the seed passes through unchanged
     const COL = W.col;
     let colSets = W.sets, tabOrderSeen = false, activeId = null, provisionalId = null, wantActive = W.wantActive, vanishedId = null;
     const failedProvisionals = new Set(); let colEmptyPosted = false; let boardLive = new Set(); const hostsSeen = new Set();
@@ -356,7 +362,8 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
     const requestFullSession = (id, why) => { HOOKS.asked.push([id, why]); };   // this fork's no-base re-ask for a listed tab the page holds no session entry for (#1017's vocabulary): recorded, so its re-emission gate is run below; the real one's own suppressions (awaitingFull, a closing or provisional tab) are not in these worlds
     const peekId = null; const chatVisible = () => true;
     const tabMeta = new Map(), sessions = new Map(), pendingTabMeta = new Map(), closingTabs = new Map(), kernelListed = new Set(); const order = [];
-    const skeletonTabs = { ids: new Set() };   // upstream skeleton diet (2026-09-15): the lifted re-ask arm skips a listed skeleton; none in these worlds
+    const skeletonTabs = { ids: new Set(), gate: false };   // upstream skeleton diet (2026-09-15): the lifted re-ask arm skips a listed skeleton; none in these worlds. gate: the start gate the local strip may open (stage 0)
+    const schedulePrebuild = () => { HOOKS.armed++; };   // the idle chain's arm, counted (the start gate's strip half arms it once when it opens)
     const CLOSE_ACK_MS = 15_000; let clock = 1_000_000; const Date = { now: () => clock };
     const vscodeApi = null;
     const dismissSession = (id, why) => { HOOKS.dismissed.push([id, why]); sessions.delete(id); const i = order.indexOf(id); if (i >= 0) order.splice(i, 1); };
@@ -371,11 +378,13 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
       frame: (o, tabs, report, live) => applyTabOrder(o, tabs, report, live),
       cross: (id) => { closingTabs.set(id, Date.now()); dismissSession(id, "close"); renderTabs(); },
       tick: (ms) => { clock += ms; },
-      state: () => ({ tabOrderSeen, order: order.slice(), tabMeta: [...tabMeta.keys()], closing: [...closingTabs.keys()], colEmptyPosted, hostsSeen: [...hostsSeen].sort(), kernelListed: [...kernelListed].sort() }),
+      meta: (id) => tabMeta.get(id),
+      state: () => ({ tabOrderSeen, order: order.slice(), tabMeta: [...tabMeta.keys()], closing: [...closingTabs.keys()], colEmptyPosted, hostsSeen: [...hostsSeen].sort(), kernelListed: [...kernelListed].sort(), gate: skeletonTabs.gate }),
     };
   `;
   const make = new Function("W", "window", prelude + js + epilogue) as (w: unknown, win: unknown) => StripApi;
-  const api = make({ columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, HOOKS,
+  const api = make({ columnHolds, columnEmptiness, isProvisionalId, isSubId, syncSessionsFromTabMeta, reconcileTabOrder, retainLiveOmitted, hostOf, localStrip, stripHost, gateOnStrip, HOOKS,
+                     paneArranges, applyViewOrder, readViewOrder,
                      col: o.col, sets: W.sets, shell: W, wantActive: o.wantActive ?? null }, win);
   return { api, HOOKS, W };
 }
@@ -385,14 +394,20 @@ test("the vanishing tab: a synthetic re-emission served from an empty store ahea
   w.api.frame([], [], { reemit: true }, []);   // federation.ts emitMergedOrder over an empty per-host store: order [], flagged reemit
   assert.equal(w.api.state().tabOrderSeen, false, "a re-emission is never the kernel's word: the board has not been heard");
   assert.deepEqual(w.HOOKS.posts, [], "…so nothing is said about emptiness and the column stands");
+  assert.deepEqual([w.api.state().gate, w.HOOKS.armed], [false, 0], "the idle prefetch's start gate (stage 0): a re-emission opens nothing and arms nothing");
   w.api.frame([WEB, API, TESTS], T3, { freshHost: "" }, [WEB, API, TESTS]);   // the LOCAL kernel's strip, fresh
   assert.equal(w.api.state().tabOrderSeen, true, "the kernel's own strip arms it");
   assert.deepEqual(w.HOOKS.posts, [], "the member is listed");
   assert.deepEqual(w.HOOKS.renders.at(-1), [WEB, API, TESTS]);
+  assert.deepEqual([w.api.state().gate, w.HOOKS.armed], [false, 0], "the local strip lists the awaited tab (wantActive): the gate waits for its frame and the chain is not armed (executed, review round 1)");
   w.api.frame([WEB, API, TESTS], T3, { reemit: true }, [WEB, API, TESTS]);   // another pane's drag: a re-emission from a filled store
   assert.deepEqual(w.HOOKS.posts, [], "a re-emission carrying the member says nothing either");
+  assert.deepEqual([w.api.state().gate, w.HOOKS.armed], [false, 0]);
   w.api.frame([WEB, TESTS], T2, { freshHost: "" }, [WEB, TESTS]);   // the member ended: the kernel omits it and no longer affirms it live
   assert.deepEqual(w.HOOKS.posts, [{ romp: "colEmpty", gone: [API], crossed: [] }], "the emptiness is said from the kernel's own strip, and no member went by this page's cross");
+  assert.deepEqual([w.api.state().gate, w.HOOKS.armed], [true, 1], "the local strip that no longer lists the awaited tab opens the gate and arms the chain once (the ended-active case, T5, at the wiring)");
+  w.api.frame([WEB, TESTS], T2, { freshHost: "" }, [WEB, TESTS]);
+  assert.deepEqual([w.api.state().gate, w.HOOKS.armed], [true, 1], "an open gate arms no second time from the strip");
 });
 
 test("provenance: a remote host's fresh push ahead of the local strip arms nothing; a frame with no provenance (a kernel that sends directly, VS Code) is the kernel's own word", () => {
@@ -400,8 +415,10 @@ test("provenance: a remote host's fresh push ahead of the local strip arms nothi
   r.api.frame(["TESTHOST:" + U], [{ id: "TESTHOST:" + U, name: "remote" }], { freshHost: "TESTHOST" }, ["TESTHOST:" + U]);
   assert.equal(r.api.state().tabOrderSeen, false, "another kernel's push says nothing about this kernel's sessions");
   assert.deepEqual(r.HOOKS.posts, []);
+  assert.deepEqual([r.api.state().gate, r.HOOKS.armed], [false, 0], "a remote host's push is not the local strip: the start gate stays closed");
   r.api.frame([WEB, API, "TESTHOST:" + U], [...T3.slice(0, 2), { id: "TESTHOST:" + U, name: "remote" }], { freshHost: "" }, [WEB, API, "TESTHOST:" + U]);
   assert.equal(r.api.state().tabOrderSeen, true);
+  assert.deepEqual([r.api.state().gate, r.HOOKS.armed], [true, 1], "no want at all: the local strip opens the gate and arms once (executed, review round 1)");
   const s = stripWorld({ col: "2", sets: { "2": [API] } });
   s.api.frame([WEB, API], T3.slice(0, 2), { reemit: false, freshHost: undefined }, [WEB, API]);   // the dispatch's shape for a frame the kernel sent directly
   assert.equal(s.api.state().tabOrderSeen, true, "no federation: the frame is the kernel's");
@@ -523,6 +540,34 @@ function idleWorld(o: { col?: string; provisionalId?: string | null; failed?: st
   const api = make({ isProvisionalId, col: o.col || "", provisionalId: o.provisionalId ?? null, failed: o.failed || [] }, win);
   return { api, posts };
 }
+
+test("executed: the roster row's user-todo count lands on the strip meta (2026-09-22): applyTabOrder keeps a non-negative integer, 0 included, and reads an absent key, a string, a negative or a fraction as undefined (an older kernel's row, or a count outside the kernel's contract); the next strip rebuilds the entry with its new count", () => {
+  // the count a skeleton or placeholder tab paints its flag from (tab-usertodo-skeleton.test.ts pins the builders and the parse's
+  // spelling; this case runs the parse). Parsed inline in applyTabOrder because this world lifts the function by source. The
+  // kernel sends a non-negative integer (tests/test_user_todos_roster.py holds it to that); a row outside that contract reads as
+  // no count, so every reader downstream, the builders, the signature, the header and the section snapshot, holds a real count
+  // or nothing (correctness-1, review round 1)
+  const FOUR = "11111111-2222-3333-4444-555555555504", FIVE = "11111111-2222-3333-4444-555555555505", SIX = "11111111-2222-3333-4444-555555555506";
+  const ALL = [WEB, API, TESTS, FOUR, FIVE, SIX];
+  const w = stripWorld({ col: "2", sets: { "2": [API] } });
+  w.api.frame(ALL, [{ id: WEB, name: "web", userTodos: 2 }, { id: API, name: "api", userTodos: 0 }, { id: TESTS, name: "tests" }, { id: FOUR, name: "docs", userTodos: "2" },
+                    { id: FIVE, name: "infra", userTodos: -1 }, { id: SIX, name: "ops", userTodos: 1.5 }],
+              { freshHost: "" }, ALL);
+  assert.deepEqual(ALL.map((id) => w.api.meta(id)?.userTodos), [2, 0, undefined, undefined, undefined, undefined],
+    "a count, 0 as a real value, no key, a string, a negative, a fraction: a non-negative integer or nothing");
+  assert.deepEqual(ALL.map((id) => w.api.meta(id)?.name), ["web", "api", "tests", "docs", "infra", "ops"], "the row's other fields parse as before");
+  assert.deepEqual(w.api.state().tabMeta, ALL, "every listed row has an entry");
+  // -1 through the writer, into the section snapshot's row (tab-snapshot.ts, the count's third reader): a count of 0, not on you
+  const five = w.api.meta(FIVE);
+  const neg = snapshotRow(FIVE, null, null, true, { name: five?.name, userTodos: five?.userTodos });   // the entry's two fields the snapshot reads (render.ts hands it the whole tabMeta row)
+  assert.deepEqual([neg.todos, neg.needsYou, neg.name], [0, false, "infra"], "the snapshot reads the -1 row's entry as no count: 0 things, nothing on you");
+  // a todo filed on tests and web's two resolved: the kernel's next strip carries the new counts, and the entries are REBUILT from
+  // it (tabMeta.clear(), then one set per row), so a count never lingers from an earlier strip
+  w.api.frame([WEB, API, TESTS, FOUR], [{ id: WEB, name: "web", userTodos: 0 }, { id: API, name: "api", userTodos: 0 }, { id: TESTS, name: "tests", userTodos: 1 }, { id: FOUR, name: "docs" }],
+              { freshHost: "" }, [WEB, API, TESTS, FOUR]);
+  assert.deepEqual([WEB, API, TESTS, FOUR].map((id) => w.api.meta(id)?.userTodos), [0, 0, 1, undefined], "the rebuilt entries carry this strip's counts");
+  assert.deepEqual([FIVE, SIX].map((id) => w.api.meta(id)), [undefined, undefined], "rows the new strip no longer lists have no entry (rebuilt, not merged)");
+});
 
 test("the idle signal: dropping the create in flight posts colBusy:false once; a failed create keeps the column busy until its discard, which posts it; the first column never posts", () => {
   const a = idleWorld({ col: "2", provisionalId: PROV });

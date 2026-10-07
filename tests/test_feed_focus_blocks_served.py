@@ -64,14 +64,13 @@ ui/webview/feed-focus-section.test.ts, the persisted fields ui/webview/feed-view
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -99,14 +98,6 @@ WEB_COLOR = "rgb(30, 161, 235)"   # #1EA1EB, the colour the payload gives web
 COLS = ["asks", "needsInput", "completed"]
 ROW_DEFAULT = ["asks", "needsInput", "completed"]
 MIN_W = 0.35
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -209,7 +200,7 @@ const survey = () => page.evaluate(() => {
     name: nm ? nm.textContent : null, nameColor: nm ? getComputedStyle(nm).color : null, nameTitle: nm ? nm.title : null,
     caret: q(".feed-focus-caret")?.textContent ?? null,
     total: shown(q(".feed-focus-count")) ? q(".feed-focus-count").textContent : null,
-    emptyShown: shown(q(".feed-focus-empty")), colsShown: shown(q(".feed-focus-cols")), divider: shown(q("hr.feed-focus-divider")),
+    emptyShown: shown(q(".feed-focus-empty")), colsShown: shown(q(".feed-focus-cols")), divider: shown(sec && sec.nextElementSibling && sec.nextElementSibling.matches("hr.feed-focus-divider") ? sec.nextElementSibling : null),
     secOrder: byLeft(cols), boardOrder: byLeft(Array.from(document.querySelectorAll("#feed-cols .feed-col"))),
     // the single-column layout's order: the VISIBLE blocks top to bottom (a hidden block's rect is all zeros)
     secOrderY: cols.filter((c) => shown(c)).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map(keyOf),
@@ -232,7 +223,7 @@ const survey = () => page.evaluate(() => {
 const metrics = () => page.evaluate(() => {
   const cs = (s) => { const e = document.querySelector(s); return e ? getComputedStyle(e) : null; };
   const lbl = cs("#feed-focus .feed-focus-head .feed-focus-fold"), head = cs("#feed-focus .feed-focus-head"), nm = cs("#feed-focus .feed-focus-head .fname");
-  const col = cs("#feed-cols .feed-col-head"), sess = cs("#feed-cols .feed-sess-head"), hr = cs("#feed-focus .feed-focus-divider");
+  const col = cs("#feed-cols .feed-col-head"), sess = cs("#feed-cols .feed-sess-head"), hr = cs("#feed-focus + hr.feed-focus-divider");
   const caret = cs("#feed-focus .feed-focus-caret"), blockCaret = cs("#feed-focus .col-asks .fcol-fold"), chip = cs("#feed-focus .col-asks .fcol-chip");
   const sessName = cs("#feed-cols .feed-sess-head .fname");
   const pick = (c, k) => (c ? c[k] : null);
@@ -637,35 +628,31 @@ class ServedFocusedSectionBlocks(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served guard needs them")
         cls.lab = tempfile.mkdtemp(prefix="feedfocusblocks-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         os.makedirs(state, exist_ok=True)
         with open(os.path.join(state, "session-hosts"), "w") as fh:   # a lab root of its own pins the hosts OFF (CLAUDE.md 2026-09-11)
             fh.write("off\n")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-feedfocusblocks"
         env = _lab.kernel_env(cls.lab, os.path.join(cls.lab, "claude"), dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):   # bounded: 60 s of half-second probes, the served labs' own wait
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)   # bounded: 60 s of half-second probes, the served labs' own wait
+        if why:
             cls.kernel.kill()
             cls.kernel.wait()
-            raise AssertionError("hermetic kernel never served /healthz here; log tail:\n" + open(cls.klog).read()[-1500:])
+            raise AssertionError("hermetic kernel never served /healthz here (%s); log tail:\n" % why + open(cls.klog).read()[-1500:])
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     @staticmethod

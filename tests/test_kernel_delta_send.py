@@ -239,7 +239,7 @@ class RenderHandlesTheTail(unittest.TestCase):
         r = self._render()
         # upsert records the wire offset → s.events is the tail [headFrom, headTotal); an empty frame for a held
         # transcript keeps the resident window instead (T249b, frame-merge.ts)
-        self.assertIn("headFrom: kept && prev ? prev.headFrom : (msg.headFrom ?? 0),", r)
+        self.assertIn("headFrom: keepResident && prev ? prev.headFrom : (msg.headFrom ?? 0),", r)
         # scroll to the top of the resident tail with older on the server → request the previous chunk
         self.assertIn('vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.proto === 2 ? s.firstUuid : s.headFrom });', r)
         # …only on an upward or unchanged move of the view (T366: a downward flick inside the estimate's top band never asks)
@@ -724,17 +724,26 @@ class ByteIdenticalFrames(unittest.TestCase):
         builds.chat labels it `targeted` only when the tab is unwatched (a watched tab's targeted build lands in active_built
         with no label), which is why targetedBuilds is published: without it the identity would ask the reader to subtract
         a number /perf does not publish for the watched case. Driven from `between` at cycle 5 with one connected chat
-        client, once unwatched and once watching the tab: targetedBuilds 1 either way, pre 6 = 3 + 4 - 1 + 0, post 3 = 4 - 1 - 0."""
-        for watched in (False, True):
+        client, once unwatched, once watching the tab, and once watching it through the parked-reveal preference's record
+        (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-1: the client declares another tab
+        and carries `preferred` naming this one, the state _push ranks first; the label read `c.get("active")` and filed the
+        session the preference served whole as background, so one question had two answers): targetedBuilds 1 in every case,
+        pre 6 = 3 + 4 - 1 + 0, post 3 = 4 - 1 - 0."""
+        other = "11111111-2222-3333-4444-555555555599"   # the page's own declared tab, another session, while the record names this one
+        for watched in (False, True, "preference"):
             with self.subTest(watched=watched):
-                c = self._connected(**({"active": self.SID} if watched else {}))
+                kw = {"active": self.SID} if watched is True else ({"active": other, "preferred": self.SID} if watched else {})
+                c = self._connected(**kw)
 
                 def between(i, c=c):
                     if i == 5:
                         km._push_session_now(self.SID)
                 with mock.patch.object(km, "_clients", [c]):
                     d, b0, b1, calls = self._window(between=between)
-                self.assertEqual(calls, [False, True, False, True, False, True], "the targeted push caches nothing: the loop's cycles are unchanged")
+                self.assertEqual(calls, [False, True, False, True, False, True, True],
+                                 "the loop's six cycles are unchanged, with one entry more at index 5: the targeted push diffs "
+                                 "its build once against the shared baseline before cycle 5 (the project's PR 1870 serves each "
+                                 "client from the base it holds) and caches nothing")
                 cached, built = self._identities(d, b0, b1)
                 self.assertEqual((cached, built), (3, 4), "three loop rebuilds and the targeted push's build")
                 self.assertEqual((d["targetedBuilds"], d["failedBuilds"], d["nosig"]), (1, 0, 0))
@@ -1110,7 +1119,7 @@ class ByteIdenticalFrames(unittest.TestCase):
         # names row resolved the session's cwd to the worktree, the worktree was read inside a signature (the repo index's
         # tree and index stats and the CLAUDE.md chain are path stats: the tree has no subdirectory, so no DirEntry stat is
         # made under it), the task store was scanned there (a DirEntry stat per task file, through _entry_stat), the postal
-        # store was stat'ed there (_chat_postal_key, in the tail), and the names and registry reads landed
+        # store was stat'ed there (_postal_index, the tail's postal branch), and the names and registry reads landed
         for p in furnished:
             self.assertTrue(p.exists(), "premise: the furnished file stands until cleanup: %s" % p)
         self.assertEqual(km._cwd_of(self.SID), world["wt"], "premise: the names row resolved the session's cwd to the worktree")
@@ -2252,8 +2261,10 @@ class ChatSigHelpers(unittest.TestCase):
         """The tail's two stat sites, driven through their real caller (2026-09-19 review, tests-2): _chat_sig_deps over a
         record naming an existing task output and a missing one, with a postal dependency, inside the scope, counts
         exactly the stats the outside interception saw, at least three (one per recorded task output, the missing one
-        included, plus the postal log's); the helper-level three calls hold the same equality and read exactly three; an
-        empty record counts zero."""
+        included, plus the postal log's, which the postal branch reads once through _postal_index since upstream 1818
+        replaced the log-identity key _chat_postal_key with this session's revision, _chat_postal_rev, a dict lookup over
+        that index); the helper-level three calls hold the same equality and read exactly three; an empty record counts
+        zero."""
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         existing, missing = os.path.join(td.name, "out.txt"), os.path.join(td.name, "gone.txt")
         with open(existing, "w") as f:
@@ -2268,11 +2279,19 @@ class ChatSigHelpers(unittest.TestCase):
         self.assertEqual(pl, ())
         self.assertEqual(n, ic.total, "the tail's stats, whoever made them: %r" % {"stat": ic.stat, "lstat": ic.lstat, "dirent": ic.dirent})
         self.assertGreaterEqual(n, 3, "one per recorded task output, the missing one included, plus the postal log's")
+        log = str(km.jd.STATE / "timeline" / "messages.jsonl")
+        self.assertIn(log, ic.paths, "the postal branch stat'ed the log inside the scope (_postal_index's key read): %r"
+                      % sorted(k for k in ic.paths if isinstance(k, str)))
+        # the log's read is _postal_index's own stat, memoized on the log's (mtime_ns, size): warmed outside the scope so the
+        # read inside is the key check's one stat whether this state root holds a log (a hit) or none (an OSError, counted
+        # as attempted); a cold index would also pay the incremental reader's stat of the same file
+        km._postal_index()
         before = km._chat_sig_stats_report()["stats"]
         with _StatInterceptor(km._CHAT_SIG_TL) as ic2, km._chat_sig_scope():
-            km._chat_stat_key(existing); km._chat_stat_key(missing); km._chat_postal_key()
+            km._chat_stat_key(existing); km._chat_stat_key(missing); km._chat_postal_rev(self.SIDS[0], km._postal_index())
         self.assertEqual(km._chat_sig_stats_report()["stats"] - before, ic2.total)
-        self.assertEqual(ic2.total, 3, "each attempt counted, a missing file's included")
+        self.assertEqual(ic2.total, 3, "each attempt counted, a missing file's included; the revision itself stats nothing")
+        self.assertEqual(ic2.paths.get(log), 1, "the log stat'ed once: the index's key read")
         before = km._chat_sig_stats_report()["stats"]
         with _StatInterceptor(km._CHAT_SIG_TL) as ic3, km._chat_sig_scope():
             self.assertEqual(km._chat_sig_deps(self.SIDS[0], None), ((), (), None))

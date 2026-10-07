@@ -10,6 +10,10 @@ which crosses the wire as silence so the sender's outbox re-relays); resolve_rec
 the remote-sids mirror for id-shaped forms before its 404; and the presence PRODUCER serves the
 last ANSWERED rows when the local listing doesn't answer, so a local blink never gossips as
 "nobody lives here". Fold-in: set_working without its text param refused loudly, never a clear.
+Since round 3 of fork PR #897 the producer also SAYS when the rows are that cache: the exchange
+payload carries `presenceAnswered` beside `presence` (_local_presence_checked, presence_payload), so
+the far side's deadness mirror lets a cached roster vouch for the presence of the sids it names and
+not for the absence of a session started here since.
 
 SYNTHETIC fixtures only: placeholder UUIDs, invented names.
 """
@@ -332,6 +336,81 @@ class PresenceBlinkHonesty(_RelayBase):
         pm.KERNEL_BASE = "http://127.0.0.1:9"
         self.assertEqual(pm._local_presence(), [])
 
+    def test_the_exchange_payload_says_whether_this_listing_answered(self):
+        """Round 3 of fork PR #897 (the reviewer's ruling): the cache above rides the exchange with a sign of it.
+        The request builder carries `presenceAnswered` beside the rows, True for an answered listing, False for
+        the last answered rows served through a blink and for a bus nothing has answered yet, so the far side's
+        deadness mirror lets a cached roster vouch for the presence of the sids it names and not for the absence
+        of a session started here since (the composition: tests/test_postal_remote_sids_mirror.py, the cached
+        roster test, and tests/test_dead_session_staleness.py ReaderFollowsTheWriter, the cached roster phase).
+        Until this round the cache rode the exchange as the host's word about what runs here now."""
+        pm.KERNEL_BASE = "http://127.0.0.1:9"
+        req = pm.build_exchange_request("TESTHOST", wait=False)
+        self.assertEqual((req.get("presenceAnswered"), req["presence"]), (False, []),
+                         "nothing has answered yet: no rows, and the bit says unanswered")
+        _set_live([{"id": ALPHA, "name": "web"}])
+        req = pm.build_exchange_request("TESTHOST", wait=False)
+        self.assertEqual((req.get("presenceAnswered"), [a["id"] for a in req["presence"]]), (True, [ALPHA]),
+                         "an answered listing: the bit rides beside the rows")
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        req = pm.build_exchange_request("TESTHOST", wait=False)
+        self.assertEqual((req.get("presenceAnswered"), [a["id"] for a in req["presence"]]), (False, [ALPHA]),
+                         "a blink serves the last answered rows AND says they are a cache (a builder riding the rows "
+                         "alone leaves the far side to read the cache as this host's word about what runs here now)")
+        rows, answered = pm._local_presence_checked()
+        self.assertEqual(([a["id"] for a in rows], answered), ([ALPHA], False), "the pair the builders ride")
+        _set_live([])
+        self.assertEqual(pm._local_presence_checked(), ([], True), "an ANSWERED empty listing is the truth, and answered")
+
+    def test_the_request_lists_its_relays_before_its_roster_and_frees_their_flight_when_the_roster_raises(self):
+        """Round 6 of fork PR #897 (the reviewer's verifier at the fifty-eighth commit): build_exchange_request lists its
+        relays BEFORE it builds its roster, as the response builder (peer_exchange_handle) does, so every relay the request
+        carries was parked before the listing its roster reads. Here a session starts and mails while the request is being
+        built, after its first step and before its relays are listed (_relays_for, wrapped once): the request carries the
+        mail and its answered roster names the sender. Built first, the roster read the listing before the session started
+        and omitted it while the request carried its mail, and the far side's mirror, the dialer's row answered, presumed the
+        live sender closed (the composition through the real reader: tests/test_dead_session_staleness.py
+        ReaderFollowsTheWriter
+        test_a_request_lists_its_relays_before_its_roster_so_a_session_whose_mail_it_carries_is_in_its_roster). The order
+        puts the relays in flight before the roster's build, so a build that raises frees that flight, the response
+        builder's shape: a record left in a flight no outcome ends is refused to its sender's recall for the life of the
+        process."""
+        host, new = "TESTHOST", "a7a7a7a7-0001-4000-8000-000000000001"
+        pm.STATE.mkdir(parents=True, exist_ok=True)
+        _set_live([{"id": ALPHA, "name": "web"}])
+        mid = _fresh_mid()
+        self.addCleanup(lambda: (pm.OUTBOX / host / (mid + ".json")).unlink(missing_ok=True))
+        real = pm._relays_for
+
+        def start_then_list(h, flight=None):
+            pm._relays_for = real
+            _set_live([{"id": ALPHA, "name": "web"}, {"id": new, "name": "api"}])   # a session starts on this host...
+            pm.outbox_put(host, {"mid": mid, "to": "web", "frm": "api", "frm_id": new, "body": "the schema is frozen",
+                                 "kind": "coordinate", "t": 1})                     # ...and mails a far session
+            return real(h, flight)
+        pm._relays_for = start_then_list
+        self.addCleanup(setattr, pm, "_relays_for", real)
+        flight = []
+        req = pm.build_exchange_request(host, wait=False, flight=flight)
+        self.assertEqual(([m["mid"] for m in req["relays"]], sorted(a["id"] for a in req["presence"]), req["presenceAnswered"]),
+                         ([mid], sorted([ALPHA, new]), True),
+                         "THE ORDER: the request carries the new session's mail and its answered roster names the sender (a "
+                         "roster built before the relays were listed omits it)")
+        self.assertEqual(len(flight), 1, "the listing registered the relays' flight")
+        pm._flight_done(host, flight[0], carried=False)
+        saved = pm.presence_payload
+
+        def roster_fails(exclude_host):
+            raise RuntimeError("the roster build failed")
+        pm.presence_payload = roster_fails
+        self.addCleanup(setattr, pm, "presence_payload", saved)
+        flight = []
+        with self.assertRaises(RuntimeError):
+            pm.build_exchange_request(host, wait=False, flight=flight)
+        self.assertEqual((len(flight), pm._inflight.get(host) or {}), (1, {}),
+                         "the relays were listed, their flight registered, and the roster build that raised after it freed "
+                         "that flight: nothing is left in flight with no outcome to end it")
+
 
 class QuarantineApproveHonesty(_RelayBase):
     """The approve arm shares this round's diseases (2026-09-01): it paid TWO kernel fetches (its
@@ -375,7 +454,7 @@ class QuarantineApproveHonesty(_RelayBase):
 
     def test_kernel_client_cap_matches_the_pair(self):
         src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
-        self.assertIn('HTTPConnection("127.0.0.1", BUS_PORT, timeout=20)', src,
+        self.assertIn('HTTPConnection("127.0.0.1", _bus_port(), timeout=20)', src,   # the dial reads the bus's port record (2026-09-18)
                       "the client half of the approve budget pair — the halves move together")
 
 
@@ -428,6 +507,7 @@ class QuarantineApproveIsIdStrict(_RelayBase):
 
     def setUp(self):
         super().setUp()
+        pm._inbound_links.clear()
         pm.PEERS["TESTHOST"] = {"port": 1, "up": True, "trust": "directed"}
         self.delivered = []
         saved = pm.deliver

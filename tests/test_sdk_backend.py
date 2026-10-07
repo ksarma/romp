@@ -3,7 +3,7 @@
 
 Two layers:
   * Pure translation logic (AskUserQuestion <-> the existing askLive picker shape,
-    state/registry files) is tested WITHOUT the SDK, so it runs in CI.
+    state/registry files) is tested WITHOUT the SDK, so it runs wherever pytest does, package or not.
   * The async runner + the can_use_tool round-trip is tested with a FAKE
     ClaudeSDKClient (monkeypatched in), skipped where claude_agent_sdk is absent.
     This exercises the headline path: a user turn -> the model calls
@@ -44,6 +44,7 @@ from pathlib import Path
 from unittest import mock
 from romp_load import load_source
 from unittest import mock
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -611,10 +612,14 @@ class LiveTail(unittest.TestCase):
         # flagged); the loop stamps nothing of its own
         import inspect
         src = inspect.getsource(sb.SdkBackend._options)
-        self.assertIn("fast_opt = sess.fast_opt", src)
+        # the one read is the effective ask (upstream PR 1827, 2026-09-17: the session's own ask, or the machine's
+        # Always fast switch), with the switch file read before the hold, so the file and the stamp still share it
+        self.assertIn("fast_opt = sess.fast_effective(switch_on=always_fast)", src)
         self.assertIn("fast=fast_opt,", src)
         self.assertIn("sess._fast_unlocked = fast_opt", src)
-        self.assertNotIn("self._fast_unlocked = self.fast_opt", inspect.getsource(sb.SdkSession._amain))
+        amain = inspect.getsource(sb.SdkSession._amain)
+        self.assertNotIn("self._fast_unlocked = self.fast_opt", amain)
+        self.assertNotIn("self._fast_unlocked = self.fast_effective()", amain)
 
     def test_set_fast_refuses_bad_values_and_unknown_sids(self):
         d = tempfile.mkdtemp()
@@ -2272,9 +2277,10 @@ class AskArmedBeforePresent(unittest.TestCase):
     await must already find the future armed — or it is reported lost and the coroutine waits forever.
     Production dodges the gap by microseconds (only the kernel's click handlers answer, from another
     thread); an answer delivered synchronously INSIDE the presentation callback hits it every time. That
-    is exactly how the SDK-gated round-trip classes below drive their asks, and CI does not install the
-    SDK, so the hang was never seen there. Pinned WITHOUT the SDK: _ask_one needs none, so the standard
-    runner and CI exercise the invariant. The answer rides on_ask -> resolve_ask, the kernel's own path."""
+    is exactly how the SDK-gated round-trip classes below drive their asks; CI ran none of them until every
+    Python matrix cell installed the SDK (#872), so the hang was never seen there, and they run in every cell
+    now. Pinned WITHOUT the SDK: _ask_one needs none, so the standard runner and CI exercise the invariant.
+    The answer rides on_ask -> resolve_ask, the kernel's own path."""
 
     SID = "11111111-2222-3333-4444-555555555555"
 
@@ -3944,6 +3950,18 @@ class OptionsAssembly(unittest.TestCase):
                          "no cap → the flag changes only the display; nothing to announce")
 
 
+# One retry storm as the CLI's api_retry frames report it, field for field (the values are invented):
+# attempt / max_retries / retry_delay_ms / error_status / error, where `error` is a category string from the
+# CLI's own classifier and error_status is null for a connection error that got no HTTP response. First a
+# 529, then a connection error on the next attempt.
+WIRE_RETRY_FRAMES = (
+    {"attempt": 4, "max_retries": 10, "retry_delay_ms": 2000, "error_status": 529, "error": "overloaded",
+     "uuid": "11111111-2222-3333-4444-0000000000a4", "session_id": "11111111-2222-3333-4444-555555555555"},
+    {"attempt": 5, "max_retries": 10, "retry_delay_ms": 4000, "error_status": None, "error": "unknown",
+     "uuid": "11111111-2222-3333-4444-0000000000a5", "session_id": "11111111-2222-3333-4444-555555555555"},
+)
+
+
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class FastModeReportedState(unittest.TestCase):
     """What fast mode is DOING comes from the CLI's init message, not from what romp asked for. The two
@@ -3960,6 +3978,15 @@ class FastModeReportedState(unittest.TestCase):
 
     def tearDown(self):
         import asyncio
+        # The refresh the init branch parked on the loop never ran; cancel it and run the loop once so the task
+        # closes its coroutine, instead of leaving it to the collector, which warned "coroutine ... was never
+        # awaited" once per test (seven per run in every CI cell's warnings summary since the cells install the
+        # SDK, 2026-09-20). Cancelling before the first step never runs the coroutine's body.
+        pending = asyncio.all_tasks(self._loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         asyncio.set_event_loop(None)
         self._loop.close()
 
@@ -4050,20 +4077,19 @@ class ApiRetryState(unittest.TestCase):
     silent 'working', so a stall reads as an API issue (the user 2026-06-23). Cleared on real output."""
 
     def setUp(self):
-        # the settle (a ResultMessage) schedules the context refresh on the CURRENT loop, as it does inside the
-        # session's own loop in production; give this thread one to schedule onto (never run to completion: the
-        # coroutine is irrelevant here) so _on_message can be driven synchronously. Without it Python 3.12's
-        # get_event_loop raises "no current event loop" once any earlier set_event_loop in the process
-        # (FastModeReportedState's tearDown, an asyncio.run) has marked the policy, so the bare-payload case
-        # below was red whenever the SDK was importable (2026-09-16).
+        # A turn-end ResultMessage takes the real settle branch, which schedules the context refresh with
+        # asyncio.ensure_future on the CURRENT event loop (the session's own loop in production). This
+        # thread gets one to schedule onto; it is never run, so the refresh never executes and _on_message
+        # can be driven synchronously. Without it, once any earlier asyncio.run in the process has marked
+        # the policy, get_event_loop raises "no current event loop" on the main thread and the bare-payload
+        # case below is red whenever this class runs.
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
     def tearDown(self):
         pending = asyncio.all_tasks(self._loop)
         for t in pending:
-            t.cancel()   # cancelled before its first step: the coroutine never runs, and the loop closes with
-            #              nothing pending (no destroyed-task warning at collection)
+            t.cancel()   # never stepped, so the refresh coroutine does not run
         if pending:
             self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         asyncio.set_event_loop(None)
@@ -4127,29 +4153,66 @@ class ApiRetryState(unittest.TestCase):
         self.assertIsNone(sess.snapshot()["retryInfo"])
 
     def test_the_installed_clis_wire_frame_fills_the_attempt_and_the_error(self):
-        # the frame the CLI itself emits (its embedded SDKAPIRetryMessage schema, read from the 2.1.266 binary):
-        # attempt / max_retries / retry_delay_ms / error_status (null for a connection error) / error (a category
-        # STRING such as "overloaded" or "rate_limit") / no_response (optional). Until 2026-09-16 the detail read
-        # neither `attempt` (the local tally stood in) nor the string `error` (the card's reason stayed blank on
-        # every live storm); tests/test_api_health.py's ring read both all along.
+        # The frame the CLI emits for a retry attempt, field for field (WIRE_RETRY_FRAMES). The detail read
+        # neither `attempt` (the local per-frame tally stood in for it) nor the string `error` (the reason
+        # stayed blank), while the API-health ring (_ah_note_retry) read error_status and the string `error`
+        # from the same frame all along.
         d = tempfile.mkdtemp()
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
         sess = sb.SdkSession(be, {"sid": "r4", "name": "n", "cwd": d, "mode": "acceptEdits"})
         sess.inflight = 1
-        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 4, "max_retries": 10, "retry_delay_ms": 2000,
-                                                          "error_status": 529, "error": "overloaded"}),
+        overloaded, connection = WIRE_RETRY_FRAMES
+        sess._on_message(_sdk.SystemMessage("api_retry", dict(overloaded)),
                          _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
         info = sess.snapshot()["retryInfo"]
-        self.assertEqual(info["attempt"], 4, "the CLI's own attempt number, not the local tally (1 here)")
+        self.assertEqual(info["attempt"], 4, "the CLI's attempt number, not the local tally (1 here)")
         self.assertEqual((info["max"], info["status"]), (10, 529))
-        self.assertEqual(info["error"], "overloaded", "the wire's category string is the card's reason")
-        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 5, "max_retries": 10, "retry_delay_ms": 4000,
-                                                          "error_status": None, "error": "unknown"}),
+        self.assertEqual(info["error"], "overloaded", "the wire's category string is the reason shown")
+        sess._on_message(_sdk.SystemMessage("api_retry", dict(connection)),
                          _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
         info = sess.snapshot()["retryInfo"]
         self.assertEqual(info["attempt"], 5)
         self.assertIsNone(info["status"], "a connection error has no HTTP status: null on the wire, None here")
         self.assertEqual(info["error"], "unknown")
+
+
+class ApiRetryWireFrame(unittest.TestCase):
+    """The same frames through the same handler as ApiRetryState's wire-frame case, with a duck-typed frame
+    class in place of the SDK's SystemMessage (the handler matches on the classes it is handed), so the read
+    is checked where claude_agent_sdk is absent too, CI included."""
+
+    class _Sys:
+        def __init__(self, subtype, data): self.subtype, self.data = subtype, data
+
+    def _session(self, sid):
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sess = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": d, "mode": "acceptEdits"})
+        sess.inflight = 1
+        return sess
+
+    def _feed(self, sess, frame):
+        sess._on_message(self._Sys("api_retry", dict(frame)), _AssistantMessage, _ResultMessage, self._Sys)
+        return sess.snapshot()["retryInfo"]
+
+    def test_the_wire_frame_fills_the_attempt_and_the_error_without_the_sdk(self):
+        sess = self._session("r5")
+        for frame in WIRE_RETRY_FRAMES:
+            info = self._feed(sess, frame)
+            self.assertEqual(info["attempt"], frame["attempt"], "the CLI's attempt number, not the local tally")
+            self.assertEqual(info["max"], frame["max_retries"])
+            self.assertEqual(info["status"], frame["error_status"])
+            self.assertEqual(info["error"], frame["error"], "the wire's category string is the reason shown")
+
+    def test_the_wires_name_wins_over_the_other_spellings_of_the_same_field(self):
+        # Each read accepts three spellings of its field (the wire's, the transcript twin's, an old guess) and
+        # takes the first present. No frame the CLI sends carries two of them, so a frame built to carry them
+        # all with different values pins the precedence the reads promise: the wire's name leads.
+        mixed = dict(WIRE_RETRY_FRAMES[0], retry_attempt=7, retryAttempt=8, number=9,
+                     display_message="529 Overloaded", message="raw envelope")
+        info = self._feed(self._session("r6"), mixed)
+        self.assertEqual(info["attempt"], 4, "`attempt` before retry_attempt / retryAttempt / number")
+        self.assertEqual(info["error"], "overloaded", "the string `error` before display_message / message")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
@@ -4187,8 +4250,10 @@ class InterruptSettlesStall(unittest.TestCase):
                 self.interrupted = True
 
             async def receive_messages(self):
+                # the turn's init, streamed once the turn is read, as the CLI does (one init per turn:
+                # _turn_frame in kernel/sdk_backend.py); this fake streamed it at stream open until 2026-09-26
+                await self._turnq.get()              # read the turn romp fed (inflight went to 1 at the feed)...
                 yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
-                await self._turnq.get()              # consume the turn → inflight goes to 1...
                 while True:
                     await _aio.sleep(3600)            # ...then STALL forever (never a ResultMessage)
 
@@ -4404,12 +4469,17 @@ class PendingQueueLoop(unittest.TestCase):
             async def set_permission_mode(self, mode): pass
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {
-                    "model": "claude-x", "permissionMode": "acceptEdits",
-                    "session_id": (self.options.session_id or "fsid")})
+                # one init per turn, streamed once the turn is read, as the CLI does (_turn_frame in
+                # kernel/sdk_backend.py). A single init at stream open made
+                # test_second_turn_forwarded_immediately_mid_flight a flake (2026-09-25): when that init
+                # reached romp before A was fed, romp counted it as a turn the CLI started on its own, A
+                # went in mid-turn, and nothing released A's hold before A's result, so B stayed queued.
                 while True:
                     turn = await self._turnq.get()
                     GatedClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {
+                        "model": "claude-x", "permissionMode": "acceptEdits",
+                        "session_id": (self.options.session_id or "fsid")})
                     while not GatedClient.release.is_set():
                         await _aio.sleep(0.01)            # hold the turn 'in flight' until released
                     GatedClient.release.clear()
@@ -4451,6 +4521,49 @@ class PendingQueueLoop(unittest.TestCase):
         self.assertTrue(self._wait(lambda: self.Gated.received == ["A", "B"]),
                         "B is delivered after A, in order")
 
+    def test_second_turn_forwarded_immediately_when_the_first_is_sent_after_connect(self):
+        # The test above with the order that made it flake forced (2026-09-25). The first send starts the
+        # session, so A's enqueue is what waits: until the receive loop has handled every frame the stream
+        # sends before a turn and waits on the client's turn queue. With the fake's old single init at
+        # stream open, this order failed every time: the init reached romp before A and read as a turn the
+        # CLI started on its own (inflight 0 to 1), so A went in mid-turn, its hold waited for a take,
+        # nothing streamed until A's release, and B stayed queued. The CLI streams an init for each turn it
+        # reads (_turn_frame in kernel/sdk_backend.py), and so does GatedClient now. GatedClient is built
+        # fresh in each setUp, so the __init__ patch ends with the test.
+        waiting = threading.Event()   # set when the receive loop first waits on the client for a turn
+
+        class SignallingQueue(asyncio.Queue):
+            async def get(self):
+                waiting.set()
+                return await super().get()
+
+        orig_init = self.Gated.__init__
+
+        def __init__(gself, *a, **k):
+            orig_init(gself, *a, **k)
+            gself._turnq = SignallingQueue()
+
+        self.Gated.__init__ = __init__
+        orig_enqueue = sb.SdkSession.enqueue
+        waited = []
+
+        def enqueue(s, text, *a, **k):
+            if text == "A" and not waited:
+                waited.append(waiting.wait(6.0))
+            return orig_enqueue(s, text, *a, **k)
+
+        sid = self.backend.spawn("q", self.d)
+        with mock.patch.object(sb.SdkSession, "enqueue", enqueue):
+            self.assertTrue(self.backend.send(sid, "A"))
+        self.assertEqual(waited, [True], "A's enqueue never waited for the receive loop to wait on the client")
+        self.assertTrue(self._wait(lambda: self.Gated.received == ["A"]), "A never reached the SDK")
+        self.assertTrue(self.backend.send(sid, "B"))
+        self.assertTrue(self._wait(lambda: self.backend.pending_queued(sid) == []),
+                        "B should be forwarded to the SDK at once, not held in romp's queue")
+        self.Gated.release.set()
+        self.assertTrue(self._wait(lambda: self.Gated.received == ["A", "B"]),
+                        "B is delivered after A, in order")
+
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class InterruptWithQueue(unittest.TestCase):
@@ -4472,6 +4585,7 @@ class InterruptWithQueue(unittest.TestCase):
         class StallClient:
             instances = []
             received = []                  # turn texts actually fed to the SDK, in order
+            fed = []                       # turn texts romp's input stream handed to query(), in order
 
             def __init__(self, options=None, transport=None):
                 self.options = options
@@ -4484,22 +4598,28 @@ class InterruptWithQueue(unittest.TestCase):
 
             async def query(self, prompt, session_id="default"):
                 async for turn in prompt:
+                    StallClient.fed.append(turn["message"]["content"][0]["text"])
                     await self._turnq.put(turn)
 
             async def interrupt(self):
                 self.interrupted = True    # interrupt sent, but the wedged turn never produces a result
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
+                # one init per turn, streamed once the turn is read, as the CLI does (_turn_frame in
+                # kernel/sdk_backend.py). A's init releases A's one-fed-text hold, so only the interrupt gate
+                # can hold B; the forced-order test below says what an init at stream open let through
+                # (2026-09-26).
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
                     await _aio.sleep(3600)           # stall this turn forever (never a ResultMessage)
 
         _sdk.ClaudeSDKClient = StallClient
         self.Fake = StallClient
         StallClient.instances = []
         StallClient.received = []
+        StallClient.fed = []
         self.backend = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
 
     def tearDown(self):
@@ -4533,6 +4653,51 @@ class InterruptWithQueue(unittest.TestCase):
         self.assertEqual(self.Fake.received, ["A"], "B was NOT fed to the SDK while interrupted")
         self.assertEqual(self.backend.live_sessions().get(sid, {}).get("state"), "waiting",
                          "still 'waiting' — inflight held, not double-counted")
+
+    def test_interrupt_holds_a_turn_queued_after_it_when_the_first_is_sent_after_connect(self):
+        # The test above with A's enqueue made to wait until the receive loop waits on the client for a turn,
+        # the same forcing as PendingQueueLoop's forced-order test (2026-09-26). While StallClient streamed
+        # one init at stream open, this order passed with the interrupt gate in inputs() removed: the init
+        # reached romp before A and read as a turn the CLI started on its own, A went in mid-turn, nothing
+        # streamed after it, and A's one-fed-text hold kept B queued in the gate's place. StallClient is built
+        # fresh in each setUp, so the __init__ patch ends with the test.
+        waiting = threading.Event()   # set when the receive loop first waits on the client for a turn
+
+        class SignallingQueue(asyncio.Queue):
+            async def get(self):
+                waiting.set()
+                return await super().get()
+
+        orig_init = self.Fake.__init__
+
+        def __init__(fself, *a, **k):
+            orig_init(fself, *a, **k)
+            fself._turnq = SignallingQueue()
+
+        self.Fake.__init__ = __init__
+        orig_enqueue = sb.SdkSession.enqueue
+        waited = []
+
+        def enqueue(s, text, *a, **k):
+            if text == "A" and not waited:
+                waited.append(waiting.wait(6.0))
+            return orig_enqueue(s, text, *a, **k)
+
+        sid = self.backend.spawn("x", self.d)
+        with mock.patch.object(sb.SdkSession, "enqueue", enqueue):
+            self.backend.send(sid, "A")
+        self.assertEqual(waited, [True], "A's enqueue never waited for the receive loop to wait on the client")
+        self.assertTrue(self._wait(lambda: self.Fake.received == ["A"]), "A never reached the SDK")
+        self.assertTrue(self.backend.interrupt(sid))
+        self.assertTrue(self._wait(lambda: self.backend.live_sessions().get(sid, {}).get("state") == "waiting"),
+                        "the interrupted turn reads 'waiting'")
+        self.backend.send(sid, "B")
+        time.sleep(0.3)
+        self.assertEqual(self.backend.pending_queued(sid), ["B"],
+                         "B stays queued behind the interrupted turn")
+        self.assertEqual(self.Fake.fed, ["A"], "B was not fed to the SDK while interrupted")
+        self.assertEqual(self.backend.live_sessions().get(sid, {}).get("state"), "waiting",
+                         "the session still reads 'waiting' after B was sent")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
@@ -4576,8 +4741,8 @@ class ReconnectReconcilesInflight(unittest.TestCase):
             async def receive_messages(self):
                 # the CLI's init opens a TURN (one per turn, none on a turn-less connect: _on_message's init
                 # branch says so), so the fake streams it with the first dequeued turn. Streamed at connect, the
-                # SECOND client's init read as a turn the CLI started (a turn frame at inflight 0 counts as one
-                # since 2026-09-08) and held inflight at 1: red whenever the SDK was importable (2026-09-16).
+                # SECOND client's init read as a turn the CLI started (a turn frame at inflight 0 counts as one,
+                # the CLI-owned-turn count) and held inflight at 1 for the stall's whole life.
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
@@ -5263,10 +5428,12 @@ class UpdateRegDroppingUnreadable(unittest.TestCase):
 def _sdk_module_for_the_road_pins():
     """The module the connect loop imports ClaudeSDKClient from, and whether this call installed it: the installed SDK when
     there is one, else a stand-in with an inert class for any name the backend imports. The road pins stub the transport and
-    fake the client, so they need no package; CI installs none, and a gate on the package would let a re-key on the pre-read
-    go green on every Python (the follow-up's item a). The stand-in lives in sys.modules only for the test that asked (its
-    tearDown removes it): left behind, it made every later import of the SDK succeed with inert classes, and the kernel's own
-    wiring took roads it never takes without the package (two shared-parse tests red under the whole suite)."""
+    fake the client, so they need no package; the stand-in is for an interpreter without one (a box venv without the SDK, the
+    served-pages job's served-page pytest step; every Python matrix cell installs it since #872), and a gate on the package
+    would let a re-key on the pre-read go green wherever the package is absent (the follow-up's item a). The stand-in lives in
+    sys.modules only for the test that asked (its tearDown removes it): left behind, it made every later import of the SDK
+    succeed with inert classes, and the kernel's own wiring took roads it never takes without the package (two shared-parse
+    tests red under the whole suite)."""
     if _HAVE_SDK:
         return _sdk, False
     import types
@@ -5591,6 +5758,19 @@ class PushSessionCallback(unittest.TestCase):
         be._push_session(self.SID)
         self.assertTrue(done.wait(5), "the callback fires, on its own thread")
         self.assertEqual(got, [self.SID])
+
+    def test_the_hand_off_to_the_cli_pushes_its_one_session(self):
+        # The pop in inputs() is the moment a queued copy leaves _pending for the CLI's stdin, where no recall
+        # exists: the chat's bubble must flip from "sending… ✎" to "taken by the session" NOW, not at the next
+        # full cycle (the user 2026-09-19: the ✎ stayed for the whole wait and answered "too late"). Source-
+        # pinned like the other inputs() rules (a nested closure); the callback's mechanics are the tests here.
+        import inspect
+        src = inspect.getsource(sb.SdkSession)
+        i = src.index("self._inflight_texts.append(item)")
+        k = src.index('yield {"type": "user",', i)
+        j = src.find("self.backend._push_session(self.sid)", i, k)
+        self.assertGreater(j, 0, "the targeted push sits between the pop and the yield that hands the text to the CLI")
+        self.assertIn("self.backend._poke()", src[i:j], "…after the poke that wakes the fleet cycle")
 
     def test_without_the_callback_it_falls_back_to_the_pusher_wake(self):
         # an older kernel (or a test) that didn't wire push_session still gets the pre-existing
@@ -5956,7 +6136,8 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             k_done.set()
 
         lt, kt = threading.Thread(target=run_l, name="L"), threading.Thread(target=run_k, name="K")
-        lt.start()
+        self.addCleanup(join_started, resume, (lt, kt), 5)   # on every exit path (T282): resume the parked loop side (an assertion
+        lt.start()                                           # between the two starts fails with L parked on it), join what started
         self.assertTrue(parked.wait(5), "the loop side never reached the parked read")
         kt.start()
         deadline = time.monotonic() + 5
@@ -6496,7 +6677,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         reg = sb.read_reg(s.backend.state_dir, self.SID)
         self.assertEqual(reg.get("auth"), "login"); self.assertFalse(reg.get("authPending"))
         self.assertEqual(s._auth_pending, "")
-        self.assertEqual(self._seed(s).get("auth"), "login", "the seed follows the unchanged pick too")
+        self.assertEqual(self._seed(s).get("auth"), "login", "sdk-defaults' auth follows the unchanged pick too (the record of the last pick)")
         chips = [a for a in s.backend._live.get(self.SID, {}).values() if a.get("command") == "/auth"]
         self.assertEqual(len(chips), 1)
         self.assertTrue(any("auth (web): set to login; unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
@@ -8954,6 +9135,9 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
                                  #                                 and since round 1 of the review the attach landing) asks as
                                  #                                 set_auth asks, its pick named, so a request that raced the
                                  #                                 landing is served by the landed process the same way
+                                 "_try_switch_reconnect": [None],   # upstream's Always fast / Retry upgrades switch (PR 1827,
+                                 #                                    the 2026-10-02 fold): a machine switch's reconnect at a quiet
+                                 #                                    moment, a mechanism's reconnect, no pick
                                  "_ask_parked_pick": ["auth"]})  # the picked closer's ask at the CLI's first init (round 5 of the
         #                                                          reviewer's review, 2026-09-19): a pick the init finds unserved with
         #                                                          no arm standing is asked as set_auth asks, its pick named
@@ -11317,15 +11501,104 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.be._reg_lock = _Gate()
         self.addCleanup(setattr, self.be, "_reg_lock", real_lock)
         real_lock.acquire()
+        held = [True]                        # the TEST'S hold on real_lock; cleared by the body's release below
         t = threading.Thread(target=s._mirror_auth_pending, daemon=True)
+
+        def end():                           # on every exit path (T282): a failed assertion below would leave the mirror parked
+            if held[0]:                      # on the lock this test holds; release the test's own hold, then a bounded join.
+                held[0] = False              # Only the test's: locked() cannot say whose hold it is, and on the road where the
+                real_lock.release()          # mirror holds the lock at the failure a release here took the MIRROR's hold and
+            t.join(5)                        # made its __exit__ raise in the daemon thread (round 2 of PR 891's review)
+        self.addCleanup(end)
         t.start()
         self.assertTrue(inside.wait(5), "the writer reached the reg lock")
         with s._hold_write():
             s._auth_pending = ""                                     # the landing clears the ask while the mirror waits
         real_lock.release()
+        held[0] = False
         t.join(5)
         self.assertFalse(t.is_alive())
         self.assertFalse(self._reg(s).get("authPending"), "the mirror recorded the pending as it stood at the write")
+
+    def test_a_body_that_fails_while_the_mirror_holds_the_lock_leaves_the_mirrors_hold_to_the_mirror(self):
+        """The cleanup above, run rather than read on its failure road (all-5 of round 2 of PR 891's review, 2026-09-22). It
+        used to release real_lock whenever locked(), but locked() does not say WHOSE hold it is: where the test has released
+        its hold and the mirror holds the lock inside the reg write when the body fails, that released the MIRROR's hold, and
+        the mirror's `with` then raised RuntimeError("release unlocked lock") in the daemon thread, outside the test's result.
+        The cleanup now tracks the test's own hold. A nested case with the same shape (a lock; a gate that signals when the
+        worker is about to take it; a worker holding it through its write; a body that releases its own hold, waits for the
+        worker to hold, and fails) runs both cleanups. The worker's write lasts until the cleanup has decided (`decided`, the
+        plant's stand-in for the write's duration, set after the release decision and before the join), so the road is
+        deterministic. With the fixed cleanup the run records the planted failure, no error, nothing raised in the worker's
+        thread (threading.excepthook swapped for the run: the hook is process-wide, so it records only an exception whose
+        thread is the plant's worker and hands any other thread's to the hook it replaced) and the lock free once the worker
+        is done; with the old shape the same failure and a RuntimeError from the worker's thread."""
+        def case(track_own_hold):
+            raised, state = [], {}
+
+            class _Case(unittest.TestCase):
+                def test_fails(self):
+                    real_lock = threading.Lock()
+                    state["lock"] = real_lock
+                    inside, holding, decided = threading.Event(), threading.Event(), threading.Event()
+
+                    class _Gate:
+                        def __enter__(self):
+                            inside.set()
+                            return real_lock.__enter__()
+
+                        def __exit__(self, *a):
+                            return real_lock.__exit__(*a)
+
+                    def mirror():
+                        with _Gate():
+                            holding.set()
+                            decided.wait(5)                          # the write in flight until the cleanup has decided
+                    real_lock.acquire()
+                    held = [True]
+                    t = threading.Thread(target=mirror, daemon=True)
+                    state["worker"] = t
+
+                    def end():
+                        if track_own_hold:
+                            if held[0]:
+                                held[0] = False
+                                real_lock.release()
+                        elif real_lock.locked():                     # the old shape: whoever holds it
+                            real_lock.release()
+                        decided.set()
+                        t.join(5)
+                    self.addCleanup(end)
+                    t.start()
+                    self.assertTrue(inside.wait(5), "the worker reached the lock")
+                    real_lock.release()
+                    held[0] = False
+                    self.assertTrue(holding.wait(5), "the worker took the lock")
+                    self.fail("planted: the body fails while the mirror holds the lock")
+
+            saved = threading.excepthook
+
+            def hook(args):                                          # process-wide while the case runs: the plant's worker's
+                if args.thread is state.get("worker"):               # exceptions are recorded, any other thread's go to the
+                    raised.append("%s: %s" % (args.exc_type.__name__, args.exc_value))     # hook that was installed
+                else:
+                    saved(args)
+            threading.excepthook = hook
+            try:
+                res = unittest.TestResult()
+                _Case("test_fails").run(res)
+            finally:
+                threading.excepthook = saved
+            return res, raised, state["lock"]
+
+        res, raised, lock = case(track_own_hold=True)
+        self.assertEqual((len(res.failures), res.errors, raised), (1, [], []), "the planted failure and nothing beside it: %r %r %r" % (res.failures, res.errors, raised))
+        self.assertIn("planted", res.failures[0][1])
+        self.assertFalse(lock.locked(), "the mirror released its own hold once its write was done")
+        res, raised, lock = case(track_own_hold=False)
+        self.assertEqual((len(res.failures), res.errors), (1, []), (res.failures, res.errors))
+        self.assertEqual(raised, ["RuntimeError: release unlocked lock"], "the old cleanup released the mirror's hold; the mirror's __exit__ raised in its thread")
+        self.assertFalse(lock.locked())
 
     def test_the_reference_says_a_default_change_reconnects_its_followers(self):
         doc = " ".join(open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read().split())
@@ -11333,15 +11606,13 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "changing the machine default reconnects every session following it that runs on the other side, "
                       "at its next quiet moment (the same pending dots a per-session pick shows), and those sessions "
                       "keep following the default (no pick is written for them).", doc)
-        # the seed and the picker's preselection read the remembered pick as before this change: making them read only the
-        # explicit default changes which account new sessions bill, and is split out into its own PR (the reviewer's round
-        # 2, 2026-09-19; its fresh-5), so the reference says what this branch does
-        self.assertIn("Until the default is set here, the last per-session pick seeds it (as a model or effort pick does); once "
-                      "set here, a per-session pick is about that session alone and moves no default.", doc)
-        self.assertIn("A new session defaults to the last pick made anywhere, and before any pick to the key when a helper is "
-                      "configured.", doc)
-        self.assertNotIn("preselects the machine default", doc)
-        self.assertNotIn("seeds no new session", doc)
+        self.assertIn("the new-session picker preselects the machine default (the explicit one, else the rule that holds), "
+                      "and a session created with no pick of its own follows the machine default, not the last pick.", doc)
+        # round 2 of the review: the older sentence in the same section said the opposite (the last pick made anywhere)
+        self.assertNotIn("defaults to the last pick made anywhere", doc)
+        self.assertNotIn("A remembered key pick on a box", doc)
+        self.assertIn("A new session is preselected on the machine's explicit default when the box can bill it, else on the rule "
+                      "that holds without one: the key when a helper is configured, else the login.", doc)
         # round 1 of the reviewer's review (2026-09-18): the stagger and what a follower keeps through it (correctness-2,
         # kernel-3), the survivor's work at a re-attach (regression-1), the credential romp cannot move (regression-6), the
         # absent chat record (tests-6), and the new-session billing transition plus the seed's semantics (tests-2, fresh-1)
@@ -11400,8 +11671,31 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "write of the default.", doc)
         self.assertIn("A follower's move leaves no record in its chat: the pending dots are the only session-side signal and they "
                       "clear at the landing; the kernel log's per-session line is the durable record.", doc)
-        self.assertIn("A session created while a default stands, the explicit one or the last pick's remembered value, is seeded with "
-                      "it as a pick of its own and is not moved by a later change of the default", doc)
+        # round 1 of the review of fork PR #819 (2026-09-19; tests-1, correctness-1, kernel-2): the blast radius is stated for the
+        # class, with the helper as the discriminator and the stored-login shapes named, and the spawn's row for the moving cells
+        self.assertIn("a box whose last per-session pick was a login, the machine's own or a stored one, bills new sessions on the "
+                      "key from this kernel on when its settings carry an apiKeyHelper; with no helper, a remembered stored-login "
+                      "pick bills them on the machine's own login, or on whatever the CLI resolves by itself when no login is signed "
+                      "in either.", doc)
+        self.assertIn("A remembered key pick keeps the key and makes new sessions followers of the default.", doc)
+        self.assertIn("Where the account moves, or the remembered pick names a side this machine cannot bill, the spawn says so as a "
+                      "problem row on the new session, naming the pick, what the session bills and the Set default billing "
+                      "submenu; a repeat while the pick stands counts on the one ring entry.", doc)
+        self.assertNotIn("bills new sessions on the key from this kernel on, until a default is set here", doc)
+        self.assertIn("A session created while an explicit default stands is seeded with it as a pick of its own and is not moved "
+                      "by a later change of the default", doc)
+        # tests-8 of that round: the two rewritten paragraphs that carried no pin (the one-auth-box paragraph's set-aside
+        # sentence and the ROMP_EXPECTED_AUTH paragraph's), each beside the retired doctrine's absence, and the retired
+        # first-paragraph sentence's absence (its replacement alone was pinned, so the old sentence could return beside it)
+        self.assertIn("An explicit machine default that names the side this box cannot bill is set aside at spawn and the unpicked "
+                      "rule below decides instead, in both directions: an explicit login default on a machine with no login seeds "
+                      "new sessions on the API key when a helper is configured, exactly as an explicit key default on a helper-less "
+                      "machine falls to the login, and the fall is said once per process as a problem row.", doc)
+        self.assertNotIn("a remembered login pick on a machine with no login seeds", doc)
+        self.assertIn("An explicit API-key default on a box that no longer holds a key is set aside at spawn, so it seeds nothing "
+                      "(the per-init check still judges each landing against the default).", doc)
+        self.assertNotIn("An API-key value remembered from a box that no longer holds a key", doc)
+        self.assertNotIn("Until the default is set here, the last per-session pick seeds it", doc)
 
 
     def test_the_walk_touches_no_session_with_a_pick_of_its_own_even_one_whose_cli_runs_the_other_side(self):

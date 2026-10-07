@@ -32,7 +32,10 @@ was attributed to, beside the card the moved input changes:
     the other sessions' cards ship, the failure is counted (`failed`, cumulative; `failing`, the sessions whose build is
     failing now) and said once per (session, cause) episode on stderr and as a bell row, the session's previous cards
     are served when the memo holds a decodable entry (never memoized; an entry that no longer decodes is dropped), and
-    a build that serves or derives the session ends the episode, so a later fault is said anew.
+    a build that serves or derives the session ends the episode, so a later fault is said anew;
+  * a subagents root whose own lstat fails for a reason other than absence (a real EACCES) moves the subagents
+    component into the unreadable marker and out of it: the session derives once at each edge of the fault, and the
+    awaiting rows derived under the fault are never served once the root reads again (FeedEntryDerivedUnderARootFault).
 
 Harness: tests/test_payload_dedup_invariant.py's world (a hermetic state root the kernel's judge is rebound to,
 names/ entries and projects/<launch dir>/<sid>.jsonl transcripts discover finds, a fixed live map, a warm first
@@ -66,6 +69,8 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_feed_session_memo", os.path.join(BIN, "romp-kernel"))
 jd = km.jd                              # the kernel's judge: the one object build_feed reads stores through
+# A private copy of the SDK backend module: a backend over one board's own root (HostRegistryProgress._board_backend)
+sb = load_source("romp_sdk_backend_feed_session_memo", os.path.join(BIN, "romp_sdk_backend.py"))
 
 # This module's PRIVATE synthetic sids (never the shared 11111111-2222-... placeholder: see the docstring).
 # (a tuple, unpacked below: a session named after the demo's api service assigned a high-entropy string on its
@@ -73,6 +78,7 @@ jd = km.jd                              # the kernel's judge: the one object bui
 SIDS = ("5f3e2d1c-0b9a-4876-9543-210fedcba001", "5f3e2d1c-0b9a-4876-9543-210fedcba002",
         "5f3e2d1c-0b9a-4876-9543-210fedcba003")
 WEB, API, TESTS = SIDS
+DOCS = SIDS[0][:-3] + "004"             # a fourth synthetic sid for the transcript-less row case alone: no names entry, no transcript
 NAME_OF = {WEB: "web", API: "api", TESTS: "tests"}
 COLOR_OF = {WEB: "#1EA1EB", API: "#E67E22", TESTS: "#2ECC71"}
 GOAL_OF = {WEB: "wire the notes-api web client", API: "add the notes-api list endpoint",
@@ -120,10 +126,14 @@ def _reset_memo():
     with km._feed_memo_lock:
         km._feed_memo.clear()
         st = km._FEED_MEMO_STATS
-        for k in ("hit", "miss", "evict", "derived", "entries", "bytes", "failed"):
-            st[k] = 0
+        for k in ("hit", "miss", "evict", "derived", "entries", "bytes", "failed", "coldLive", "coldFlip"):
+            if k in st:                           # zero what the kernel defines, never plant a key: an unconditional write
+                st[k] = 0                         # seeded coldLive/coldFlip into a kernel without them, and the exact
+                #                                   key-set pin below then passed on that kernel (review find, 2026-09-18)
         for k in st["miss_by"]:
             st["miss_by"][k] = 0
+        for k in st.get("row_by", {}):        # the row miss's per-position attribution (2026-09-18)
+            st["row_by"][k] = 0
         getattr(km, "_FEED_DERIVE_FAILED", {}).clear()
 
 
@@ -166,10 +176,7 @@ class _Board(unittest.TestCase):
             pdir = proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cdir)))
             pdir.mkdir(parents=True)
             tp = pdir / (sid + ".jsonl")
-            tp.write_text("\n".join(json.dumps(r) for r in [
-                uline(T0, "start on: " + GOAL_OF[sid], "u1"),
-                aline(T0 + 40, "On it.", "a1", "u1"),
-            ]) + "\n")
+            tp.write_text(self._transcript_body(sid))
             (names / sid).write_text("%s\t%s\t%s\n" % (NAME_OF[sid], cdir, COLOR_OF[sid]))
             self.tpath[sid], self.cdir[sid] = tp, cdir
         self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km._GLOBAL_CLAUDE_MD)
@@ -204,6 +211,14 @@ class _Board(unittest.TestCase):
         self.td.cleanup()
 
     # ── the world's writers ──
+    @staticmethod
+    def _transcript_body(sid):
+        """The fixture's two-exchange transcript: the opening request and the reply that ends the turn."""
+        return "\n".join(json.dumps(r) for r in [
+            uline(T0, "start on: " + GOAL_OF[sid], "u1"),
+            aline(T0 + 40, "On it.", "a1", "u1"),
+        ]) + "\n"
+
     @staticmethod
     def _row():
         return {"state": "idle", "since": NOW - 100, "model": "", "effort": "", "context": None,
@@ -251,13 +266,15 @@ class _Board(unittest.TestCase):
 
     def _delta(self, fn):
         """(the memo counters' movement over fn(), fn's result): hit / miss / derived / evict and the non-zero
-        miss attributions."""
+        miss attributions, by key component (miss_by) and, for a row miss, by the row position that moved (row_by,
+        2026-09-18)."""
         b = km._feed_memo_report()
-        bm = b["miss_by"]
+        bm, br = b["miss_by"], b.get("row_by", {})
         out = fn()
         a = km._feed_memo_report()
         d = {k: a[k] - b[k] for k in ("hit", "miss", "derived", "evict")}
         d["miss_by"] = {k: v - bm.get(k, 0) for k, v in a["miss_by"].items() if v - bm.get(k, 0)}
+        d["row_by"] = {k: v - br.get(k, 0) for k, v in a.get("row_by", {}).items() if v - br.get(k, 0)}
         return d, out
 
     @staticmethod
@@ -301,7 +318,9 @@ class ColdWarmAndFromScratch(_Board):
 
 
 class HostRegistryProgress(_Board):
-    """Host journal bookkeeping does not change cards; registry content still does."""
+    """Host journal bookkeeping and every registry field the feed never reads leave the cards cached; the fields it
+    reads still re-derive their session (the `reg` component is _feed_reg_sig's allow-list, 2026-09-18); a
+    transcript-less live row's registry-derived path moves its key under `transcript`, not `reg`."""
 
     @staticmethod
     def _publish_registry(sid, record):
@@ -311,6 +330,17 @@ class HostRegistryProgress(_Board):
         pending.write_text(json.dumps(record))
         os.replace(pending, path)
         return path
+
+    def _board_backend(self):
+        """An SdkBackend over THIS board's root, as the kernel builds its own over jd.STATE (_sdk_locked): the records
+        _publish_registry writes are that backend's sessions, as every record under STATE/sdk is the kernel backend's
+        in a running kernel. The kernel's own singleton (km._sdk_backend) cannot serve: it is built once per process,
+        at the first km._sdk() call, over the root jd.STATE names then, which is this board's only when this test is
+        the first in its process to reach km._sdk() (run alone, first on an xdist worker, or after only tests that
+        build no feed, such as TheClearedIndexMatchesTheFilter) and an earlier board test's removed root otherwise.
+        Hosts off in the root first: this hands SdkBackend a root the runner's conftest did not floor."""
+        (Path(jd.STATE) / "session-hosts").write_text("off")
+        return sb.SdkBackend(jd.STATE, "/bin/true", lambda *a, **k: None)
 
     def test_host_progress_replacements_keep_all_sessions_cached_and_match_a_fresh_build(self):
         record = {"sid": WEB, "name": "web", "spawnedAt": T0}
@@ -330,11 +360,12 @@ class HostRegistryProgress(_Board):
                                  "skipping host bookkeeping must preserve the real feed payload")
 
     def test_other_registry_content_invalidates_only_its_session(self):
+        """The two registry fields a derivation reads (the allow-list: the launch ledger and the CLI epoch) re-derive
+        their session once each and a from-scratch build agrees; a field nobody reads is the next test's case."""
         record = {"sid": API, "name": "api", "spawnedAt": T0}
         self._publish_registry(API, record)
         self._build()
-        for fields in ({"spawnedAt": T0 + 10}, {"bgLedger": {"worker": {"state": "running"}}},
-                       {"futureDisplayField": "changed"}):
+        for fields in ({"spawnedAt": T0 + 10}, {"bgLedger": [{"toolUseId": "toolu_9", "deadlineEpoch": T0 + 99}]}):
             with self.subTest(fields=fields):
                 record.update(fields)
                 self._publish_registry(API, record)
@@ -343,6 +374,97 @@ class HostRegistryProgress(_Board):
                 self.assertEqual(delta["miss_by"], {"reg": 1})
                 _reset_memo()
                 self.assertEqual(_dump(cached), _dump(self._build()))
+
+    def test_bookkeeping_the_feed_never_reads_keeps_every_session_cached_and_matches_a_fresh_build(self):
+        """The registry fields no feed derivation reads move no key: a result's cost watermark, the Stop hook's
+        settle stamp and opener, the echo mirror, the bgTasks mirror, the cron records, a pending ask, a field nobody
+        reads. The `reg` component takes the record's state and its allow-listed fields alone (_feed_reg_sig,
+        2026-09-18); before, it folded every field but the host journal's, and each of these writes re-derived the
+        session's cards though no card reads them. The queue mirror is the one field here this fork's key reads: its
+        `queued` component (keyed for the user-todo floor's gate, _user_todo_idle) asks the session's backend whether
+        a send is waiting, and for a session its backend is not running the answer is this mirror
+        (SdkBackend.pending_queued), so that write re-derives web once, under `queued` alone and never under `reg`.
+        The body cannot read the queue on this board: the user-todos switch is off, so _open_user_todos answers [] for
+        web and the body never asks the floor's gate (which also refuses a cold parse before its queue read), and the
+        payload equalities show the payload unchanged. The queue row therefore pins the key's unconditional `queued`
+        read: were the key narrowed to the switch or to open todos, its expectation would become {}. The board builds
+        with a backend over its own root (_board_backend) owning web, so that answer does not depend on which test ran
+        first in the process. Over the kernel's singleton this case was red whenever it was the first test in its
+        process to reach km._sdk() (run alone, first on an xdist worker, or after only tests that build no feed, such
+        as TheClearedIndexMatchesTheFilter) and green after any earlier board case (2026-09-30).
+        The two payload equalities are a regression belt, not the proof that the body reads none of these: this
+        board's backend runs no session and there is no live snapshot, so _bg_live_norm answers [] before it reaches
+        the ledger and the parse is cache-only, which makes the equalities hold whatever the body reads. The proof is
+        the census in tests/test_feed_memo_inputs.py (RegAllowList): every registry field read anywhere in the kernel
+        or the judge is classified, and the fields the feed's readers name ARE the allow-list."""
+        be = self._board_backend()
+        record = {"sid": WEB, "name": "web", "spawnedAt": T0}
+        self._publish_registry(WEB, record)
+        with mock.patch.object(km, "_sdk", lambda: be):
+            self.assertIs(km.Sessions.backend_for(WEB), be, "web's record is under that backend's root: it owns web")
+            self.assertFalse(km._backend_queued(WEB), "no send waiting before the queue mirror is written")
+            before = self._build()
+            for fields, moved in (({"costState": {"total": 1.25, "tokens": {"in": 10}, "t": T0 + 5}}, {}),
+                                  ({"lastStopAt": T0 + 6, "lastTurnOpener": "human"}, {}),
+                                  ({"echoes": [{"text": "hello", "t": T0 + 7}]}, {}),
+                                  ({"queue": ["next"], "queueMeta": [{"text": "next"}]}, {"queued": 1}),
+                                  ({"bgTasks": [{"toolUseId": "toolu_1", "desc": "a shell", "since": T0 + 8}]}, {}),
+                                  ({"sessionCrons": [], "sessionCronsAt": T0 + 9}, {}),
+                                  ({"pendingAsk": True}, {}),
+                                  ({"futureDisplayField": "changed"}, {})):
+                with self.subTest(fields=fields):
+                    record.update(fields)
+                    self._publish_registry(WEB, record)
+                    delta, cached = self._delta(self._build)
+                    n = sum(moved.values())
+                    self.assertEqual((delta["derived"], delta["hit"]), (n, 3 - n), delta)
+                    self.assertEqual(delta["miss_by"], moved)
+                    self.assertEqual(_dump(cached), _dump(before))
+                    _reset_memo()
+                    self.assertEqual(_dump(cached), _dump(self._build()),
+                                     "skipping bookkeeping the feed never reads must preserve the real payload")
+
+    def test_a_transcript_less_live_rows_registry_path_move_re_derives_it_once_under_transcript(self):
+        """A live SDK session discover cannot see yet (no names entry, no transcript on disk) takes its row from the
+        registry record through _sdk_sess: cwd and lastSid name its transcript path, name its name. `reg` no longer
+        folds those fields (the allow-list), so the path rides the `transcript` component as a string beside the
+        file's identity (2026-09-18): a cwd move between two directories with no transcript, the same identity (None)
+        at both, re-derives the session once under `transcript` alone, and a from-scratch build agrees. The SDK
+        backend singleton is built once per process over the first test's state root and never rebuilt, so its
+        `owns` (the record's existence under ITS root) cannot see this board's record; a thin proxy owns the sid and
+        hands every other call to the real backend, so the row-building path is the kernel's own."""
+        real = km._sdk()
+
+        class _Owner:
+            def owns(self, sid):
+                return sid == DOCS or bool(real and real.owns(sid))
+
+            def __getattr__(self, name):
+                return getattr(real, name)
+
+        dirs = [Path(self.td.name) / ("launch-docs-" + tag) for tag in ("a", "b")]
+        for d in dirs:
+            d.mkdir()
+        record = {"sid": DOCS, "name": "docs", "cwd": str(dirs[0]), "spawnedAt": T0}
+        self._publish_registry(DOCS, record)
+        self.live[DOCS] = self._row()
+        with mock.patch.object(km, "_sdk", lambda: _Owner()):
+            rows = {s["sid"]: s for s in km._alive_sessions(NOW, self.live)}
+            self.assertEqual(rows[DOCS]["path"], str(jd._proj_dir(str(dirs[0])) / (DOCS + ".jsonl")),
+                             "the row's path is the record's cwd resolved the way discover resolves a launch dir")
+            self.assertFalse(os.path.exists(rows[DOCS]["path"]), "no transcript at the first path")
+            self._build()                                     # the newcomer's first sight: adopted and derived cold
+            delta, _ = self._delta(self._build)
+            self.assertEqual((delta["derived"], delta["hit"]), (0, 4), delta)
+            self.assertEqual(delta["miss_by"], {})
+            record["cwd"] = str(dirs[1])
+            self._publish_registry(DOCS, record)
+            delta, cached = self._delta(self._build)
+            self.assertEqual((delta["derived"], delta["hit"]), (1, 3), delta)
+            self.assertEqual(delta["miss_by"], {"transcript": 1},
+                             "the path string moved under transcript; the identity is None at both and reg holds")
+            _reset_memo()
+            self.assertEqual(_dump(cached), _dump(self._build()))
 
     def test_missing_empty_object_and_unreadable_registry_remain_distinct(self):
         self._build()
@@ -397,11 +519,77 @@ class EveryInputMovesItsSessionOnly(_Board):
 
     def test_a_live_row_change(self):
         self._build()
-        self.live[API] = dict(self._row(), model="opus")        # the row's model badge changes
-        d, f = self._delta(self._build)
-        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.live[API] = dict(self._row(), state="working")     # the row's state: perm_state, the warm gate (a working row
+        d, f = self._delta(self._build)                          # with a cold parse asks for the background warm, which the
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)   # empty client set stands down)
         self.assertEqual(d["miss_by"], {"row": 1})
+        self.assertEqual(d["row_by"], {"state": 1}, "a row miss names the row position that moved (2026-09-18)")
         self.assertEqual(len(f["asks"]), 3)
+
+    def test_each_read_row_field_moves_the_row_under_its_own_position(self):
+        """The since, the billing and the subagent positions, one at a time (2026-09-18): each a row miss of the one
+        session, attributed to its own position and no other. The since case exercises no warm path."""
+        self._build()
+        self.live[API] = dict(self._row(), since=NOW - 50)      # the state's own start moved
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"], d["row_by"]), (1, 2, {"row": 1}, {"since": 1}), d)
+        self.live[API] = dict(self.live[API], authLive="login")   # the CLI's init reported which account bills
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"], d["row_by"]), (1, 2, {"row": 1}, {"billing": 1}), d)
+        self.live[API] = dict(self.live[API], subagents=[{"type": "general-purpose", "since": NOW - 30,
+                                                          "agentId": "a1b2c3d4e5f6"}])   # a subagent started
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"], d["row_by"]), (1, 2, {"row": 1}, {"agents": 1}), d)
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["row_by"]), (0, 3, {}), "the moved row stands: a hit")
+
+    def test_a_background_agents_tool_call_moves_no_key(self):
+        """A background agent's every tool call rewrites its task row's lastTool; no card reads it, so the key holds
+        and the session is served (2026-09-18). Under the whole-row fold the field rode the key and the session was
+        re-derived in whatever cycle next saw the row."""
+        task = {"desc": "index the notes", "type": "local_agent", "since": NOW - 50, "toolUseId": "tu_1",
+                "lastTool": "Read", "taskId": "a1b2c3d4e5f6"}
+        self.live[API] = dict(self._row(), bgTasks=[task])
+        self._build()
+        self.live[API] = dict(self._row(), bgTasks=[dict(task, lastTool="Bash")])   # the agent called another tool
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 3, {}), d)
+        self.assertEqual(len(f["asks"]), 3)
+
+    def test_a_context_count_moves_no_key(self):
+        """The context refresh after a landed turn (on connect, on a model switch) moves ctxTokens and context on
+        the row; no card reads them (2026-09-18)."""
+        self.live[API] = dict(self._row(), ctxTokens=120000, context=60)
+        self._build()
+        self.live[API] = dict(self._row(), ctxTokens=125000, context=62)   # the next context refresh
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 3, {}), d)
+
+    def test_an_unread_row_field_moves_no_key(self):
+        """The model badge is the chat chip's fact (_chat_build_sig folds it), not a card's (2026-09-18)."""
+        self._build()
+        self.live[API] = dict(self._row(), model="opus")
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 3, {}), d)
+
+    def test_a_row_miss_is_attributed_to_every_position_that_moved_and_a_shape_change_to_presence(self):
+        """_feed_memo_miss on synthetic keys (2026-09-18): two rows apart at two positions count under both (row_by's
+        sum can exceed miss_by's row); a row on one side only, or of another shape, counts under `presence`, a bucket
+        distinct from miss_by's `live` (the live tail's revision)."""
+        labels = km._FEED_MEMO_LABELS
+        i = labels.index("row")
+        base = [None] * len(labels)
+        a, b = list(base), list(base)
+        a[i] = km._feed_row_key(dict(self._row()))
+        b[i] = km._feed_row_key(dict(self._row(), state="working", authLive="login"))
+        d, labs = self._delta(lambda: km._feed_memo_miss(tuple(a), tuple(b)))
+        self.assertEqual((labs, d["miss_by"], d["row_by"]), (("row",), {"row": 1}, {"state": 1, "billing": 1}))
+        d, labs = self._delta(lambda: km._feed_memo_miss(tuple(base), tuple(a)))
+        self.assertEqual((labs, d["miss_by"], d["row_by"]), (("row",), {"row": 1}, {"presence": 1}), "the row appeared")
+        d, labs = self._delta(lambda: km._feed_memo_miss(tuple(a), tuple(base)))
+        self.assertEqual((labs, d["row_by"]), (("row",), {"presence": 1}), "the row left")
+        d, labs = self._delta(lambda: km._feed_memo_miss(tuple(a), tuple(a)))
+        self.assertEqual((labs, d["row_by"]), ((), {}), "an equal row moves nothing")
 
     def test_a_transcript_append(self):
         self._build()
@@ -738,9 +926,12 @@ class TheBoundAndTheDepartures(_Board):
         self.assertEqual(set(feed), {"cached", "built", "ms", "dirty", "memo"})   # dirty: this fork's forced-rebuild counter beside the memo
         self.assertEqual(feed["memo"], km._feed_memo_report())
         self.assertEqual(set(feed["memo"]), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by",
-                                             "failed", "failing"})   # the contained derivation faults (2026-09-17)
+                                             "failed", "failing",     # the contained derivation faults (2026-09-17)
+                                             "row_by",                # the row miss by the row position that moved (2026-09-18)
+                                             "coldLive", "coldFlip"})   # the cache-only parse misses and the in-place re-reads (2026-09-18)
         self.assertEqual((feed["memo"]["failed"], feed["memo"]["failing"]), (0, 0))
         self.assertEqual(set(feed["memo"]["miss_by"]), set(km._FEED_MEMO_LABELS) | {"cold"})
+        self.assertEqual(set(feed["memo"]["row_by"]), set(km._FEED_ROW_FIELDS) | {"presence"})
         self.assertEqual(feed["memo"]["derived"], 3)
         self.assertEqual(feed["memo"]["bound"], km.FEED_MEMO_BYTES)
         json.dumps(feed)                      # serializes as-is
@@ -1265,6 +1456,414 @@ class OneSessionsFaultIsContained(_Board):
         self.assertEqual(km._feed_memo_report()["failing"], 0, "derived: the episode ends")
         self.assertEqual(said, "")
         self.assertEqual(len(self.bells), 1, "the recovery rings nothing")
+
+
+class AWarmEntryIsNeverDerivedCold(_Board):
+    """A living session the memo holds WARM is never derived COLD when its transcript moves past the parse the chat's
+    build stored (2026-09-18). The feed reads the parse cache-only, so on the build after an append with no parse in
+    between (the stream lands after the chat's build, before the feed's) the read missed, and the key's parse
+    component fell to (False, None): the entry lost its parse-derived half for one build (sessState unknown, no
+    working dot, bg None, the closer off), then the next build, after the chat re-parsed, derived it warm again.
+    Two derivations and a blink per append, a card move on no new information. Now the key re-reads through _parse
+    in place for a session whose memoized key was warm, and only for one: a cold kernel's first paint still parses
+    nothing. The fixture's appended exchange ENDS the turn (an assistant reply with stop_reason end_turn), so
+    who_working stays False and the discriminator is sessState quiet (warm) against unknown (cold) on the working
+    card, independent of idle synthesis (which reads states rows this board never writes).
+
+    The re-read runs only for a transcript the kernel can stat (2026-09-21). A warm entry whose leaf is gone from disk
+    has no key in the shared store (jd.parse_cached returns None because its stat raises), and jd.parsed_session
+    parses the missing leaf under a None key and stores nothing, so an ungated re-read parsed nothing into nowhere
+    on EVERY build: parses.kernel and coldFlip moved each cycle, and the empty parse painted the card quiet where the
+    cache-only read reports unknown for a transcript it cannot read. Gated, the entry takes the cold road once, hits
+    from then on with nothing parsed, and reads unknown until the transcript is back and something parses it. The
+    same bit closes the COLD road too: with the re-read withheld the entry's parse is None, and the body asked the
+    background warmer (_warm_fleet_bg) for it whenever _warm_wanted held, so under a feed-only client the warmer
+    parsed the missing leaf every build (a None key, nothing stored), dropped the feed cache and woke the pusher,
+    a build-warm-drop-wake loop at build speed for as long as the transcript was gone. The module's board has no
+    client, so that test appends a fake feed client and stubs the live map the warmer reads.
+
+    The warmer's OWN loop is gated too (the post-merge review of that gate, 2026-09-21). It filtered on _warm_wanted
+    alone, which a gone leaf satisfies through its goal store's or states log's mtime since boot, so once any OTHER
+    cold session kicked the warmer, the warm thread parsed the missing path once per kick (a None store key, nothing
+    stored, one kernel parse counted, nothing on stderr); the body's ask being closed only kept the gone leaf from
+    kicking it alone. The multi-cold test below leaves a second session unparsed before the removal, so its cold road
+    asks, and reads a _parse recorder: the warm that answers parses the asker and never the gone path."""
+
+    def test_an_append_after_the_chats_parse_derives_the_session_warm_once_and_the_chats_next_parse_hits(self):
+        self._build()                                              # cold: three derivations, no parse
+        km._parse(str(self.tpath[WEB]), WEB, NOW)                 # the chat's parse of web's tab warms the store
+        d, f = self._delta(self._build)                            # the boot flip: web re-derives warm once
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "quiet")
+        p0 = km._PERF_STATS.parses["kernel"]
+        c0 = km._feed_memo_report()
+        with self.tpath[WEB].open("a") as fh:                     # the stream lands AFTER the chat's build...
+            fh.write(json.dumps(uline(NOW - 10, "and the pagination", "u2", "a1")) + "\n")
+            fh.write(json.dumps(aline(NOW - 5, "Done.", "a2", "u2")) + "\n")
+        self.assertIsNone(km._parse_cached(str(self.tpath[WEB])), "...so the cache-only read misses the grown file")
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "quiet",
+                         "derived over the parse re-read in place, never cold")
+        self.assertIs(km._feed_memo_get(WEB)[0][km._FEED_MEMO_LABELS.index("parse")][0], True,
+                      "the stored key's parse bit stays warm")
+        self.assertNotIn("bg", d["miss_by"], "bg no longer flips with the parse bit")
+        self.assertTrue(set(d["miss_by"]) <= {"transcript", "parse"}, d)
+        self.assertEqual(km._PERF_STATS.parses["kernel"] - p0, 1, "the one in-place parse")
+        c1 = km._feed_memo_report()
+        # coldLive counts EVERY living session whose cache-only read missed, per build: web (the flip) plus api and
+        # tests, which nothing ever parses in this fixture and which ride coldLive every build by design
+        self.assertEqual((c1["coldLive"] - c0["coldLive"], c1["coldFlip"] - c0["coldFlip"]), (3, 1),
+                         "web flipped; api and tests are the standing cold reads")
+        km._parse(str(self.tpath[WEB]), WEB, NOW)                 # the chat's next parse: a hit on the tree the feed stored
+        self.assertEqual(km._PERF_STATS.parses["kernel"] - p0, 1)
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (0, 3), d)     # no warm re-derivation: the key already read warm
+
+    def test_an_emptied_parse_store_under_a_warm_entry_re_reads_in_place_and_asks_for_no_background_warm(self):
+        """The perf bench's build_feed_noparse row (tools/perf-bench.py) tripped on this in CI (2026-09-18): it emptied
+        the parse store under a memo whose entries the steady-state row had memoized WARM, and read the warm request
+        that never came as a lost cold branch. A store emptied with no file moved (live: an eviction) is the same
+        warm-to-stale miss as an append: every warm entry re-reads its parse in place and stays exact, so there is no
+        cold session to warm; a memo that holds nothing warm (a fresh kernel's) still asks, which is why the bench
+        empties the memo with the store."""
+        calls = []
+        self.live[WEB]["state"] = "working"                    # warm-wanted on _warm_wanted's state leg, like the bench's web row
+        with mock.patch.object(km, "_warm_fleet_bg", lambda now: calls.append(now)):
+            self._build()
+            self.assertEqual(len(calls), 1, "a cold kernel's first paint asks for the background warm")
+            for sid in SIDS:
+                km._parse(str(self.tpath[sid]), sid, NOW)      # every session parsed (the bench's warm_all_parses)
+            d, _ = self._delta(self._build)                    # the steady state: every entry memoized under a warm key
+            self.assertEqual((len(calls), d["derived"]), (1, 3), d)
+            km._parse_cache.clear()                            # the store emptied, no file moved (the bench's noparse row)
+            c0 = km._feed_memo_report()
+            d, f = self._delta(self._build)
+            c1 = km._feed_memo_report()
+            self.assertEqual(len(calls), 1, "every warm entry re-read its parse in place: no cold session, no warm asked")
+            self.assertEqual(c1["coldFlip"] - c0["coldFlip"], 3, "three in-place re-reads")
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "quiet", "and the entry stays exact")
+            km._parse_cache.clear()
+            km._feed_memo_forget(set())                        # ...and the memo emptied too: the shape of a fresh kernel
+            d, _ = self._delta(self._build)
+            self.assertEqual((len(calls), d["derived"]), (2, 3), "nothing is warm: web derives cold and asks again")
+
+    def test_a_warm_entry_whose_transcript_is_gone_derives_cold_once_and_re_reads_nothing(self):
+        self._build()                                              # cold: three derivations, no parse
+        km._parse(str(self.tpath[WEB]), WEB, NOW)                 # the chat's parse of web's tab warms the store
+        d, f = self._delta(self._build)                            # the boot flip: web re-derives warm once
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "quiet")
+        self.tpath[WEB].unlink()                                   # the leaf is gone from disk while the session lives
+        p0 = km._PERF_STATS.parses["kernel"]
+        c0 = km._feed_memo_report()
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)     # the one cold derivation
+        self.assertTrue({"transcript", "parse"} <= set(d["miss_by"]), d)
+        self.assertEqual(km._PERF_STATS.parses["kernel"] - p0, 0,
+                         "no live key for a transcript that cannot be stat'ed: nothing to re-read into")
+        c1 = km._feed_memo_report()
+        self.assertEqual(c1["coldFlip"] - c0["coldFlip"], 0, "no re-read ran, so no flip is counted")
+        self.assertEqual(c1["coldLive"] - c0["coldLive"], 3, "web joins api and tests as a standing cold read")
+        self.assertEqual(c1["failed"], c0["failed"], "a missing leaf is a cold read, not a derivation fault")
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "unknown",
+                         "the cache-only read's road: an unreadable transcript is not painted quiet")
+        self.assertIs(km._feed_memo_get(WEB)[0][km._FEED_MEMO_LABELS.index("parse")][0], False,
+                      "the stored key's parse bit is cold")
+        p1, c1 = km._PERF_STATS.parses["kernel"], km._feed_memo_report()
+        d, f = self._delta(self._build)                            # and the next build hits, parsing nothing
+        self.assertEqual((d["derived"], d["hit"]), (0, 3), d)
+        self.assertEqual(km._PERF_STATS.parses["kernel"] - p1, 0, "no parse per build while the leaf is gone")
+        c2 = km._feed_memo_report()
+        self.assertEqual((c2["coldLive"] - c1["coldLive"], c2["coldFlip"] - c1["coldFlip"]), (3, 0))
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "unknown")
+        # the recovery: the transcript is back at its path, unparsed, then parsed. The store's slot from the parse
+        # before the removal is never retired while the leaf is gone and keys on (mtime, size), so the rewrite must
+        # differ in SIZE (the body plus an exchange that still ends the turn): a byte-identical rewrite under a coarse
+        # mtime could hit that stale slot and derive warm here, and the cache-only miss is asserted, as the append
+        # test asserts it, rather than assumed
+        self.tpath[WEB].write_text(self._transcript_body(WEB)
+                                   + json.dumps(uline(NOW - 10, "and the pagination", "u2", "a1")) + "\n"
+                                   + json.dumps(aline(NOW - 5, "Done.", "a2", "u2")) + "\n")
+        self.assertIsNone(km._parse_cached(str(self.tpath[WEB])), "the rewritten leaf's live key matches no slot")
+        p2, c2 = km._PERF_STATS.parses["kernel"], km._feed_memo_report()
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"transcript": 1}, "the file moved; nothing parsed it yet")
+        self.assertEqual(km._PERF_STATS.parses["kernel"] - p2, 0, "a cold entry still reads cache-only")
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "unknown")
+        km._parse(str(self.tpath[WEB]), WEB, NOW)                 # the chat's parse warms the store again
+        p3, c3 = km._PERF_STATS.parses["kernel"], km._feed_memo_report()
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)     # the existing cold-to-warm flip, not a re-read
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "quiet")
+        self.assertIs(km._feed_memo_get(WEB)[0][km._FEED_MEMO_LABELS.index("parse")][0], True)
+        self.assertEqual(km._PERF_STATS.parses["kernel"] - p3, 0)
+        c4 = km._feed_memo_report()
+        self.assertEqual(c4["coldFlip"] - c3["coldFlip"], 0, "a hit on the chat's parse flips nothing in place")
+
+    def test_a_warm_entry_whose_transcript_is_gone_asks_the_warmer_for_nothing(self):
+        """The cold road under a FEED-ONLY client (the warmer's reason to exist): a fake feed client on the client
+        list and the live map stubbed to the board's rows, so the real _warm_fleet_bg runs its thread when asked. The
+        recorder joins that thread (the warm flag falls when it ends), so every assertion reads a finished warm."""
+        real, calls = km._warm_fleet_bg, []
+
+        def recording_warm(now):
+            calls.append(now)
+            real(now)
+            deadline = time.monotonic() + 10
+            while km._warming[0] and time.monotonic() < deadline:
+                time.sleep(0.01)
+        with km._clients_lock:
+            km._clients.append({"app": "feed", "wid": "w1", "send": lambda *a, **k: None, "alive": True})
+        saved_feed = list(km._built_feed)
+
+        def restore():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c.get("wid") != "w1"]
+            km._built_feed[:] = saved_feed
+            km._pusher_wake.clear()
+        self.addCleanup(restore)
+        with mock.patch.object(km, "_live_map", lambda: self.live), \
+                mock.patch.object(km, "_warm_fleet_bg", recording_warm):
+            self._build()                                          # cold: three derivations
+            for sid in SIDS:
+                km._parse(str(self.tpath[sid]), sid, NOW)          # every session parsed: the steady state, nothing cold
+            d, f = self._delta(self._build)
+            self.assertEqual(d["derived"], 3, d)                   # every entry memoized warm
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "quiet")
+            self.tpath[WEB].unlink()                               # the leaf is gone from disk while the session lives
+            self.assertTrue(km._warm_wanted({"sid": WEB, "path": str(self.tpath[WEB])}, self.live[WEB]),
+                            "the gone leaf is still warm-wanted through its goal store's mtime since boot: the loop reaches the gate"
+                            "  (2026-09-21, the post-merge review of #1955: without this the test goes vacuous under a predicate change)")
+            n0, p0 = len(calls), km._PERF_STATS.parses["kernel"]
+            for i in range(3):
+                sentinel = {"probe": i}
+                km._built_feed[1] = sentinel                       # the pusher's cached feed: a warm that parsed drops it
+                km._pusher_wake.clear()
+                d, f = self._delta(self._build)
+                self.assertEqual((d["derived"], d["hit"]), ((1, 2) if i == 0 else (0, 3)), (i, d))
+                self.assertEqual(len(calls) - n0, 0, "build %d: a leaf that cannot be stat'ed asks for no warm" % i)
+                self.assertIs(km._built_feed[1], sentinel, "build %d: the feed cache stands" % i)
+                self.assertFalse(km._pusher_wake.is_set(), "build %d: the pusher is not woken" % i)
+                self.assertEqual(km._PERF_STATS.parses["kernel"] - p0, 0, "build %d: nothing parsed the gone leaf" % i)
+                self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "unknown")
+
+    def test_a_warm_that_another_cold_session_kicked_skips_the_gone_leaf(self):
+        """The multi-cold shape under a FEED-ONLY client (the post-merge review of the leaf_ok gate, 2026-09-21): api
+        is left unparsed before web's transcript is removed, so api's cold road asks for a warm, and the warm that
+        answers walks every warm-wanted row, web among them (its goal store moved since boot). The gone leaf must be
+        skipped on the warm thread, so a _parse recorder never sees its path and the kernel parse count moves by the
+        stat-able sessions' misses alone (api's one; tests holds its slot and hits). The first two builds run under
+        a swallowed warm ask, so the fixture, not the warmer, decides which sessions are parsed before the removal."""
+        real, calls, parsed = km._warm_fleet_bg, [], []
+
+        def recording_warm(now):
+            calls.append(now)
+            real(now)
+            deadline = time.monotonic() + 10
+            while km._warming[0] and time.monotonic() < deadline:
+                time.sleep(0.01)
+        real_parse = km._parse
+
+        def recording_parse(path, sid, now):
+            parsed.append(str(path))
+            return real_parse(path, sid, now)
+        with km._clients_lock:
+            km._clients.append({"app": "feed", "wid": "w2", "send": lambda *a, **k: None, "alive": True})
+        saved_feed = list(km._built_feed)
+
+        def restore():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c.get("wid") != "w2"]
+            km._built_feed[:] = saved_feed
+            km._pusher_wake.clear()
+        self.addCleanup(restore)
+        with mock.patch.object(km, "_warm_fleet_bg", lambda now: None):
+            self._build()                                          # cold: three derivations, the warm ask swallowed
+            for sid in (WEB, TESTS):
+                km._parse(str(self.tpath[sid]), sid, NOW)          # the chat's parses of web and tests; api left cold
+            d, f = self._delta(self._build)
+            self.assertEqual((d["derived"], d["hit"]), (2, 1), d)  # web and tests flip warm; api stays a cold read
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "quiet")
+        self.tpath[WEB].unlink()                                   # the leaf is gone from disk while the session lives
+        self.assertTrue(km._warm_wanted({"sid": WEB, "path": str(self.tpath[WEB])}, self.live[WEB]),
+                        "the gone leaf is still warm-wanted through its goal store's mtime since boot: the loop reaches the gate"
+                        "  (2026-09-21, the post-merge review of #1955: without this the test goes vacuous under a predicate change)")
+        with mock.patch.object(km, "_live_map", lambda: self.live), \
+                mock.patch.object(km, "_warm_fleet_bg", recording_warm), \
+                mock.patch.object(km, "_parse", recording_parse):
+            p0 = km._PERF_STATS.parses["kernel"]
+            d, f = self._delta(self._build)
+            self.assertEqual((d["derived"], d["hit"]), (1, 2), d)  # web's one cold derivation
+            self.assertEqual(len(calls), 1, "api, unparsed and stat-able, kicks the warmer once")
+            self.assertIn(str(self.tpath[API]), parsed, "the warm parsed the session that asked")
+            self.assertNotIn(str(self.tpath[WEB]), parsed,
+                             "a leaf the warm thread cannot stat is skipped, never handed to _parse")
+            self.assertEqual(km._PERF_STATS.parses["kernel"] - p0, 1,
+                             "the kernel parse count moves by the stat-able sessions' misses alone: api's")
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "unknown")
+            p1, n1 = km._PERF_STATS.parses["kernel"], len(parsed)
+            d, f = self._delta(self._build)                        # api flips warm on the warm's parse; web hits, gone
+            self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+            self.assertEqual(len(calls), 1, "nothing cold is left to ask")
+            self.assertEqual((km._PERF_STATS.parses["kernel"] - p1, len(parsed) - n1), (0, 0),
+                             "no parse per build while the leaf is gone")
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["sessState"], "unknown")
+
+    def test_a_cold_kernels_first_paint_still_parses_nothing(self):
+        p0 = km._PERF_STATS.parses["kernel"]
+        c0 = km._feed_memo_report()
+        self._build()
+        self.assertEqual(km._PERF_STATS.parses["kernel"] - p0, 0, "no entry is warm yet, so nothing re-reads")
+        for sid in SIDS:
+            self.assertIsNone(km._parse_cached(str(self.tpath[sid])))
+        c1 = km._feed_memo_report()
+        self.assertEqual((c1["coldLive"] - c0["coldLive"], c1["coldFlip"] - c0["coldFlip"]), (3, 0),
+                         "three living sessions read cold, none flipped")
+
+
+class FeedEntryDerivedUnderARootFault(_Board):
+    """The subagents component under a subagents root whose own lstat fails for a reason other than absence: a REAL
+    EACCES, web's session directory at mode 000 (skipped as root, whom permission bits do not bind). web is idle with
+    one live subagent whose own transcript launched a background command. Read, the awaiting fold attributes the
+    command to the agent (one awaiting row, the command nested under the agent); under the fault the fold reads nothing
+    and the command stands at the top level beside the agent. _subagent_dirs_ident answers the unreadable marker for the
+    fault (_TREE_UNREADABLE, whatever memo entry stands for the root), a value no readable tree's identities and no
+    absent root's (None,) equal, so the component moves when the fault begins and again when it clears, and an entry
+    derived under the fault is never served once the root reads again. The first two cases are keyed on what the user
+    sees: the awaiting rows served after the fault equal a from-scratch derivation, with another component (the live
+    row) moved during the fault so the entry is derived under it whatever the subagents component does. The third pins
+    the rule's cost by equality. All three are green at the code before this change, whose tree sample took the fault
+    for absence (the missing root's (None,), which moves the component at both edges too), and red under a mutant that
+    answers the memo's standing entry under the fault: the component then keeps its healthy value, the rows derived
+    under the fault are served after it clears, and neither edge derives. The racy window is closed (the memo module's
+    fixture idiom), so the tree the first build reads is stored with its identities and a standing entry exists to
+    answer. The rule covers a fault present when the key is taken; the road it leaves open is stated in
+    _subagent_dirs_ident's docstring."""
+
+    AID = "a2222222222222222"
+    TU_AGENT = "toolu_web_agent_0001"
+    TU_CMD = "toolu_web_cmd_0001"
+    SLOTS = ("subagent_trees", "subagent_stamps", "subagent_launches")   # the tree scope a pusher cycle opens
+
+    def setUp(self):
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        super().setUp()
+        tp = self.tpath[WEB]
+        self.sess_dir = tp.with_suffix("")
+        sub = self.sess_dir / "subagents"
+        sub.mkdir(parents=True)
+        (sub / ("agent-%s.meta.json" % self.AID)).write_text(json.dumps(
+            {"agentType": "general-purpose", "description": "trace the list endpoint", "spawnDepth": 1,
+             "toolUseId": self.TU_AGENT}))
+        launch = {"type": "assistant", "timestamp": iso(NOW - 70), "message": {"content": [
+            {"type": "tool_use", "id": self.TU_CMD, "name": "Bash",
+             "input": {"command": "sleep 1", "run_in_background": True, "description": "run the list endpoint tests"}}]}}
+        (sub / ("agent-%s.jsonl" % self.AID)).write_text(json.dumps(launch) + "\n")
+        self.root = str(sub)
+        self.resolution = (str(tp), self.AID)
+        self.addCleanup(km._SUBAGENT_TREES.pop, self.root, None)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, self.resolution, None)
+        rows = [{"tid": self.TU_AGENT, "desc": "trace the list endpoint", "t": NOW - 95, "type": "local_agent",
+                 "agentId": self.AID},
+                {"tid": self.TU_CMD, "desc": "run the list endpoint tests", "t": NOW - 60, "type": "local_bash"}]
+        for name, value in (("_bg_live_norm", lambda sid, path, live=None: list(rows) if sid == WEB else []),
+                            ("_bg_pending", lambda sid, path, tasks: tasks),
+                            ("_live_map", lambda: self.live),
+                            ("_SUBAGENT_DIR_RACY_NS", 0)):
+            p = mock.patch.object(km, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.live[WEB] = dict(self._row(), subagents=[{"type": "general-purpose", "since": NOW - 95, "agentId": self.AID}])
+        km._parse(str(tp), WEB, NOW)          # the chat's parse: the feed's cache-only read hits, so awaiting is derived
+
+    @staticmethod
+    def _awaiting(feed):
+        """web's cards as the user sees their awaiting rows: (column, count, [(kind, id, [nested ids])])."""
+        out = []
+        for c in feed["asks"]:
+            if c.get("sid") != WEB and not str(c.get("itemId", "")).startswith(WEB):
+                continue
+            aw = c.get("awaiting") or {}
+            out.append((c.get("column"), aw.get("count"),
+                        [(it.get("kind"), it.get("id"), [w.get("id") for w in it.get("waits", [])])
+                         for it in aw.get("items") or []]))
+        return out
+
+    def _cycle(self):
+        """One build inside the tree scope's three slots, opened empty and closed after, as a pusher cycle holds them."""
+        for s in self.SLOTS:
+            setattr(km._live_scope, s, {})
+        try:
+            return self._build()
+        finally:
+            for s in self.SLOTS:
+                setattr(km._live_scope, s, None)
+
+    @contextlib.contextmanager
+    def _fault(self):
+        """The session directory at mode 000 for the block, restored inside the case (never left to a cleanup that runs
+        after tearDown removed the tree)."""
+        os.chmod(str(self.sess_dir), 0o000)
+        try:
+            with self.assertRaises(PermissionError, msg="premise: the real fault on the root's own lstat"):
+                os.lstat(self.root)
+            yield
+        finally:
+            os.chmod(str(self.sess_dir), 0o755)
+
+    def _served_after_the_fault_equals_from_scratch(self, build, resolution_standing):
+        build()
+        healthy = self._awaiting(build())
+        self.assertEqual(healthy, [("working", 1, [("agents", self.TU_AGENT, [self.TU_CMD])])],
+                         "premise: read, the command is nested under the agent that launched it")
+        if not resolution_standing:
+            self.assertIsNotNone(km._SUBAGENT_FILE_CACHE.pop(self.resolution, None),
+                                 "premise: the agent file's resolution stood, and is popped (the memo cleared past its bound)")
+        with self._fault():
+            self.live[WEB] = dict(self.live[WEB], since=NOW - 50)          # another component moves during the fault
+            under, f_under = self._delta(build)
+        after, f_after = self._delta(build)
+        _reset_memo()
+        scratch = self._awaiting(build())
+        self.assertEqual(under["derived"], 1, "premise: the entry was derived under the fault: %r" % (under,))
+        self.assertNotEqual(self._awaiting(f_under), healthy,
+                            "premise: the rows derived under the fault differ (the command unattributed): %r"
+                            % (self._awaiting(f_under),))
+        self.assertEqual(self._awaiting(f_after), scratch,
+                         "the rows served once the fault clears equal a from-scratch derivation, never the entry derived "
+                         "under the fault: served %r, from scratch %r (the build after the clear: %r)"
+                         % (self._awaiting(f_after), scratch, after))
+
+    def test_an_entry_derived_under_a_root_fault_is_never_served_after_the_fault_clears(self):
+        """No resolution of the agent's file standing when the fault begins, and no tree scope: the lookup under the
+        fault answers None with the fault, so the fold reads nothing."""
+        self._served_after_the_fault_equals_from_scratch(self._build, resolution_standing=False)
+
+    def test_the_same_inside_the_tree_scope_as_a_pusher_cycle_holds_it_with_the_resolution_standing(self):
+        """Each build inside the tree scope's three slots, the agent file's resolution standing through the fault: the
+        lookup answers the standing path, which lies under the tree that faults, and the fold's read of it fails on the
+        same EACCES, so the fold reads nothing here too."""
+        self._served_after_the_fault_equals_from_scratch(self._cycle, resolution_standing=True)
+
+    def test_the_fault_beginning_and_clearing_each_re_derive_the_session_once_under_the_subagents_label(self):
+        """The cost, with nothing else moving: the first build under the fault derives web once, its miss attributed to
+        the subagents component alone; a second build under the fault serves that entry (the marker stands, and a tree
+        fault is not one of the body-read faults that keep a derivation out of the memo); the first build after the
+        clear derives web once more under the same label; the next serves. Red under the standing-entry mutant, where
+        neither edge derives."""
+        self._build()
+        self._build()
+        with self._fault():
+            begins, _ = self._delta(self._build)
+            during, _ = self._delta(self._build)
+        clears, _ = self._delta(self._build)
+        after, _ = self._delta(self._build)
+        self.assertEqual([(d["derived"], d["miss_by"]) for d in (begins, during, clears, after)],
+                         [(1, {"subagents": 1}), (0, {}), (1, {"subagents": 1}), (0, {})],
+                         "(derived, miss_by) at the fault's first build, a second build under it, the first build after "
+                         "the clear and the next: one derivation of web at each edge, under the subagents component, and "
+                         "none between")
 
 
 if __name__ == "__main__":

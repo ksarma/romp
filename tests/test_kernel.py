@@ -33,6 +33,8 @@ jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"            # known token for the serve-security test
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
 # tests/test_kernel_limit_queue.py) is a SEPARATE axis from the compaction/busy gates this module
@@ -4716,7 +4718,8 @@ class ViewBuilder(unittest.TestCase):
         # the user 2026-06-23: descriptions become HOVER tooltips (decluttered), and the analytics button drops
         # its 📊 emoji.
         self.assertIn("#rsettings .rs-sub { display: none; }", _gear_css_src())               # descriptions hidden by default
-        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute")   # the widget rows share the popover (T379)  # float on hover
+        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute")   # the widget rows share the popover (T379); float on hover
+        self.assertRegex(_gear_css_src(), r"#rsettings \.rs-row:has\(:focus-visible\) \.rs-sub, #rsettings \.rs-widget:has\(:focus-visible\) \.rs-sub \{ display: block; position: absolute")   # and, since 2026-09-20, while the row holds a keyboard focus (:has(:focus-visible), never a mouse click), a rule of its own since the maintainer's round 5 so an engine without :has() keeps the pointer road; ui/webview/gear-sub-focus-browser.test.ts parses both
         self.assertNotIn("\U0001F4CA", _gear_src())                                 # the 📊 emoji is gone
         self.assertIn("Token usage analytics", _gear_src())                          # the label itself stays
 
@@ -5371,7 +5374,8 @@ class ViewBuilder(unittest.TestCase):
         # as before) and is said on stderr — once per file VERSION, not per pass: the failure is
         # remembered under the same key, so a corrupt megabyte is not re-decoded and re-reported every
         # 3 s. The file's next publish is a new key and is decoded again. The first two passes take no
-        # live read on purpose: the feed's live read goes through load_goals_or_fault, which QUARANTINES
+        # live read on purpose: the feed's live read goes through load_goals_shared_or_fault, whose corrupt-bytes
+        # path is load_goals (2026-09-18), which QUARANTINES
         # an unparseable file (moves it aside), and a second pass over a vanished file would prove
         # nothing about the memo.
         path = jd.GOALDIR / (SID + ".json")
@@ -7301,9 +7305,10 @@ class WsFraming(unittest.TestCase):
 
 class ServeSecurity(unittest.TestCase):
     """The serve-layer gate (docs/read-side.md): Origin validation on every request AND the /ws
-    upgrade (kills the cross-site WS hole token-free), + the serve token REQUIRED on every gated
-    route, loopback included (Jupyter's model — loopback is reachable by every local user, so the
-    0600 token file, not the socket, is the same-user boundary). Runs the REAL handler over a
+    upgrade (kills the cross-site WS hole token-free), + the serve token, presented directly or
+    through a browser sign-in made with it, REQUIRED on every gated route, loopback included
+    (Jupyter's model: loopback is reachable by every local user, so the 0600 token file, not the
+    socket, is the same-user boundary). Runs the REAL handler over a
     loopback server (GET /feed is a static page → no model calls)."""
 
     @classmethod
@@ -7328,11 +7333,11 @@ class ServeSecurity(unittest.TestCase):
             return e.code
 
     def test_loopback_needs_token_and_all_forms_work(self):
-        # Loopback is NOT a trust boundary: token-free → 403 even from 127.0.0.1. Every credential
-        # form authorizes: ?token= (browser bootstrap), the cookie it seeds, X-Romp-Token (CLI/hooks).
+        # Loopback is NOT a trust boundary: token-free → 403 even from 127.0.0.1. A page opens on the
+        # serve token (?token=, X-Romp-Token) or, for a signed-in browser, this kernel's session cookie.
         self.assertEqual(self._code("/feed", {}), 403)
         self.assertEqual(self._code("/feed?token=testtok", {}), 200)
-        self.assertEqual(self._code("/feed", {"Cookie": "romp_token=testtok"}), 200)
+        self.assertEqual(self._code("/feed", {"Cookie": "%s=%s" % (km._SESSION_COOKIE, km._mint_session())}), 200)
         self.assertEqual(self._code("/feed", {"X-Romp-Token": "testtok"}), 200)
         self.assertEqual(self._code("/feed", {"X-Romp-Token": "wrong"}), 403)
 
@@ -7340,8 +7345,48 @@ class ServeSecurity(unittest.TestCase):
         """The web Restart button (↻) POSTs /restart; the kernel must ACK {ok,restarting} (and, with a
         manager, relay /restart-all so the kernel process relaunches). Regression guard: the Python
         rewrite dropped do_POST entirely, so the button silently no-op'd and the user had to pkill.
-        No ROMP_MANAGER_PORT here → it acks without restarting anything."""
+        No ROMP_MANAGER_PORT and no remotes attached here → it acks without restarting anything."""
         import urllib.request, json as _json
+        # The empty remotes registry is this test's premise, so the test sets it rather than assuming it
+        # (2026-10-03). With a row in km._remotes a bodiless POST takes the broad leg: the handler starts a
+        # real `_fleet_restart_run` thread, which can run ssh against a row's host, writes its report and
+        # then calls whatever `km._restart_this_kernel` is by that time, after this test has returned.
+        # Every module that loads the kernel as `romp_kernel` shares this module object, and some leave rows
+        # behind (tests/test_kernel_trust.py's pair routes leave an 'up' one), so in a run that put a row
+        # here the thread's last call landed in the faked local leg of a later test in this class
+        # (test_restart_refuses_a_malformed_body_instead_of_restarting_everything, or the short-body test
+        # before it) and failed it. test_the_ack_test_owns_its_empty_remotes_premise runs this test under
+        # such a row.
+        with km._remotes_lock:
+            rows = dict(km._remotes)
+            km._remotes.clear()
+
+        def _restore_rows():
+            with km._remotes_lock:
+                km._remotes.clear()
+                km._remotes.update(rows)
+        self.addCleanup(_restore_rows)
+        # The rows go back only after the handler has asked the local leg, which is after it has read the
+        # registry. This kernel's handler reads the registry and runs the local leg before it acks, so the
+        # wait below returns at once here. A handler that acks first and reads the registry after would
+        # otherwise race the restore above: when the restore won, it read the restored rows and took the
+        # broad leg after all. The pass-through keeps the real local leg (no manager here, so it restarts
+        # nothing), records the reason of each call and marks that it was asked. The broad leg's
+        # `_fleet_restart_run` also ends with a call to `_restart_this_kernel`, under a reason of its own,
+        # so the event alone cannot tell the two legs apart; the recorded reasons can (review round 1).
+        import threading
+        asked = threading.Event()
+        reasons = []
+        real_local = km._restart_this_kernel
+
+        def _local_seen(*a, **k):
+            reasons.append(a[0] if a else k.get("reason", ""))
+            try:
+                return real_local(*a, **k)
+            finally:
+                asked.set()
+        km._restart_this_kernel = _local_seen
+        self.addCleanup(setattr, km, "_restart_this_kernel", real_local)
         saved = os.environ.pop("ROMP_MANAGER_PORT", None)   # never trigger a real restart-all in a test
         try:
             req = urllib.request.Request("http://127.0.0.1:%d/restart?token=testtok" % self.port,
@@ -7353,9 +7398,51 @@ class ServeSecurity(unittest.TestCase):
                 # this covers the whole fleet, so the ack names it rather than leaving the caller guessing
                 self.assertEqual(_json.loads(r.read().decode()),
                                  {"ok": True, "restarting": True, "boot": km._BOOT_ID, "fleet": True})
+            self.assertTrue(asked.wait(5), "the standalone ack asked the local leg before the rows go back")
+            self.assertEqual(reasons, ["http /restart (local-only)"],
+                             "the one restart this ack started was the local-only leg, not the broad leg's last call")
         finally:
             if saved is not None:
                 os.environ["ROMP_MANAGER_PORT"] = saved
+
+    def test_the_ack_test_owns_its_empty_remotes_premise(self):
+        """test_restart_endpoint_acks_post means a standalone kernel, no manager and no remotes, so it must
+        take the local leg even when another module left a row in the shared kernel module. Run here under
+        the kind of row tests/test_kernel_trust.py's pair routes leave (an 'up' peer), it asks the local
+        leg and starts no `_fleet_restart_run`. Before 2026-10-03 it took the broad leg instead: a real
+        thread that outlived it and called a later test's faked local leg. Both legs are recorders
+        here, so nothing restarts and nothing runs ssh."""
+        import threading
+        legs = {"local": [], "broad": [], "localDone": threading.Event()}
+        saved = (km._restart_this_kernel, km._fleet_restart_run, dict(km._remotes))
+
+        def _restore():
+            km._restart_this_kernel, km._fleet_restart_run = saved[0], saved[1]
+            km._remotes.clear()
+            km._remotes.update(saved[2])
+        self.addCleanup(_restore)
+
+        def _local(reason="", manager_port=None):
+            legs["local"].append(reason)
+            legs["localDone"].set()
+            return ""
+
+        def _broad(manager_port=None):
+            legs["broad"].append(manager_port)
+        km._restart_this_kernel, km._fleet_restart_run = _local, _broad
+        row = {"host": "TESTHOST", "status": "up", "kernel_port": 29855}
+        km._remotes.clear()
+        km._remotes["TESTHOST"] = row
+        result = unittest.TestResult()
+        ServeSecurity("test_restart_endpoint_acks_post").run(result)
+        self.assertEqual((result.testsRun, result.errors, result.failures), (1, [], []),
+                         "the ack test passes under the leftover row")
+        # The two legs are exclusive branches of one request, so once the local leg has run the broad
+        # one cannot follow from it: the wait is on that event, and the empty broad list is then final.
+        self.assertTrue(legs["localDone"].wait(5), "a standalone ack asks the local leg, got %r" % legs)
+        self.assertEqual(legs["local"], ["http /restart (local-only)"])
+        self.assertEqual(legs["broad"], [], "no broad restart started under the leftover row")
+        self.assertEqual(km._remotes, {"TESTHOST": row}, "the ack test puts back the row it found")
 
     def _post_restart(self, data):
         """POST /restart with `data` as the body → (status, decoded JSON). Content-Type says JSON the
@@ -7577,7 +7664,10 @@ class ServeSecurity(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:%d/timeline?token=testtok" % self.port, timeout=5) as r:
             self.assertEqual(r.status, 200)
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("TimelinePanel", body, "the shared obsidian view is injected")
+        # the page's CODE, comments blanked (the author's pass 8, 2026-09-20, the fixer pass): the view's own comments and the pane sheet's spell
+        # the name, so a pin over the fetched body was satisfiable by three of its eight occurrences (the pins census reads a formatted
+        # fetch as its route's text now and named this row)
+        self.assertIn("TimelinePanel", served_css.code(body), "the shared obsidian view is injected")
         self.assertIn("app=timeline", body, "the page drives panel.update over the kernel WS")
 
     def test_landing_has_three_panes(self):
@@ -7687,7 +7777,8 @@ class ServeSecurity(unittest.TestCase):
         html = km._landing()
         self.assertIn("<script src=/dist/shell-perf.js?v=", html)
         self.assertLess(html.index("/dist/age-color-global.js"), html.index("/dist/shell-perf.js"))
-        self.assertLess(html.index("/dist/shell-perf.js"), html.index("window.__rompAgeColor"))   # before the errs script
+        code = served_css.code(html)   # offsets preserved, comments blanked: a script comment spells __rompAgeColor before the code does
+        self.assertLess(code.index("/dist/shell-perf.js"), code.index("window.__rompAgeColor"))   # before the errs script
         self.assertLess(html.index("/dist/shell-perf.js"), html.index("/dist/palette-main.js"))
         # the socket it posts through is the shell's own, defined by the mobile-shell script, which runs
         # later: the bundle reads window.__rompShellSend at call time, so the order is fine
@@ -7791,9 +7882,15 @@ class ServeSecurity(unittest.TestCase):
         import urllib.request
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=testtok" % self.port, timeout=5) as r:
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("visualViewport", body)               # the live-visible-height source
-        self.assertIn("--app-h", body)                      # the custom prop the JS drives
-        self.assertIn("height:var(--app-h,100dvh)", body)   # body height reads it, dvh only as fallback
+        # read from the fetched page's code with its comments blanked and from its parsed rules: the fit script's comments spell
+        # both tokens, so a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py, which reads this
+        # formatted fetch as the landing's text since the fixer pass of the author's pass 8, 2026-09-20; it had been re-pointed by hand)
+        code = served_css.code(body)
+        rules = served_css.rules(body)
+        self.assertIn("visualViewport", code)               # the live-visible-height source
+        self.assertIn("setProperty('--app-h'", code)        # the custom prop the JS drives
+        self.assertIn(("height", "var(--app-h,100dvh)"), [d for r in rules if r.selector in ("body", "html,body") for d in r.decls],
+                      "body height reads it, dvh only as fallback")
 
     def test_cross_site_origin_rejected(self):
         self.assertEqual(self._code("/feed", {"Origin": "http://evil.example"}), 403)
@@ -7805,16 +7902,20 @@ class ServeSecurity(unittest.TestCase):
             "Sec-WebSocket-Key": "x", "Sec-WebSocket-Version": "13"}), 403)
 
     def test_same_origin_ws_passes_gate(self):
-        # same-origin upgrade WITH the cookie passes the gate (101) — the served page always has it
-        # (the page itself required the token to load). urllib can't complete the upgrade, so a 101
-        # surfaces as a non-403 — assert it's NOT rejected. Token-free same-origin is 403 now.
+        # same-origin upgrade WITH the session cookie AND the page key (k= on the dial) passes the gate
+        # (101): the served page carries both. urllib can't complete the upgrade, so a 101 surfaces as
+        # a non-403, so assert it's NOT rejected. The cookie alone (no key) is 403, like a token-free dial.
         ws_headers = {
             "Origin": "http://127.0.0.1:%d" % self.port, "Host": "127.0.0.1:%d" % self.port,
             "Upgrade": "websocket", "Connection": "Upgrade",
             "Sec-WebSocket-Key": "x", "Sec-WebSocket-Version": "13"}
+        sess = km._mint_session()
         self.assertEqual(self._code("/ws?app=chat", dict(ws_headers)), 403)
-        self.assertNotEqual(self._code("/ws?app=chat",
-                                       dict(ws_headers, Cookie="romp_token=testtok")), 403)
+        self.assertEqual(self._code("/ws?app=chat",
+                                    dict(ws_headers, Cookie="%s=%s" % (km._SESSION_COOKIE, sess))), 403,
+                         "the session cookie without the page key is refused on the socket")
+        self.assertNotEqual(self._code("/ws?app=chat&k=" + km._page_key(sess),
+                                       dict(ws_headers, Cookie="%s=%s" % (km._SESSION_COOKIE, sess))), 403)
 
     def test_healthz_exempt(self):
         self.assertEqual(self._code("/healthz", {"Origin": "http://evil.example"}), 200)
@@ -8524,7 +8625,7 @@ class PostalPeerTunnels(unittest.TestCase):
     ExitOnForwardFailure would kill the whole tunnel) for a second ephemeral -L that dials the
     remote's bus — stage 2's peering protocol is duplex over that one connection."""
 
-    R = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002}
+    R = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2}
 
     def tearDown(self):
         # The flag-off case below sets ROMP_POSTAL_PEERS and never restores it, and _postal_peers_on() reads the
@@ -8545,8 +8646,8 @@ class PostalPeerTunnels(unittest.TestCase):
         finally:
             os.environ.pop("ROMP_POSTAL_PEERS", None)
         self.assertNotIn("-R", argv, "no fixed-port reverse forward in peer mode")
-        self.assertIn("50002:127.0.0.1:%d" % km.BUS_PORT, argv, "the ephemeral -L dials the remote's bus")
-        self.assertIn("50001:127.0.0.1:29855", argv, "the kernel forward is unchanged")
+        self.assertIn("2:127.0.0.1:%d" % km.BUS_PORT, argv, "the ephemeral -L dials the remote's bus")
+        self.assertIn("1:127.0.0.1:29855", argv, "the kernel forward is unchanged")
 
     def test_notify_bus_peer_is_guarded(self):
         saved = km.BUS_PORT
@@ -8555,18 +8656,67 @@ class PostalPeerTunnels(unittest.TestCase):
         # the call's duration the process is client-only with peers off and names a port nothing can bind, so no bus is
         # ever started (2026-09-10: a hermetic bus reached the machine's fixed port from exactly this test while the real
         # bus was down for a restart); restored after, whatever the outcome
+        # Under this kernel the refusal kicks the revive on EVERY run, on a thread, and the test holds that revive inside
+        # itself (the reviewer's re-ruling of round 2 on fork PR #894). The revive is rebound to a wrapper that sets an
+        # Event in a finally, and the restore waits on that Event: without the wait the restore won the race in every run,
+        # and the ensure's child, forked with the restored environment, which names no port, pinged the machine's fixed bus
+        # port. For the whole window, from before the call until after the wait, subprocess.run is a scoped fake: a call
+        # whose argv (positional or args=) names romp-postal-service is recorded and answered as a refusing ensure, so no
+        # ensure child starts; every other call, from any thread, runs for real and gets its own answer. Two assertions
+        # read the fake after the wait: no postal-service call reached the real run, and the fake answered none. The
+        # second is upstream's (their PR 1848, which fork PR #875 folded; 2026-09-18, a revive that outran a test's restore
+        # started real buses that stood on the shared box for hours): under client-only the revive returns before its
+        # ensure while the kernel has ensured no bus of its own, so the test holds _BUS_ENSURED False from before the
+        # revive is rebound until after the wait. The merge of main that brought fork PR #875 wrote that PR's recorder of
+        # subprocess.run over this test's fake with no conflict marker; the recorder and its polling loop went, and the
+        # assertion stayed, on the fake's list.
+        import threading
+        revive_ended = threading.Event()
+        real_revive = km._revive_postal_bus
+
+        def revive():
+            try:
+                real_revive()
+            finally:
+                revive_ended.set()
+        real_run = km.subprocess.run
+        stubbed, reached = [], []          # stubbed: the calls the fake answered (fork PR #875's assertion); reached is this test's
+
+        def fake_run(*a, **kw):
+            argv = a[0] if a else kw.get("args")
+            text = " ".join(map(str, argv)) if isinstance(argv, (list, tuple)) else str(argv)
+            if "romp-postal-service" in text:      # the postal service, whatever its verb or argv position
+                stubbed.append(text)
+                return km.subprocess.CompletedProcess(argv, 1, "", "stubbed by the test: no ensure ran")
+            return pass_through(text, a, kw)
+
+        def pass_through(text, a, kw):     # the one road from the fake to the real run
+            if "romp-postal-service" in text:
+                reached.append(text)       # empty while the filter above holds; a narrowed filter (argv[2] alone) fills it
+            return real_run(*a, **kw)
+        ensured = km._BUS_ENSURED[0]
+        km._BUS_ENSURED[0] = False         # the revive's skip reads it: held from here until after the wait, put back there
+        km._revive_postal_bus = revive
+        km.subprocess.run = fake_run
         env_saved = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}
         os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")
         try:
-            self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True),
+            self.assertFalse(km._notify_bus_peer("TESTHOST", 2, True),
                              "postal down → False, never an exception (the supervisor must survive)")
         finally:
             km.BUS_PORT = saved
+            ended = revive_ended.wait(60)   # the revive's calls all fall inside the window, through the fake, under the trio
+            km.subprocess.run = real_run
+            km._revive_postal_bus = real_revive
+            km._BUS_ENSURED[0] = ensured
             for k, v in env_saved.items():
                 if v is None:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
+        self.assertTrue(ended, "the refusal kicks the bus revive, and the revive ends before the fake and the environment are restored")
+        self.assertEqual(stubbed, [], "a client-only kernel never runs the bus ensure: nothing to spawn, nothing to leak")
+        self.assertEqual(reached, [], "no romp-postal-service call reached the real subprocess.run")
 
 
 class CheckinMechanics(unittest.TestCase):
@@ -8583,35 +8733,35 @@ class CheckinMechanics(unittest.TestCase):
 
     def test_checkin_argv_adds_the_reverse_forwards(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
-        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002,
-             "checkin": True, "rk_port": 50003, "rb_port": 50004}
+        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2,
+             "checkin": True, "rk_port": 3, "rb_port": 4}
         argv = km._tunnel_argv(r)
-        self.assertIn("50003:127.0.0.1:%d" % km.PORT, argv, "-R publishes our kernel on the hub")
-        self.assertIn("50004:127.0.0.1:%d" % km.BUS_PORT, argv, "-R publishes our bus on the hub")
+        self.assertIn("3:127.0.0.1:%d" % km.PORT, argv, "-R publishes our kernel on the hub")
+        self.assertIn("4:127.0.0.1:%d" % km.BUS_PORT, argv, "-R publishes our bus on the hub")
         self.assertEqual(argv.count("-R"), 2)
 
     def test_plain_peer_attach_argv_has_no_reverse_forwards(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
-        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002}
+        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2}
         self.assertNotIn("-R", km._tunnel_argv(r))
 
     def test_checkin_payload_pushes_ports_and_token(self):
         os.environ["ROMP_HOST_NAME"] = "TESTHOST"
-        p = km._checkin_payload({"rk_port": 50003, "rb_port": 50004, "local_port": 50001})
-        self.assertEqual((p["host"], p["kernelPort"], p["busPort"]), ("TESTHOST", 50003, 50004))
+        p = km._checkin_payload({"rk_port": 3, "rb_port": 4, "local_port": 1})
+        self.assertEqual((p["host"], p["kernelPort"], p["busPort"]), ("TESTHOST", 3, 4))
         self.assertEqual(p["token"], km.TOKEN,
                          "the token is HANDED to the hub, which never fetches credentials, and it is the one "
                          "this kernel SERVES: a re-read of the file at runtime could mint one the gate "
                          "rejects (review find, 2026-09-08)")
 
     def test_checkin_apply_records_a_sshless_row(self):
-        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 50003,
-                                            "busPort": 50004, "token": "tok"})
+        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 3,
+                                            "busPort": 4, "token": "tok"})
         self.assertEqual(status, 200)
         r = km._remotes["TESTHOST"]
         self.assertTrue(r["checkin_peer"])
         self.assertIsNone(r["proc"], "the hub owns no ssh for a checked-in host")
-        self.assertEqual((r["local_port"], r["bus_port"], r["token"]), (50003, 50004, "tok"))
+        self.assertEqual((r["local_port"], r["bus_port"], r["token"]), (3, 4, "tok"))
 
     def test_checkin_apply_validates_and_refuses_hijack(self):
         for bad in ({}, {"host": "x"}, {"host": "x", "kernelPort": 1},
@@ -8620,12 +8770,12 @@ class CheckinMechanics(unittest.TestCase):
             payload, status = km.checkin_apply(bad)
             self.assertEqual(status, 400, repr(bad))
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "proc": None}
-        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 50003, "busPort": 50004})
+        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 3, "busPort": 4})
         self.assertEqual(status, 409, "an ssh-attached row is never silently converted")
 
     def test_checkin_set_flags_ports_and_checkout_clears(self):
-        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001,
-                                   "bus_port": 50002, "proc": None, "status": "up", "detail": "", "sids": []}
+        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1,
+                                   "bus_port": 2, "proc": None, "status": "up", "detail": "", "sids": []}
         saved = km._checkin_stop_hub
         km._checkin_stop_hub = lambda r: None
         try:

@@ -27,8 +27,9 @@ name: PR tier
 # it would risk its "cancelled" check run COMPLETING after the survivor's (the
 # runner's cancel grace is longer than this job), and a cancelled required
 # check blocks the merge. Queueing costs a few seconds; cancelling can wedge.
-# It re-runs when the labels change, and on every push to the PR, so the
-# status on the PR is always about the labels it carries now. Making it a
+# It re-runs when the labels change, so the status on the PR is always about
+# the labels it carries now (upstream's copy also runs on every push to the PR
+# and on an edit; this copy does not, see the fork divergence below). Making it a
 # REQUIRED check on main is a branch-ruleset setting in the repository
 # settings, which is the maintainers' call, not something this file can do.
 #
@@ -36,13 +37,26 @@ name: PR tier
 # and still accepts the old spelling, so `docs` is no longer a divergence): this
 # copy also counts `batch`. `batch` marks a batch PR (scripts/batch.py): it merges
 # several already-tiered member PRs at once and carries no tier of its own, and
-# without it every batch PR would show this check red, which batch.py's ci_of
-# folds into "ci: failure". The rest of the file is upstream's byte for byte, so
-# the next sync merges cleanly.
+# without it every batch PR would show this check red. Apart from the second
+# divergence below, the rest of the file is upstream's byte for byte, so the next
+# sync merges cleanly.
+#
+# Second fork divergence (2026-09-27): this copy runs on the four events that
+# can change what the check reads (opened, reopened, labeled, unlabeled), not on
+# synchronize or edited. Neither changes a label, and on a private repository
+# every run bills at least a minute (GitHub rounds each job up): the week from
+# 2026-09-20 ran this check 986 times, about 4,300 minutes a month. The cost is that a
+# push to a PR leaves its new head with no run of this check until the next
+# label event; on the fork no ruleset requires the check, and scripts/batch.py
+# reads the tier from the labels themselves, not from this check. So on the fork
+# this check must not be made a required one: a batch head pushed after the
+# PR's last label event has no run of it, and a ruleset requiring it would hold
+# that batch (docs/batching.md, the maintainer section, names the checks to
+# require).
 
 on:
   pull_request:
-    types: [opened, reopened, labeled, unlabeled, synchronize, edited]
+    types: [opened, reopened, labeled, unlabeled]
 
 permissions:
   pull-requests: read

@@ -1,7 +1,7 @@
 // Reveal's title with Show changes inline off (the inline-display follow-on to plans/file-review.md, 2026-09-07; the
 // review's finding): with the marks off every change card offers Reveal, as the plan requires, and paintChanges paints
 // no mark in Raw either — so a title that promised "Show the change in the Raw view" named a mark the click would not
-// show. Off, the title promises what Reveal does — opens the Raw view at the change, the guide's words — and says why
+// show. Off, the title promises what Reveal does — opens the Raw view at the change, the reference's words — and says why
 // nothing is marked there; on, the Slice 2 title stands. Driven AS A PANEL over the inline-toggle suite's DOM stand-in:
 //   • Rendered, marks on → off → on: the title of every offered Reveal, its line number, the click (Raw, the change's start);
 //   • Raw with a store that says off: the same title on every card, and the flip back;
@@ -288,7 +288,8 @@ function rows(code: El, src: string): void {
   }));
 }
 const el = (tag: string, ...kids: Array<El | string>): El => { const e = new El(tag); for (const k of kids) e.appendChild(typeof k === "string" ? new Txt(k) : k); return e; };
-/** A file-authored inline element the sanitizer keeps: `<span data-act=… data-id=…>text</span>`. */
+/** A file-authored inline element carrying the panel's attribute names, `<span data-act=… data-id=…>text</span>`, handed to the
+ *  panel as written: the sanitizer strips an author's data-* (md-sanitize.ts), and the panel's own rule (owns) refuses it too. */
 const fileSpan = (act: string, id: string, text: string): El => { const s = el("span", text); s.dataset.act = act; s.dataset.id = id; return s; };
 /** marked's rendering of DOC, built by hand: one element per block, in order, holding the block's text. */
 function renderedDoc(box: El, intro?: El): void {
@@ -470,7 +471,7 @@ test("pins: the title branches on the toggle's field, and both branches share th
   // over the change's start in the VIEW's text: the card's offset is the host's, one ahead on a BOM file (Slice 7 of plans/markdown-viewer.md,
   // item 4, the review's round 1), and the row rawOffsetToLine names for the ending's own offset is the row it closes, one past it the next
   assert.match(block, /const line = src !== null && !inFlux \? " \(line " \+ \(rawOffsetToLine\(src, c\.curFrom - \(s && s\.bom \? 1 : 0\)\) \+ 1\) \+ "\)" : "";/, "one line suffix, over the view's text");
-  assert.match(block, /rv\.title = this\.inline \? "Show the change in the Raw view" \+ line\n\s+: "Open the Raw view at the change" \+ line \+ "; the marks are off, so the change is not marked there";/, "on: the mark; off: the place, and why");
+  assert.match(block, /rv\.title = cs\.marks \? "Show the change in the Raw view" \+ line\n\s+: "Open the Raw view at the change" \+ line \+ "; the marks are off, so the change is not marked there";/, "on: the mark; off: the place, and why (the marks as the card-state rule took them, file-comments.ts #cardState's doc; a source pin only: this file's cases on the title with the marks on and off execute both branches, and the tests that red when the title reads the marks other than as the rule took them (measured with marksOn() read there) are file-comments-changes-review2.test.ts's roads case (its first failing row text-inline-over-pane), its orderings case, its cases \"Show changes inline turned on over a failure pane moves no change card\" and \"Show changes inline turned off before a text file's first paint\", and its cases on Show changes inline turned off in a landing window, on the svg press window and on the flips in another viewer)");
 });
 
 test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {

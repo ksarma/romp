@@ -9,10 +9,12 @@ UUIDs, temp dirs, no session state touched (the setters are recorded, never exec
 import io
 import json
 import os
+import re
 import tempfile
 import threading
 import unittest
 import urllib.request
+import uuid
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
@@ -54,7 +56,8 @@ class NewRoutePrefs(unittest.TestCase):
                        km._sdk_ready, km._create_sdk_session, km._push_soon, km._codex)
         km._live_map = lambda: []
         km._set_model_or_park = lambda be, sid, v: self.calls.append(("model", sid, v))
-        # the effort setter answers (took, parked) and the prefs pass reads `took` (a refused level is not echoed as applied)
+        # the effort setter answers (took, parked), the shape the prefs pass reads: a level it took is echoed,
+        # a level it refused is not (the refusing stub is per test)
         km._set_effort_or_park = lambda be, sid, v: (self.calls.append(("effort", sid, v)), (True, False))[1]
         km.Sessions.backend_for = staticmethod(lambda sid: object())
         km._push_soon = lambda: None
@@ -115,27 +118,29 @@ class NewRoutePrefs(unittest.TestCase):
         self.assertEqual(self.calls, [("model", SID, "claude-fable-5")])
 
     def test_a_refused_effort_is_not_echoed_as_applied_and_the_echo_carries_the_refusal(self):
-        # the setter's verdict used to be dropped here too: a Codex level the model's catalog does not offer was echoed
-        # back as applied, so `romp new` printed it as applied and exited 0 while nothing changed (the catch-up fold's
-        # review, 2026-09-18). The echo now carries the refusal in the setter's own words, and stderr says so once.
+        # _set_effort_or_park answers (took, parked) so a caller can be loud about a refusal, and the setEffort op
+        # and the typed /effort route both read it; this door discarded it and echoed the asked level as applied,
+        # so `romp new --effort` printed the level as applied and exited 0 while nothing changed. The echo now
+        # carries the refusal in the setter's own words under `refused`, no `effort` key, and stderr says so once.
         km._live_names = lambda *_: {"opt": SID}
         fake_codex = object()
         km.Sessions.backend_for = staticmethod(lambda sid: fake_codex)
-        km._codex = lambda: fake_codex                                  # the Codex words: the catalog does not offer it
+        km._codex = lambda: fake_codex                     # the session's backend IS the Codex one: catalog wording
         km._set_effort_or_park = lambda be, sid, v: (self.calls.append(("effort", sid, v)), (False, False))[1]
         err = io.StringIO()
         with redirect_stderr(err):
             r = self._post({"name": "opt", "dir": self.dir, "model": "claude-fable-5", "effort": "bogus-level"})
         self.assertTrue(r["ok"] and r["existing"], "the open itself stands: the session runs, one pref was refused")
-        self.assertEqual(r.get("model"), "claude-fable-5", "the model pick is echoed on its own verdict")
+        self.assertEqual(r.get("model"), "claude-fable-5", "the model pick is echoed on its own")
         self.assertNotIn("effort", r, "a refused level is never echoed as applied")
-        self.assertEqual(r.get("refused"), km._effort_refusal(fake_codex, "bogus-level"))
-        self.assertIn("Codex catalog does not offer", r["refused"])
-        self.assertIn("'bogus-level'", r["refused"], "the refused level is named")
+        self.assertEqual(r.get("refused"), km._effort_refusal(fake_codex, "bogus-level"),
+                         "the refusal is the setter's own sentence, the one the setEffort op and /effort answer with")
+        self.assertIn("Codex catalog does not offer", r["refused"], "the Codex singleton's wording, not the backend's")
         self.assertEqual(self.calls, [("model", SID, "claude-fable-5"), ("effort", SID, "bogus-level")],
                          "the setter was asked, and said no")
-        self.assertIn("refused", err.getvalue(), "one stderr line, as the typed route writes")
-        self.assertIn("bogus-level", err.getvalue())
+        # one stderr line in the typed route's shape, the door named so a log reader can tell which one refused
+        self.assertEqual([ln for ln in err.getvalue().splitlines() if "refused" in ln],
+                         ["effort 'bogus-level' for %s refused by object (POST /new)" % SID])
 
 
 class NewRouteEnv(unittest.TestCase):
@@ -144,8 +149,10 @@ class NewRouteEnv(unittest.TestCase):
     the SDK spawn so the eager connect already carries it, re-asserted through the park-aware
     set_env on the idempotent existing:true open, and echoed back like model/effort. SDK-only: the
     payload rides the per-sid flag-settings file, which the Codex backend never reads — asked of a
-    Codex session or the Codex arm, /new says so instead of pretending. Synthetic values only
-    (FEATURE_FLAG=1 shapes, never anything credential-shaped — gitleaks reads this repo too)."""
+    Codex session or the Codex arm, /new says so instead of pretending. Values are assembled at run
+    time and never a token-shaped literal (gitleaks reads this repo too); the door tests deliberately
+    plant credential-shaped NAMES, since refusing them is what they pin (review round 1 of the env-pick
+    door, 2026-09-18, which found this docstring still claiming no such name is used here)."""
 
     class _SdkBe:
         """A backend double WITH the set_env capability (the SDK shape)."""
@@ -172,7 +179,9 @@ class NewRouteEnv(unittest.TestCase):
                        km._push_soon, km._codex)
         km._live_map = lambda: []
         km._live_names = lambda *_: {}
-        km._set_env_or_park = lambda be, sid, v: self.calls.append(("env", sid, v))
+        # the env setter answers (took, parked) like the effort one and the prefs pass reads `took` (review round 2 of
+        # the env-pick door, 2026-09-19: a refused pick is echoed as envRefused, never as env)
+        km._set_env_or_park = lambda be, sid, v: (self.calls.append(("env", sid, v)), (True, False))[1]
         km.Sessions.backend_for = staticmethod(lambda sid: self._SdkBe())
         km._sdk_ready = lambda: True
         km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None, **kw:
@@ -205,6 +214,34 @@ class NewRouteEnv(unittest.TestCase):
                           "the error teaches the alphabet, not just refuses")
         self.assertEqual(self.created, [], "nothing may be created on a refused request")
         self.assertEqual(self.calls, [])
+
+    def test_a_credential_shaped_name_refuses_the_whole_request_and_names_it_never_the_value(self):
+        # the spawn.json fix's build found the door refusing the three login names alone (2026-09-18): a pick
+        # naming NOTES_API_TOKEN landed in the registry and the flag-settings file. Refused at THIS door now,
+        # before anything is created, with the variable named and the value nowhere in the reply. The value
+        # is built at run time (gitleaks reads this repo)
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        code, body = self._post({"name": "opt", "dir": self.dir,
+                                 "env": {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val}})
+        self.assertEqual(code, 400, "a credential-shaped name must 400, not spawn")
+        self.assertIn("NOTES_API_TOKEN", body["error"], "the refusal names the variable")
+        self.assertNotIn(val, body["error"], "the refusal never carries the value")
+        self.assertIn("the pick was not saved", body["error"])
+        self.assertEqual(self.created, [], "nothing was created")
+        self.assertEqual(self.calls, [], "no env reached a setter")
+
+    def test_a_lowercase_credential_shaped_name_400s_like_the_upper_case_one(self):
+        # the shape rule folds case (the spawn-spec fix's review round 1, 2026-09-18, carried into the door's
+        # predicate): notes_api_token is refused at this door under its own spelling, before anything is created
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        code, body = self._post({"name": "opt", "dir": self.dir,
+                                 "env": {"NOTES_ENDPOINT": "http://notes.test", "notes_api_token": val}})
+        self.assertEqual(code, 400, "a lowercase credential-shaped name must 400, not spawn")
+        self.assertIn("notes_api_token", body["error"], "the refusal names the variable as spelled")
+        self.assertNotIn(val, body["error"], "the refusal never carries the value")
+        self.assertIn("the pick was not saved", body["error"])
+        self.assertEqual(self.created, [], "nothing was created")
+        self.assertEqual(self.calls, [], "no env reached a setter")
 
     def test_a_non_object_or_non_string_value_refuses(self):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": "FEATURE_FLAG=1"})
@@ -280,6 +317,47 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(self.calls, [("env", SID, {})],
                          "an explicit {} must reach set_env, which clears by replacing")
         self.assertEqual(body.get("env"), {}, "the clear ask is echoed like any other env ask")
+
+    def test_a_refused_env_is_not_echoed_as_applied_and_the_echo_carries_the_refusal(self):
+        """Review round 2 of the env-pick door (2026-09-19): the prefs pass discarded set_env's verdict, so a pick
+        the backend refused (its own door on a replayed pick, a session whose registry it could not read) was echoed
+        back as applied and `romp new` printed it so while nothing had changed. The echo carries the refusal in its
+        own slot (envRefused, the generic sentence the
+        parked-op drain uses, naming nothing of the pick), never the `env` key, and stderr says so once with the
+        NAMES of the pick only (the value is built at run time and must appear nowhere)."""
+        km._live_names = lambda *_: {"opt": SID}
+        km._set_env_or_park = lambda be, sid, v: (self.calls.append(("env", sid, v)), (False, False))[1]
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, body = self._post({"name": "opt", "dir": self.dir, "env": {}})
+            code2, body2 = self._post({"name": "opt", "dir": self.dir, "env": {"NOTES_ENDPOINT": val}})
+        self.assertEqual((code, code2), (200, 200), "the open itself stands: the session runs, one pref was refused")
+        for b in (body, body2):
+            self.assertTrue(b["ok"] and b["existing"])
+            self.assertNotIn("env", b, "a refused pick is never echoed as applied, the clear-all included")
+            self.assertEqual(b.get("envRefused"), km._env_refusal())
+            self.assertIn("per-session env", b["envRefused"])
+            self.assertNotIn(val, json.dumps(b), "the echo carries nothing of the pick")
+        self.assertEqual(self.calls, [("env", SID, {}), ("env", SID, {"NOTES_ENDPOINT": val})], "the setter was asked, and said no")
+        lines = [ln for ln in err.getvalue().splitlines() if "refused" in ln]
+        self.assertEqual(len(lines), 2, "one stderr line per refusal, as the effort leg writes")
+        self.assertIn("env (cleared) for %s refused" % SID, lines[0])
+        self.assertIn("env NOTES_ENDPOINT for %s refused" % SID, lines[1], "names only")
+        self.assertNotIn(val, err.getvalue(), "no value on stderr")
+
+    def test_the_bats_fixtures_copy_of_the_refusal_sentence_is_the_kernels(self):
+        """tests/romp.bats stands a fake kernel up whose reply carries the envRefused sentence and pins `romp new`'s
+        stderr line to it word for word; that copy is hand-kept, and no test held it to _env_refusal() (the mutation
+        pass of review round 3, 2026-09-19: the kernel's sentence changed and both suites stayed green, the bats one
+        because its fixture and its expectation moved together). Held here: one copy in the fixture, equal to the
+        kernel's, and the line the bats test expects is the CLI's prefix plus that sentence."""
+        text = open(os.path.join(HERE, "romp.bats"), encoding="utf-8").read()
+        copies = re.findall(r'"envRefused": "([^"]*)"', text)
+        self.assertEqual(len(copies), 1, "one fake-kernel reply carries the sentence: %r" % (copies,))
+        self.assertEqual(copies[0], km._env_refusal(), "the fixture's copy is the kernel's sentence")
+        self.assertIn('[ "$_refused_line" = "romp new: %s" ]' % km._env_refusal(), text,
+                      "and the stderr line the bats test pins is the CLI's prefix plus the kernel's sentence")
 
     def test_an_explicit_empty_env_on_a_fresh_spawn_is_vacuous_but_echoed(self):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": {}})

@@ -182,7 +182,7 @@ test("highlights re-apply after every render path", () => {
   assert.match(UI, /applyCommentMarks\(activeId\);\s+\/\/ the re-window rebuilt turns/,
                "the scroll re-window path re-anchors too");
   // the syncView wrapper covers renders that run OFF the message handlers (tab switch, prebuild)
-  assert.match(UI, /function syncView\(id: string, atBottom\?: boolean\): View \{\s*\n\s*const v = syncViewInner\(id, atBottom\);\s*\n\s*applyCommentMarks\(id\);/);
+  assert.match(UI, /function syncView\(id: string, atBottom\?: boolean, anchored: boolean = atBottom !== undefined\): View \{\s*\n\s*const v = syncViewInner\(id, atBottom, anchored\);\s*\n\s*applyCommentMarks\(id\);/);
 });
 
 test("a comments frame refreshes the open popover IN PLACE — composer and caret survive", () => {

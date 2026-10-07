@@ -1,8 +1,9 @@
 // The real viewer in a real page, first for the Slice 2 browser legs (plans/markdown-viewer.md, "layout follows the
 // pane, reader keeps their place") and then for every browser leg after them: file-view.ts bundled from this tree as the
 // webview build bundles it (and through it the REAL Comments panel, which the module registers itself), served into
-// headless Chromium under each surface's own sheet (the chat modal: styles.css; the feed modal: feed.css; the Files
-// pane: styles.css and files-pane.css under body.fileview-pane), with a fetch that answers the kernel's file route from
+// headless Chromium (or Firefox or WebKit, for the one gate's tap cells and stacking cells: inBrowser's engine) under each surface's own
+// sheet (the chat modal: styles.css; the feed modal: feed.css; the Files pane: styles.css and files-pane.css under
+// body.fileview-pane), with a fetch that answers the kernel's file route from
 // a table the test edits (so a reload can bring different bytes under a new mtime) and a poster that answers the
 // panel's status ask the way the kernel would, so the real aside opens on a click. A probe action stashes the seam
 // (window.__seam) and counts its paints, the way file-view-text-size.test.ts's page does. Every value the page inlines
@@ -68,14 +69,16 @@ let viewerBundle: string | null = null;
  *  anchor-map's TRIM_STATS too, the trim's own pass counter, which the retrim-events leg reads to count the panel's trim calls;
  *  and preview.ts's heal for markdown-inline pictures, installMdImgHeal with the two retry drivers render.ts calls on a kernel
  *  message and on romp:wsup, so a leg can put the chat page's own retry of a failed figure under the viewer, as the figure
- *  label's leg does; nothing installs it unless a leg calls it; and anchor-map's rawRows and rawRowForOffset, the verified Raw row
+ *  label's leg does; nothing installs it unless a leg calls it; preview.ts's previewFull, the box the chat builds for a
+ *  mentioned picture, so a leg can drive the chat's own preview under the chat page's sheet, as the svg preview's cue leg does;
+ *  and anchor-map's rawRows and rawRowForOffset, the verified Raw row
  *  map the seam's scrollToOffset reads since Slice 7 of plans/markdown-viewer.md, item 7, so the raw-rows leg can ask the map
  *  itself whether the rows it sees match the file's text). */
 export function bundleViewer(): string {
   if (viewerBundle) return viewerBundle;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
+    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews, previewFull } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -155,13 +158,32 @@ window.putAtTop = function (text) {
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
+/** Whether the playwright module resolved from the extension's package.json: the one read the launch below guards on, exported so
+ *  a leg's self-test derives the reason a skip names from the same read and never from a second one. */
+export const playwrightInstalled = (): boolean => pw !== null;
 
-/** Launch headless Chromium and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do. */
-export async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
+/** Launch a headless browser and run `body` with it, or skip LOUDLY naming the reason, as the other legs do: Chromium
+ *  unless `launch.engine` names Firefox or WebKit, which the one gate's tap cells and stacking cells launch from a leg of their own
+ *  (file-figure-open-engines-browser.test.ts, off the shared roster of browser legs, whose job installs Chromium alone; the file
+ *  review's round 17, tests-1 with regression-1). `launch.args` is handed to playwright's launch: a case that needs Chromium's own
+ *  device settings (the touchscreen laptop, a `--blink-settings` flag, since CDP's touch emulation flips the primary pointer and
+ *  cannot build it; tab-hide-browser.test.ts's precedent) passes `{ args }`. Under
+ *  ROMP_BROWSER_LEGS_REQUIRE (CI's browser-legs step sets it to 1 after the job installs Chromium; any non-empty value counts, so
+ *  a misspelt value never turns the requirement off in silence) a leg that cannot launch FAILS naming the switch and the reason
+ *  instead: the one CI run of a browser leg must not read green on a runner that lost its browser. Without the switch a skip
+ *  stays a skip: CI's Test step runs before the install, so every browser leg skips there and that step reads the source pins
+ *  beside them. The switch is read here, in the one launch the legs share, so a leg that launches through this helper carries
+ *  no read of its own. */
+export async function inBrowser(t: any, body: (browser: any) => Promise<void>, launch: { args?: string[]; engine?: "chromium" | "firefox" | "webkit" } = {}): Promise<void> {
+  const cannot = (why: string) => {
+    if (process.env.ROMP_BROWSER_LEGS_REQUIRE) assert.fail("ROMP_BROWSER_LEGS_REQUIRE is set and this leg cannot run: " + why);
+    t.skip(why);
+  };
+  if (!pw) { cannot("playwright is not installed under vscode-extension; the browser leg needs it"); return; }
   let browser: any;
-  try { browser = await pw.chromium.launch(); }
-  catch (e) { t.skip("no playwright browser on this box; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  const { engine, ...opts } = launch;
+  try { browser = await pw[engine || "chromium"].launch(opts); }
+  catch (e) { cannot("no playwright browser on this box; the browser leg needs one: " + String((e as Error).message).split("\n")[0]); return; }
   try { await body(browser); } finally { await browser.close(); }
 }
 
@@ -170,7 +192,7 @@ export type Opened = { page: any; errors: string[] };
 export type Served = { status: number; type?: string; body?: string };
 /** A page of the surface at the viewport size, the report open in it (Rendered, or Raw when `raw`: the preference is written
  *  first, as a person's earlier choice would stand), the first paint awaited. `docs` replaces the file table; `openOpts` is
- *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on ORIGIN + url instead, answered from `urls`;
+ *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on the origin + url instead, answered from `urls`;
  *  `theme` is CSS inlined after the sheet as the kernel inlines THEME_CSS (pageHtml). `serve` answers the requests the page's
  *  own fetch stub never sees, the ones the browser makes from the DOM (a figure's `<img src>` at the kernel's /file route,
  *  rewriteFigureSrcs's URL): a Served answer for a URL of the origin is fulfilled as given (a 404 for a missing figure, a
@@ -180,25 +202,29 @@ export type Served = { status: number; type?: string; body?: string };
  *  `utf8` fills `window.__utf8` before the open: the `X-Romp-Text-Utf8` the stub puts on each named path's text answer ("0"
  *  for a file the kernel decoded as Latin-1; every other path keeps "1"). `waitFor` is the selector the first paint is awaited
  *  on in place of the default (`.fileview-md > p`, or a `.fv-cl` row under `raw`), for a scene whose first paint holds neither:
- *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. */
+ *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. `origin` is the
+ *  origin the page is served from and opened at, ORIGIN unless named: `serve`, the URL viewer's `url` and the page itself all
+ *  answer at it, so a leg can open the page at https://notes-api.test, a secure context whose base is an https address (the
+ *  error leg's cell for a same-scheme source written without slashes on an https base; the file review's round 15, fresh-1). */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
   opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string;
-    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string } = {}): Promise<Opened> {
+    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string; origin?: string } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT, opts.theme || "");
-  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+  const origin = opts.origin || ORIGIN;
+  await page.route((u: URL) => u.href.startsWith(origin), (route: any) => {
     const a = opts.serve ? opts.serve(new URL(route.request().url())) : null;
     if (a) return route.fulfill({ status: a.status, contentType: a.type, body: a.body ?? "" });
     return route.fulfill({ status: 200, contentType: "text/html", body: html });
   });
-  await page.goto(ORIGIN + "/");
+  await page.goto(origin + "/");
   if (opts.before) await opts.before(page);
   if (opts.utf8) await page.evaluate((u: Record<string, string>) => { Object.assign((window as any).__utf8, u); }, opts.utf8);
   if (opts.raw) await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });
   if (opts.url) {
-    await page.evaluate(([urls, u]: [Record<string, string>, string]) => { Object.assign((window as any).__urls, urls); (window as any).FV.openUrlView(u); }, [opts.urls || {}, ORIGIN + opts.url]);
+    await page.evaluate(([urls, u]: [Record<string, string>, string]) => { Object.assign((window as any).__urls, urls); (window as any).FV.openUrlView(u); }, [opts.urls || {}, origin + opts.url]);
   } else {
     await page.evaluate(([p, sid, o]: [string, string, Record<string, unknown> | null]) => { (window as any).FV.openFileView(p, sid, o); }, [REPORT, SID, opts.openOpts || null]);
   }

@@ -3,7 +3,7 @@
 // user-todo flag, what the session is doing now, when it last did anything, its last message on hover. Executed
 // on the pure model from synthetic frame data; the pane's wiring is tab-snapshot-pane.test.ts and the view helpers
 // tab-snapshot-view.test.ts. This fork's row vocabulary (the emoji cell, the user todos, the plan's hides) rides the
-// same cases, and two source pins at the end read render.ts and docs/guide.md for the fork-only parts. The demo
+// same cases, and two source pins at the end read render.ts and docs/reference.md for the fork-only parts. The demo
 // world only: a notes-api with web / api / tests sessions, invented text.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -216,10 +216,15 @@ test("executed: the words: the heading's count and label, the row's spoken label
   assert.equal(rowWords(m.rows[2]).title, "No messages yet.\nClick to open this session.");
 });
 
-// ── this fork's pins over render.ts and the guide: the parts upstream's pane test cannot see ─────────────────────
+// ── this fork's pins over render.ts and the reference: the parts upstream's pane test cannot see ─────────────────
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's at-a-glance paragraph lives in docs/reference.md ("### A tag section at a glance", merged there with the project's copy)
+// since the front pages became the project's (CLAUDE.md "The documentation front pages"): the pins read it there, and a retired
+// sentence is asked to be gone from both pages
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const DOCS = GUIDE + "\n\n" + REF;
 const SHOW_SIG = "function showActive(keep?: { uuid: string; y: number } | null) {";
 const SHOW_AT = RENDER.indexOf(SHOW_SIG);
 assert.ok(SHOW_AT >= 0, "render.ts: showActive's signature moved; re-anchor SNAP");
@@ -235,30 +240,30 @@ test("pinned: the row wears this fork's strip vocabulary (the tab's emoji node, 
     "the same-object check gates the rebuild (the plan's hides ride the section: tab-hide.test)");
 });
 
-test("the guide describes the view and the fold rule in this fork's words: the way back, the note line, the chip's triggers and the todo's flag, the dot rule", () => {
-  assert.match(GUIDE, /\*\*A section at a glance\.\*\* Clicking a header also shows the section in the transcript's place/);
-  assert.match(GUIDE, /The section of the\s+tab you are reading folds like\s+any other; its header then stands in for the tab/);
-  assert.doesNotMatch(GUIDE, /never\s+folds \(its header says so/, "the old rule is gone from the guide");
+test("the reference describes the view and the fold rule in this fork's words: the way back, the note line, the chip's triggers and the todo's flag, the dot rule", () => {
+  assert.match(REF, /### A tag section at a glance\s+Clicking a tag section's header also shows the section in the transcript's place/);
+  assert.match(REF, /The section of the\s+tab you are reading folds like\s+any other; its header then stands in for the tab/);
+  assert.doesNotMatch(DOCS, /never\s+folds \(its header says so/, "the old rule is gone from the guide");
   // the now line's real chain, the note as a second line, the chip as the feed's word, the hover without markup
-  assert.match(GUIDE, /What it is doing now comes from its current task, else from the headline of\s+its work so far, else from the last task it had;/);
-  assert.match(GUIDE, /a session that has published a note of what it is\s+working on shows the note as a quieter second line\./);
+  assert.match(REF, /What it is doing now comes from its current task, else from the headline of\s+its work so far, else from the last task it had;/);
+  assert.match(REF, /a session that has published a note of what it is\s+working on shows the note as a quieter second line\./);
   // the chip's triggers (tab-snapshot.ts snapshotRow, T322b's shared chip): the feed's column first; an open user todo
   // raises the flag and the count at once, and reaches the chip only through the feed, once the session is idle on it
   // (the pull-in ruling of 2026-09-15, item 15 b; the code default: a todo alone is chip null, todos 1)
-  assert.match(GUIDE, /\*\*Blocked\*\* when the feed shows one of the\s+session's cards under Blocked/,
+  assert.match(REF, /\*\*Blocked\*\* when the feed shows one of the\s+session's cards under Blocked/,
     "the chip's first trigger is the feed's column (snapshotRow: feedBlock)");
-  assert.match(GUIDE, /the flag and its count show as soon as it\s+flags one\./,
+  assert.match(REF, /the flag and its count show as soon as it\s+flags one\./,
     "an open user todo raises the flag and its count at once (this fork's user todos); the chip waits on the feed");
-  assert.match(GUIDE, /the \*\*Blocked\*\* chip\s+follows the feed, at most a moment behind it\./);
-  assert.match(GUIDE, /Hover a row for its last message, shown without\s+its formatting;/);
+  assert.match(REF, /the \*\*Blocked\*\* chip\s+follows the feed, at most a moment behind it\./);
+  assert.match(REF, /Hover a row for its last message, shown without\s+its formatting;/);
   // the dot is the tab's own state, never the feed's verdict (rowState: the pip; the idle feed-filed row has none)
-  assert.match(GUIDE, /a dot for its state \(yellow working, red stopped on a\s+prompt or an API error only you can clear, amber retrying an API error on its own, teal compacting,\s+green waiting on background work, none while it is idle\)/,
+  assert.match(REF, /a dot for its state \(yellow working, red stopped on a\s+prompt or an API error only you can clear, amber retrying an API error on its own, teal compacting,\s+green waiting on background work, none while it is idle\)/,
     "every pip color the sheet paints (.snap-pip.*), by the tab's own state rule (tab-state.ts), and none for idle");
-  assert.match(GUIDE, /A session that asked a question and went quiet shows the chip\s+with no dot: the dot follows the session's own state, the chip follows the feed\./);
-  assert.doesNotMatch(GUIDE, /red needs\s+you/, "the old dot rule, a red dot for every needs-you, is gone");
+  assert.match(REF, /A session that asked a question and went quiet shows the chip\s+with no dot: the dot follows the session's own state, the chip follows the feed\./);
+  assert.doesNotMatch(DOCS, /red needs\s+you/, "the old dot rule, a red dot for every needs-you, is gone");
   // the way back: all three exits (render.ts setActive, the Escape listener, show-transcript)
-  assert.match(GUIDE, /The transcript comes back when you pick a session, press Escape, or click that header again while\s+its section is open and holds the tab you are reading\./);
-  assert.doesNotMatch(GUIDE, /its own note of what\s+it is working on, else its current task/, "the old two-rung chain, note first, is gone");
+  assert.match(REF, /The transcript comes back when you pick a session, press Escape, or click that header again while\s+its section is open and holds the tab you are reading\./);
+  assert.doesNotMatch(DOCS, /its own note of what\s+it is working on, else its current task/, "the old two-rung chain, note first, is gone");
 });
 
 test("executed: the row's chip is the SHARED status chip's words (T322b): Blocked for the feed's column and a live prompt, API error for an on-you API error, 'Awaiting <word>' from the kind, count and rows, the one peer's name; none for working, ready and retrying; a change in it is a model change", () => {
@@ -296,4 +301,24 @@ test("executed: the row's chip is the SHARED status chip's words (T322b): Blocke
   assert.equal(snapshotModel(sec, look(s3), look(ledgers), m3), m3, "the same peer: the same object");
   assert.notEqual(snapshotModel(sec, look(s4), look(ledgers), m3), m3, "the peer's colour changed and nothing else the row says: a new model (sameChip)");
   assert.equal(snapshotModel(sec, look(sessions), look(ledgers), m), m, "nothing changed: the same object");
+});
+
+test("executed: a member's row reads the roster count (this fork's user todos on the strip meta, 2026-09-22): a meta-only row with userTodos 2 has todos 2, needs you, loading; the count outranks the session entry's rows; an old host's rows still count", () => {
+  // a skeleton or placeholder member: no session frame this page may show, the roster's count on its tabOrder meta
+  const sk = snapshotRow("new1", null, null, false, { name: "new1", userTodos: 2 });
+  assert.deepEqual([sk.todos, sk.needsYou, sk.loading, sk.pip, sk.name], [2, true, true, "unknown", "new1"], "the flag and its count, on you, still opening");
+  assert.ok(rowWords(sk).label.includes("2 things it needs from you"), "spoken like a loaded row's: " + rowWords(sk).label);
+  assert.deepEqual([snapshotRow("new1", null, null, false, { name: "new1", userTodos: 0 }).todos, snapshotRow("new1", null, null, false, { name: "new1", userTodos: 0 }).needsYou], [0, false], "0 is a real value");
+  // the row's needs-you asks the ONE open predicate over the count (tab-state.ts openUserTodo; correctness-1, review round 1):
+  // a negative is nothing open, as the header and the builders read it. The strip's parse never hands the snapshot one
+  // (chat-split-exec.test.ts: a -1 row reads as no count), so this is the predicate's own case, not a value the strip can carry
+  assert.equal(snapshotRow("new1", null, null, false, { name: "new1", userTodos: -1 }).needsYou, false, "a negative count is nothing open: the one predicate's answer");
+  // a redial keeps the stale pre-outage entry under a skeleton member and render.ts hands the snapshot sessions.get(id):
+  // the roster count is the kernel's current and is read first
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [] }, null, false, { name: "x", userTodos: 2 }).todos, 2, "a stale entry's empty rows do not hide the count");
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{ id: "t1" }] }, null, false, { name: "x", userTodos: 0 }).todos, 0, "a stale entry's rows do not outlive a roster 0");
+  // an older kernel's roster row has no count: the session's rows still count, with the meta beside them or with none
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{ id: "t1" }] }, null, false, { name: "x" }).todos, 1);
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{ id: "t1" }] }, null).todos, 1, "no meta at all");
+  assert.equal(snapshotRow("x", null, null, false, { name: "x" }).todos, 0, "no frame and no count: nothing");
 });

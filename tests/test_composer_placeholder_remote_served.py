@@ -12,7 +12,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -23,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -33,14 +33,6 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 
 SID = "bbbbbbbb-1111-2222-3333-444444444444"
 COLOR = ("#64b5f6", "#0c1a2e")
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -120,14 +112,11 @@ def _kernel(lab, name, port, token, records=None, sid=None):
                           ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-            return proc, log
-        except Exception:
-            time.sleep(0.5)
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log
     proc.kill(); proc.wait()
-    raise unittest.SkipTest("hermetic kernel %s never served /healthz here" % name)
+    raise unittest.SkipTest("hermetic kernel %s never served /healthz here: %s" % (name, why))
 
 
 class ServedComposerPlaceholderRemoteHost(unittest.TestCase):
@@ -161,8 +150,8 @@ class ServedComposerPlaceholderRemoteHost(unittest.TestCase):
                          "content": [{"type": "text", "text": "Use exponential backoff with a jitter of ten percent."}]}},
         ]
         # the REMOTE kernel owns the session; the HUB has none of its own and shows the remote's through the relay
-        cls.rport, cls.rtoken = _free_port(), "testtok-remote-ph"
-        cls.hport, cls.htoken = _free_port(), "testtok-hub-ph"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-ph"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-ph"
         try:
             rp, cls.rlog = _kernel(cls.lab, "testhost", cls.rport, cls.rtoken, records=recs, sid=SID)
             cls.procs.append(rp)
@@ -173,7 +162,7 @@ class ServedComposerPlaceholderRemoteHost(unittest.TestCase):
             raise
         # the check-in handshake a mobile machine makes through its reverse forward: the hub records the peer like an
         # attached remote (no ssh of its own) and probes it on the port given, here the remote's own
-        body = json.dumps({"host": "TESTHOST", "kernelPort": cls.rport, "busPort": _free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": "TESTHOST", "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -202,6 +191,7 @@ class ServedComposerPlaceholderRemoteHost(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_the_placeholder_shows_the_remote_host_as_the_tab_label_does(self):

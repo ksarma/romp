@@ -24,7 +24,8 @@ const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 const plan = read('plans', 'file-review.md');
 const layout = read('ui', 'webview', 'card-layout.ts');
 const panel = read('ui', 'webview', 'file-comments.ts');
-const guide = read('docs', 'guide.md');
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front pages are the project's, CLAUDE.md "The documentation front pages")
+const guide = read('docs', 'reference.md');
 const sheets = [['styles.css', read('ui', 'webview', 'styles.css')], ['feed.css', read('ui', 'webview', 'feed.css')]];
 
 // The text between two markers, hard wraps collapsed so an assertion survives a rewrap.
@@ -48,10 +49,10 @@ const focus = between(slice2, FOCUS, 'The anchors follow-on (2026-09-07):');
 const tests = between(plan, '## Tests', '## Docs');
 const docs = between(plan, '## Docs', '## Deliberately not in v1');
 const open = between(plan, '## Open questions for the user', '## Upstream');
-/** The guide's Files section (a `### Files` heading), up to the next heading of any level. */
+/** The Files section: docs/reference.md's `## The Files pane`, up to the next heading of any level. */
 const files = (() => {
-  const m = /^### Files\n([\s\S]*?)(?=^#{2,3} )/m.exec(guide);
-  assert.ok(m, 'the guide has a Files section');
+  const m = /^## The Files pane\n([\s\S]*?)(?=^#{2,3} )/m.exec(guide);
+  assert.ok(m, 'the reference has the Files pane section');
   return m[1].replace(/\s+/g, ' ');
 })();
 

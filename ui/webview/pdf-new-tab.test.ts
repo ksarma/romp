@@ -24,7 +24,8 @@ const VIEW = fs.readFileSync(path.join(UI, "file-view.ts"), "utf8");
 const BROWSE = fs.readFileSync(path.join(UI, "file-browse.ts"), "utf8");
 const RENDER = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "bin", "romp-kernel"), "utf8");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// the chat pane's own detail moved to the reference (CLAUDE.md "The documentation front pages")
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const g = globalThis as any;
@@ -129,7 +130,20 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   const view = VIEW.slice(VIEW.indexOf("export function openFileView("));
   const body = view.slice(0, view.indexOf("\n}\n"));
   assert.doesNotMatch(body, /openPdfTab|openFileClick/, "openFileView itself opens in-app, whatever the path");
-  assert.equal((body.match(/wantsOwnTab\(ev\)/g) || []).length, 2, "the two gesture reads inside openFileView are its LINKS' (the body listener and openLink, file-view-links.test.ts), never its own open's");
+  // every gesture read inside openFileView belongs to a click on the file's CONTENT, never to its own open: the links'
+  // (openLink and the body listener's mark check, file-view-links.test.ts) and, since the link-navigation follow-on, the
+  // figure's (openFigure's stop and its tab, the second body listener's mark and open-panel checks, file-figure-open.test.ts).
+  // The two regions are counted apart, so a read added anywhere else in the function fails here by name
+  const reads = (s: string) => (s.match(/wantsOwnTab\(ev\)/g) || []).length;
+  const linksAt = body.indexOf("const openLink = (x: HTMLElement, ev: MouseEvent) => {");
+  const figureAt = body.indexOf("const openFigure = (img: Element, ev: MouseEvent): void => {");
+  const editAt = body.indexOf("const askDiscard = (question: string, kept: string): boolean => {");
+  assert.ok(linksAt > 0 && figureAt > linksAt && editAt > figureAt, "openLink, then openFigure, then the edit mode's askDiscard, in that order");
+  assert.equal(reads(body.slice(0, linksAt)), 0, "no gesture read before the links' opener: the open itself reads none");
+  assert.equal(reads(body.slice(linksAt, figureAt)), 2, "the links' two reads: openLink's own and the body listener's mark check");
+  assert.equal(reads(body.slice(figureAt, editAt)), 4, "the figure's four reads: openFigure's stop and its tab, the second listener's mark and open-panel checks");
+  assert.equal(reads(body.slice(editAt)), 0, "no gesture read after the figure's listener: the edit mode, the bar and the rest read none");
+  assert.equal(reads(body), 6, "the six gesture reads inside openFileView are its links' and its figures', never its own open's");
   // the file browser's rows and the chat's path pills hand their gesture over, middle button included
   assert.match(BROWSE, /list\.addEventListener\("click", \(ev\) => \{[\s\S]*?onAct\(row, ev\);/);
   assert.match(BROWSE, /const fileRowOf = \(ev: MouseEvent\) => \{[\s\S]*?row\.dataset\.act === "file" \? row : null;/,
@@ -268,9 +282,9 @@ test("openPath, executed: a modified click on a PDF opens the tab on every route
   } finally { g.window = savedWin; g.document = savedDoc; g.localStorage = savedLs; }
 });
 
-test("the guide says so, in the user's terms", () => {
-  const flat = GUIDE.replace(/\s+/g, " ");
-  assert.match(flat, /\*\*Opening a PDF\.\*\* [^*]{0,160}opens inside the dashboard like an image/);
+test("the reference says so, in the user's terms", () => {
+  const flat = REF.replace(/\s+/g, " ");
+  assert.match(flat, /### Opening a PDF [^#]{0,160}opens inside the dashboard like an image/);
   assert.match(flat, /Cmd-click it instead \(Ctrl on Windows and Linux\), or middle-click, and it opens in a new browser tab in the browser's own viewer/);
   assert.match(flat, /If the browser blocks that new tab, the PDF opens inside the dashboard instead; a PDF too large to show offers a download in its place\./);
 });

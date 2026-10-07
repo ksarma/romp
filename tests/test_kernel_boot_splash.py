@@ -8,6 +8,7 @@ slow/closed pane can never trap the user behind it. Pins the shell HTML + the ti
 """
 import os
 import pathlib
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -21,19 +22,24 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 
 class BootSplash(unittest.TestCase):
     def setUp(self):
         self.html = km._landing()
+        # the markup and code with every served comment blanked: the loader's tokens are spelled in comments too, and a
+        # page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py)
+        self.code = served_css.code(self.html)
 
     def test_the_shell_paints_a_centered_romp_loader(self):
         self.assertIn("id=romp-boot", self.html, "a full-window boot overlay rides in the shell HTML")
-        self.assertIn("romp-swirl-o.svg", self.html, "the centered o-glyph is the swirl")
-        self.assertIn("class=rl-o", self.html, "the swirl spins as the lowercase 'o' in the wordmark")
+        self.assertIn("romp-swirl-o.svg", self.code, "the centered o-glyph is the swirl")
+        self.assertIn("class=rl-o", self.code, "the swirl spins as the lowercase 'o' in the wordmark")
         self.assertIn("Anta-Regular.ttf", self.html, "the wordmark is set in Anta, like the README hero")
-        self.assertIn("#1EA1EB", self.html, "the R wears the swirl's blue arm colour")
-        self.assertIn("rl-dots", self.html, "the moving-dots loading cue below it")
+        self.assertIn("#1EA1EB", self.code, "the R wears the swirl's blue arm colour")
+        self.assertIn("rl-dots", self.code, "the moving-dots loading cue below it")
         self.assertIn("@keyframes rl-bnc", self.html, "the dots are animated")
         # the overlay sits before the panes so it covers the whole window from the first paint
         self.assertLess(self.html.index("id=romp-boot"), self.html.index("id=f-chat"))
@@ -66,10 +72,11 @@ class PaneSpinner(unittest.TestCase):
     def test_every_pane_shows_a_spinning_logo_that_hides_on_first_content(self):
         for name, (cid, _) in self.PANES.items():
             html = getattr(km, "_%s_page" % name)()
+            code = served_css.code(html)   # comments blanked, as for the shell's loader above (a dynamic getter, outside the census's derivation)
             self.assertIn("id=pane-spin", html, "%s pane has the loading overlay" % name)
-            self.assertIn("romp-swirl-o.svg", html, "%s loader uses the centered o-glyph" % name)
-            self.assertIn("class=rl-o", html, "%s loader shows the wordmark (swirl as the 'o')" % name)
-            self.assertIn("rl-dots", html, "%s loader has the dots (same look as the splash)" % name)
+            self.assertIn("romp-swirl-o.svg", code, "%s loader uses the centered o-glyph" % name)
+            self.assertIn("class=rl-o", code, "%s loader shows the wordmark (swirl as the 'o')" % name)
+            self.assertIn("rl-dots", code, "%s loader has the dots (same look as the splash)" % name)
             self.assertIn("rotate(-360deg)", html, "%s swirl spins (reverse, matching the splash)" % name)
             self.assertIn("getElementById('%s')" % cid, html, "%s observes its content container" % name)
             self.assertIn("MutationObserver", html, "%s hides the spinner on first content" % name)

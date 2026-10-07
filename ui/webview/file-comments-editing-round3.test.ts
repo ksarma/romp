@@ -6,9 +6,9 @@
 //     new contents and drop every change with no decision logged). The head says so at once, Save refuses in the same
 //     words and asks the kernel nothing, and Cancel then Edit again carries the changes in. A file that moved as well is
 //     left to the host's file fence, as the moved-file row promised.
-//   • While the editor is up the cards group over the text the status's offsets index — the file as the editor loaded it,
-//     or the last landed save's content — never the buffer, which typing moves under the offsets; the composer's
-//     passage-changed tag reads the same text.
+//   • While the editor is up the cards group over the text the status's offsets index (the file as the editor loaded it,
+//     or the content of the last save through the panel from that editor), never the buffer, which typing moves under the
+//     offsets; the composer's passage-changed tag reads the same text.
 //   • On a coarse primary pointer the decide-in-editor words lead with the route a finger has (Save or Cancel, then the
 //     buttons) and name the mouse gesture as one; the same words in the caption, the tooltips and the refusal row.
 //   • The Reject-all confirm does not survive an Edit: opened, then Edit, it is not back re-counted when the editor closes.
@@ -308,7 +308,7 @@ function rows(code: El, src: string): void {
 }
 function world(): World {
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body";
+  const body = new El("div"); body.className = "fileview-body"; body.rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox); every selection rect below sits inside
   const wrap = new El("div"); wrap.className = "fileview-code";
   const pre = new El("pre"); pre.className = "fileview-pre fileview-wrap";
   const code = new El("code"); code.className = "hljs";
@@ -606,13 +606,14 @@ test("source: the unread row is raised where every status lands and Save refuses
   assert.ok(guard >= 0 && guard < save.indexOf('await this.request("save", args, fence)'), "refused before the verb is sent");
   assert.match(save, /if \(!seed && now && \(now\.hunks \|\| \[\]\)\.length && !laterNs\(now\.fileMtimeNs, this\.ctx\.mtimeNs\(\)\)\) throw/, "no records in the editor, changes on disk, the file where the editor loaded it");
   assert.match(save, /this\.editText = content;/, "a landed save's content is what its reply's offsets index");
-  const paint = SRC.split("paintAll(): void {")[1].split("\n  }\n")[0];
+  const paint = SRC.split("paintPass(current: boolean): void {")[1].split("\n  }\n")[0];
   assert.match(paint, /if \(this\.changesUnreadUnderEdit\) \{ this\.changesUnreadUnderEdit = false; if \(this\.errors\.get\("edit"\)\?\.text === CHANGES_UNREAD_UNDER_EDIT\) this\.errors\.delete\("edit"\); \}/, "the edit's end retires the row and the latch");
   assert.match(paint, /this\.editText = null;/, "…and the indexed text");
   const view = SRC.split("changeView(): {")[1].split("\n  }\n")[0];
-  // the indexed text, with the U+FEFF the host keeps put back ahead of it on a BOM file (the cards' offsets are the host's; Slice 7 of
+  // the indexed text while the editor is up, else the text the card state holds (file-comments.ts, #cardState's doc), with the U+FEFF
+  // the host keeps put back ahead of it on a BOM file (the cards' offsets are the host's; Slice 7 of
   // plans/markdown-viewer.md, item 4, the review's round 1)
-  assert.match(view, /const text = this\.ctx\.mode\(\) === "media" \? null : this\.indexedText\(\);\n\s*const groups = changeGroups\(cards, text !== null && s && s\.bom \? "\\uFEFF" \+ text : text\);/, "the groups read the indexed text, the host's BOM ahead of it");
+  assert.match(view, /const text = this\.ctx\.editing\(\) \? this\.indexedText\(\) : cs\.shows \? cs\.text : null;.*\n\s*const groups = changeGroups\(cards, text !== null && s && s\.bom \? "\\uFEFF" \+ text : text\);/, "the groups read the indexed text while the editor is up and the card state's text otherwise, the host's BOM ahead of it; a source pin only, whose executed witness for the card state's text is file-comments-changes-review2.test.ts's case on the change list's paragraph groups and its fold");
   assert.doesNotMatch(view, /this\.ctx\.text\(\)/);
   assert.equal(SRC.split("c.text !== this.indexedText()").length - 1, 2, "both passage-changed tags read it");
   assert.equal(SRC.split("c.text !== this.ctx.text()").length - 1, 0, "…and neither reads the buffer");

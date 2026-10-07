@@ -13,14 +13,18 @@ import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
+import { codeOnly, stripComments } from "../test-code-only";   // the comment stripper every source pin below reads through (the compiler's ranges)
+import * as ts from "typescript";                              // the compiler enumerates the census's imports and bindings (the test build keeps typescript a runtime require)
 import * as fs from "node:fs";
 import * as path from "node:path";
 import DOMPurify from "dompurify";   // the module-global instance md-sanitize.ts imports, for the record pin on the seam's constraint
 import type { FileViewActionCtx, At } from "./file-view";
 import type { Status, Hunk } from "./file-comments-model";
-import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
+import { setMdSanitizer, sanitizeMd, MD_PURIFY } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md); sanitizeMd and the profile for the inertness pins
 import { marked } from "marked";                   // the singleton the viewer parses with: one case makes its lexer throw (the Slice 7 review's round 2)
 
+/** A module's source by its path under ui/webview, or a path relative to it (the re-parse census reaches one module outside it,
+ *  the vendored engine anchor-map.ts reads from `../../vendor/`); the one reader of a module here. */
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
 
@@ -557,6 +561,1238 @@ test("an image body is media: mode() media, media() image, text() null, no Edit;
   assert.equal(revoked, 1, "the bytes leave with the viewer");
 });
 
+// ── an svg's picture loads from the kernel's /file address, as the composer chip, the lightbox, a notice attachment, the file
+// hover card and a chat image's first attempt already do; any other image keeps the object URL of its fetched bytes ──
+/** Record every URL.createObjectURL and URL.revokeObjectURL for the test's duration; both still run. */
+function watchObjectUrls(t: TestContext): { minted: string[]; revoked: string[] } {
+  const minted: string[] = [], revoked: string[] = [];
+  const realCreate = URL.createObjectURL, realRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = ((b: any) => { const u = realCreate.call(URL, b); minted.push(u); return u; }) as typeof URL.createObjectURL;
+  URL.revokeObjectURL = ((u: string) => { revoked.push(u); realRevoke.call(URL, u); }) as typeof URL.revokeObjectURL;
+  t.after(() => { URL.createObjectURL = realCreate; URL.revokeObjectURL = realRevoke; });
+  return { minted, revoked };
+}
+
+test("an svg picture shows from its /file address, the one the viewer fetched, keyed on the landed mtime (v); no object URL is made for it, so the close releases none", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { fv, ctx, body } = await open(FIG, t);
+  assert.equal(ctx.media(), "svg"); assert.equal(ctx.mode(), "media");
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(!src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + src);
+  assert.equal(src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the fetched address with the landed mtime as its key");
+  assert.ok(fetches.includes("GET /file?path=" + encodeURIComponent(FIG) + "&sid=" + SID), "the viewer's own fetch read the same address, unkeyed: " + fetches.join(" | "));
+  assert.deepEqual(urls.minted, [], "no object URL for the svg");
+  fv.closeFileView();
+  assert.deepEqual(urls.revoked, [], "so the close releases none");
+});
+
+test("a remote session's svg picture shows from the relay's /file address with the bare sid, keyed on the landed mtime; no object URL is made for it", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { body } = await open(FIG, t, "TESTHOST:" + SID);
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(!src.startsWith("blob:"), "the svg's picture is its /file address, not an object URL; got " + src);
+  assert.equal(src, "/remote/TESTHOST/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the relay's address with the landed mtime as its key");
+  assert.deepEqual(urls.minted, [], "no object URL for the svg");
+});
+
+test("an svg answer whose Content-Type carries a parameter (image/svg+xml; charset=utf-8) is an svg all the same, and so is one whose subtype is upper-case with a space before the parameter: the picture is its /file address keyed on the landed mtime, the Source toggle offered, no object URL made", async (t) => {
+  const urls = watchObjectUrls(t);
+  for (const [name, type] of [["figure-utf8.svg", "image/svg+xml; charset=utf-8"], ["figure-upper.svg", "image/SVG+XML ; charset=UTF-8"]]) {
+    const fig = ROOT + "/docs/" + name;
+    disk[fig] = { bytes: SVG, type, mtimeNs: MT };
+    t.after(() => { delete disk[fig]; });
+    const { ctx, wrap, body } = await open(fig, t);
+    const src = body.querySelector("img.fileview-img")!.src;
+    assert.equal(src, "/file?path=" + encodeURIComponent(fig) + "&sid=" + SID + "&v=" + MT, type + ": the svg's picture is its /file address, not an object URL; got " + src);
+    assert.equal(ctx.media(), "svg", type + ": the media type decides, the parameter aside");
+    assert.equal(wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")?.hidden, false, type + ": the Source toggle is offered");
+  }
+  assert.deepEqual(urls.minted, [], "no object URL for either svg");
+});
+
+test("a png's picture keeps the object URL of its fetched bytes (the control for the svg cases above)", async (t) => {
+  const urls = watchObjectUrls(t);
+  const { body } = await open(PLOT, t);
+  const src = body.querySelector("img.fileview-img")!.src;
+  assert.ok(src.startsWith("blob:"), "a png shows from its object URL; got " + src);
+  assert.deepEqual(urls.minted, [src], "the one object URL made is the picture's");
+});
+
+test("an answer typed IMAGE/SVG+XML is not taken as an svg picture: the viewer takes only a type that starts with image/ as an image, so it reads this one as text (raw, no Edit, media() null), with no picture and so no /file picture address, no Source toggle and no object URL", async (t) => {
+  const urls = watchObjectUrls(t);
+  const fig = ROOT + "/docs/figure-caps.svg";
+  disk[fig] = { bytes: SVG, type: "IMAGE/SVG+XML", mtimeNs: MT };
+  t.after(() => { delete disk[fig]; });
+  const { ctx, wrap, body, b } = await open(fig, t);
+  assert.equal(ctx.media(), null, "IMAGE/SVG+XML is no image to the viewer, so no svg verdict either; got " + ctx.media());
+  assert.equal(ctx.mode(), "raw", "read as text");
+  assert.equal(ctx.text(), SVG, "the answer's text is the body");
+  assert.equal(b.edit.hidden, true, "not text/plain: no Edit");
+  assert.deepEqual(body.querySelectorAll("img").map((i) => i.src), [], "no picture, so no /file picture address");
+  assert.equal(wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")?.hidden, true, "no Source toggle");
+  assert.deepEqual(urls.minted, [], "no object URL");
+});
+
+// ── the svg picture's own load (it loads from its /file address in a request of its own): the loader in the picture box, the
+// replaced picture's error ignored, the address asked again once, the pane in that answer's words, the way back, and the seam's
+// onLanded at the landing ──
+/** The Source toggle of the open viewer. */
+const sourceBtn = (wrap: El): El => wrap.querySelector(".fileview-acts")!.querySelectorAll("button").find((x) => x.textContent === "Source")!;
+/** The viewer's own GETs of `p` so far (never the picture's request, which the stand-in makes none of). */
+const asksOf = (p: string): number => fetches.filter((f) => f.startsWith("GET /file?path=" + encodeURIComponent(p) + "&") || f === "GET /file?path=" + encodeURIComponent(p)).length;
+
+test("an svg picture still loading has the romp loader beside it in the picture box, gone at the picture's load before the seam's hooks run; a png's picture, an object URL of bytes in hand, has none", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  assert.ok(body.querySelector(".fileview-imgbox .fileview-load"), "the loader waits in the picture box beside the loading picture");
+  assert.equal(body.childNodes.length, 1, "the body holds the picture box alone");
+  let loaderAtHook: boolean | null = null;
+  ctx.onRendered(() => { loaderAtHook = !!body.querySelector(".fileview-load"); });
+  img.dispatchEvent(new Ev("load"));
+  assert.equal(loaderAtHook, false, "the loader left before the hooks ran, so they measure the picture alone");
+  assert.equal(body.querySelector(".fileview-load"), null, "and it is gone");
+  const png = await open(PLOT, t);
+  assert.ok(png.body.querySelector("img.fileview-img"), "a png's picture");
+  assert.equal(png.body.querySelector(".fileview-load"), null, "an object URL's picture, its bytes in hand, has no loader beside it");
+});
+
+test("the picture's error paints nothing once the body no longer holds that picture: the Source view stands after a Source toggle and the new picture after a reload, error() stays null and no re-ask runs; a png's reload is the control on the same handler", async (t) => {
+  const { ctx, body, wrap } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  sourceBtn(wrap).click();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view is up");
+  const asks = asksOf(FIG), p0 = paints;
+  img.dispatchEvent(new Ev("error"));                    // the replaced picture's request fails late
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "after a Source toggle: the Source view stands");
+  assert.equal(body.querySelector(".fileview-err"), null, "no pane");
+  assert.equal(ctx.error(), null, "error() stays null");
+  assert.equal(asksOf(FIG), asks, "no re-ask");
+  assert.equal(paints, p0, "no paint");
+  sourceBtn(wrap).click();                               // back to the picture
+  const shown = body.querySelector("img.fileview-img")!;
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: "1757145600000000007" };
+  ctx.reload();
+  await settle();
+  const fresh = body.querySelector("img.fileview-img")!;
+  assert.notEqual(fresh, shown, "the reload built a new picture");
+  const asks2 = asksOf(FIG);
+  shown.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(body.querySelector("img.fileview-img"), fresh, "after a reload: the new picture stands");
+  assert.equal(ctx.error(), null, "error() stays null");
+  assert.equal(asksOf(FIG), asks2, "no re-ask");
+  const png = await open(PLOT, t);
+  const pimg = png.body.querySelector("img.fileview-img")!;
+  disk[PLOT] = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0a]), type: "image/png", mtimeNs: "1757145600000000007" };
+  png.ctx.reload();
+  await settle();
+  const pfresh = png.body.querySelector("img.fileview-img")!;
+  assert.notEqual(pfresh, pimg, "the png's reload built a new picture");
+  pimg.dispatchEvent(new Ev("error"));
+  assert.equal(png.body.querySelector("img.fileview-img"), pfresh, "the png control: the new picture stands on the same handler");
+  assert.equal(png.ctx.error(), null, "and error() stays null");
+});
+
+test("an svg picture's failed load asks its address again: the romp loader takes the body with no paint and error() null through the wait, one fetch runs, and its answer paints the picture again at the address; that picture's failure shows SVG_PICTURE_FAILED with the path and Download, error() that sentence, and asks nothing more; a png's failure shows DECODE_FAILED and asks nothing", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  const fv = await mod();
+  const img = body.querySelector("img.fileview-img")!;
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const asks = asksOf(FIG);
+  img.dispatchEvent(new Ev("error"));
+  assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-imgbox"), "the romp loader takes the body while the address is asked again");
+  assert.equal(paints, 0, "the loader fires no onRendered (it tells onReplaced, the case on onReplaced below): the panel keeps its layer until the answer paints");
+  assert.equal(ctx.error(), null, "error() is null through the wait, as over any loader");
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "one re-ask: the viewer's own fetch of the address");
+  const again = body.querySelector("img.fileview-img")!;
+  assert.ok(again && again !== img, "the answer painted the picture again");
+  assert.equal(again.src, address, "at its /file address; got " + again.src);
+  assert.equal(paints, 0, "not loaded yet: no paint");
+  again.dispatchEvent(new Ev("error"));
+  const pane = body.querySelector(".fileview-err")!;
+  assert.ok(pane, "the pane is up");
+  assert.equal(pane.childNodes[0].textContent, fv.SVG_PICTURE_FAILED, "worded for both causes");
+  assert.equal(pane.querySelector(".fileview-err-hint")!.textContent, FIG, "with the path");
+  assert.ok(pane.querySelector(".fileview-err-dl"), "and Download");
+  assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, "error() is that sentence");
+  assert.equal(paints, 1, "the pane is the paint");
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "one re-ask per picture failure, and the failure of the picture it landed asks nothing more");
+  const png = await open(PLOT, t);
+  const pasks = asksOf(PLOT);
+  png.body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(png.ctx.error(), fv.DECODE_FAILED, "a png's failure is its bytes' verdict: DECODE_FAILED");
+  assert.equal(asksOf(PLOT), pasks, "and it asks nothing");
+});
+
+test("when the re-ask's own fetch fails, the pane is the fetch chain's in its own words, and it waits for a way back: romp:wsup, hostUp and romp:hostRelayUp each run the fetch again, while nothing runs it over a picture that shows", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  win.dispatchEvent(new Event("romp:wsup"));
+  await settle();
+  const base = asksOf(FIG);
+  assert.equal(base, 1, "over a picture that shows, romp:wsup runs no fetch");
+  delete disk[FIG];                                       // the file is gone when the address is asked again
+  img.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(asksOf(FIG), 2, "one re-ask");
+  assert.equal(ctx.error(), "no such file: " + FIG, "the pane carries the kernel's words, never a decode sentence");
+  assert.equal(body.querySelector(".fileview-err")!.childNodes[0].textContent, "no such file: " + FIG, "the fetch chain's own pane");
+  win.dispatchEvent(new Event("romp:wsup"));
+  await settle();
+  assert.equal(asksOf(FIG), 3, "romp:wsup asks again");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }));
+  await settle();
+  assert.equal(asksOf(FIG), 4, "hostUp asks again");
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+  win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }));
+  await settle();
+  assert.equal(asksOf(FIG), 5, "romp:hostRelayUp asks again");
+  assert.equal(ctx.error(), null, "the file answered: the pane gave way to the picture");
+  assert.equal(body.querySelector("img.fileview-img")!.src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "at its /file address");
+  win.dispatchEvent(new Event("romp:wsup"));
+  await settle();
+  assert.equal(asksOf(FIG), 5, "and with a picture up again, the way back is disarmed");
+});
+
+test("over the pane after a re-ask, each kernel message sends one probe of the picture's address off the page, one at a time and three in all, and a probe that loads runs the fetch again", async (t) => {
+  const probes: Array<{ src: string; onload: (() => void) | null; onerror: (() => void) | null }> = [];
+  const realImage = (globalThis as any).Image, realLocation = (globalThis as any).location;
+  (globalThis as any).Image = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; private s = ""; get src() { return this.s; } set src(v: string) { this.s = v; probes.push(this as any); } };
+  (globalThis as any).location = { protocol: "http:", href: "http://notes-api.test/" };
+  t.after(() => { (globalThis as any).Image = realImage; (globalThis as any).location = realLocation; });
+  const { ctx, body } = await open(FIG, t);
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(asksOf(FIG), 2, "the picture's failure asked its address again");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));   // the re-ask's picture fails too: the pane
+  assert.equal(ctx.error(), (await mod()).SVG_PICTURE_FAILED, "the pane after the re-ask");
+  const message = () => win.dispatchEvent(new MessageEvent("message", { data: { type: "sessions", sessions: [] } }));
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  for (let i = 0; i < 3; i++) {
+    message();
+    message();                                            // a second message while the probe is out sends nothing
+    assert.equal(probes.length, i + 1, "message pair " + (i + 1) + ": one probe");
+    assert.equal(probes[i].src, address, "of the picture's /file address");
+    probes[i].onerror!();
+  }
+  message();
+  assert.equal(probes.length, 3, "three probes in all for this pane");
+  assert.equal(asksOf(FIG), 2, "failed probes run no fetch");
+  win.dispatchEvent(new Event("romp:wsup"));             // the way back refills the budget and asks again: the same bytes, the picture fails again, a new pane
+  await settle();
+  assert.equal(asksOf(FIG), 3, "romp:wsup asked again");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  message();
+  assert.equal(probes.length, 4, "romp:wsup refilled the budget: one probe");
+  probes[3].onload!();
+  await settle();
+  assert.equal(asksOf(FIG), 4, "the probe loaded: the fetch runs again");
+  assert.equal(ctx.error(), null, "and its answer painted the picture");
+});
+
+type Probe = { src: string; onload: (() => void) | null; onerror: (() => void) | null };
+/** The page's Image replaced for the case, as the way back's probes are made of it: every probe sent, for the case to settle by
+ *  hand (onload: the address answered with a picture; onerror: it did not). */
+function fakeProbes(t: TestContext): Probe[] {
+  const probes: Probe[] = [];
+  const realImage = (globalThis as any).Image, realLocation = (globalThis as any).location;
+  (globalThis as any).Image = class { onload: (() => void) | null = null; onerror: (() => void) | null = null; private s = ""; get src() { return this.s; } set src(v: string) { this.s = v; probes.push(this as any); } };
+  (globalThis as any).location = { protocol: "http:", href: "http://notes-api.test/" };
+  t.after(() => { (globalThis as any).Image = realImage; (globalThis as any).location = realLocation; });
+  return probes;
+}
+/** A kernel message of no kind the way back reads, as the kernel pushes many. */
+const kernelMessage = (): void => { win.dispatchEvent(new MessageEvent("message", { data: { type: "sessions", sessions: [] } })); };
+
+test("the probes' budget spans the panes their own fetches paint: a probe that loads while the viewer's fetch still fails runs that fetch, and the pane it paints keeps what is left, so over twelve kernel messages three probes run three fetches in all; romp:wsup, hostUp and romp:hostRelayUp each refill it", async (t) => {
+  const probes = fakeProbes(t);
+  const { ctx, body } = await open(FIG, t);
+  delete disk[FIG];                                       // the address does not answer the viewer's fetch from here on
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), "no such file: " + FIG, "the re-ask's pane, in the kernel's words");
+  const asks = asksOf(FIG);
+  for (let i = 0; i < 12; i++) {
+    const sent = probes.length;
+    kernelMessage();
+    if (probes.length > sent) { probes[probes.length - 1].onload!(); await settle(); }   // every probe loads, as one may while the page still holds the picture of an address it has loaded
+  }
+  assert.equal(probes.length, 3, "three probes over twelve messages, though every one of them loaded");
+  assert.equal(asksOf(FIG) - asks, 3, "three fetches in all, one per loaded probe: each pane they painted kept what was left of the budget");
+  assert.equal(ctx.error(), "no such file: " + FIG, "the pane stands");
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const [name, fire] of ways) {
+    const n: number = probes.length, a: number = asksOf(FIG);
+    fire();
+    await settle();
+    assert.equal(asksOf(FIG) - a, 1, name + ": the way back asked again and met the same failure");
+    for (let i = 0; i < 6; i++) { const sent = probes.length; kernelMessage(); if (probes.length > sent) probes[probes.length - 1].onerror!(); }
+    assert.equal(probes.length - n, 3, name + " refilled the budget: three probes over the pane its fetch painted");
+  }
+});
+
+test("the probes' budget refills at a reload, at the Source toggle and at a landing whose picture shows; a landing whose picture fails refills nothing", async (t) => {
+  const probes = fakeProbes(t);
+  const fv = await mod();
+  /** The kernel messages' probes, each failing, until a message sends none: what the budget held. */
+  const spend = (): number => {
+    const n = probes.length;
+    for (let i = 0; i < 8; i++) { const sent = probes.length; kernelMessage(); if (probes.length === sent) break; probes[probes.length - 1].onerror!(); }
+    return probes.length - n;
+  };
+  const gone = "no such file: " + FIG;
+  const { ctx, body, wrap } = await open(FIG, t);
+  delete disk[FIG];
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), gone, "the re-ask's pane");
+  assert.equal(spend(), 3, "the open filled the budget: three probes over the re-ask's pane");
+  assert.equal(spend(), 0, "and they are spent");
+  // a reload: the file answers with new bytes, their picture fails, and the re-ask meets the file gone again
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: "1757145600000000007" };
+  ctx.reload();
+  await settle();
+  delete disk[FIG];
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), gone, "the re-ask's pane after the reload");
+  assert.equal(spend(), 3, "the reload refilled the budget");
+  // the Source toggle: the Source view of the bytes in hand, then back to the picture, whose fresh load fails and asks again
+  sourceBtn(wrap).click();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view");
+  sourceBtn(wrap).click();
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), gone, "the re-ask's pane after the Source view and back");
+  assert.equal(spend(), 3, "the Source toggle refilled the budget");
+  // a probe that loads while the file answers again: its fetch lands the picture; whether that picture showed decides the
+  // budget of the pane its failure then paints (the stand-in fails the picture after its load, to reach a pane over a landing
+  // whose picture showed)
+  for (const shows of [true, false]) {
+    const o = await open(FIG, t);
+    delete disk[FIG];
+    o.body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    await settle();
+    const n = probes.length;
+    kernelMessage();
+    assert.equal(probes.length, n + 1, "one probe over the re-ask's pane");
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    probes[n].onload!();
+    await settle();
+    const pic = o.body.querySelector("img.fileview-img")!;
+    assert.ok(pic && o.ctx.error() === null, "the probe loaded and the file answered: the landing painted the picture");
+    if (shows) pic.dispatchEvent(new Ev("load"));
+    pic.dispatchEvent(new Ev("error"));
+    assert.equal(o.ctx.error(), fv.SVG_PICTURE_FAILED, "the landed picture failed: the pane worded for both causes");
+    assert.equal(spend(), shows ? 3 : 2, shows ? "a landing whose picture showed refilled the budget" : "a landing whose picture failed refilled nothing: the pane keeps what the probe left");
+  }
+});
+
+test("a failed reload's pane, and a failed first open's, try nothing again by themselves, as before for every file type: over a failed reload of an svg shown as a picture, of an svg over the pane a failed picture's re-ask left, of a png and of a text file, kernel messages send no probe and romp:wsup, hostUp and romp:hostRelayUp run no fetch; over a failed first open of an svg, a png and a markdown file, the three events run no fetch", async (t) => {
+  const probes = fakeProbes(t);
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  const roads: Array<[string, string]> = [["an svg shown as a picture", FIG], ["an svg over the pane a failed picture's re-ask left", FIG], ["a png", PLOT], ["a text file", APP]];
+  for (const [road, p] of roads) {
+    const { ctx, body } = await open(p, t);
+    const img = body.querySelector("img.fileview-img");
+    if (road === "an svg shown as a picture" || road === "a png") img!.dispatchEvent(new Ev("load"));
+    if (road === "an svg over the pane a failed picture's re-ask left") {
+      delete disk[FIG];
+      img!.dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), "no such file: " + FIG, road + ": the premise: the re-ask's pane");
+    }
+    delete disk[p];                                       // the file is gone when the reload reads it
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.error(), "no such file: " + p, road + ": the failed reload's pane, in the kernel's words");
+    const asks = asksOf(p), n = probes.length;
+    kernelMessage(); kernelMessage();                     // before any reconnect-class event: an svg's picture address is the kernel's /file, which a probe would take
+    await settle();
+    assert.equal(probes.length, n, road + ": no kernel message sends a probe over the failed reload's pane");
+    for (const [way, fire] of ways) {
+      fire();
+      await settle();
+      assert.equal(asksOf(p), asks, road + ": " + way + " runs no fetch over the failed reload's pane");
+    }
+  }
+  for (const name of ["gone.svg", "gone.png", "gone.md"]) {
+    const gone = ROOT + "/docs/" + name;
+    const { ctx } = await open(gone, t);
+    assert.equal(ctx.error(), "no such file: " + gone, name + ": the failed first open's pane");
+    const asks = asksOf(gone);
+    for (const [way, fire] of ways) {
+      fire();
+      await settle();
+      assert.equal(asksOf(gone), asks, name + ": " + way + " runs no fetch over a failed first open's pane");
+    }
+  }
+});
+
+test("a probe that settles after its pane gave way to a newer one acts on nothing: a late loaded probe of an earlier pane runs no fetch, and a late failed one leaves the newer pane's probe the one out, so the next kernel message sends none", async (t) => {
+  const probes = fakeProbes(t);
+  for (const late of ["loads", "fails"]) {
+    const { ctx, body } = await open(FIG, t);
+    delete disk[FIG];                                     // the address does not answer the viewer's fetch from here on
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(ctx.error(), "no such file: " + FIG, late + ": the re-ask's pane (the earlier pane)");
+    const n = probes.length;
+    kernelMessage();
+    assert.equal(probes.length, n + 1, late + ": one probe over the earlier pane");
+    win.dispatchEvent(new Event("romp:wsup"));            // the way back's fetch meets the same failure and paints the newer pane
+    await settle();
+    kernelMessage();
+    assert.equal(probes.length, n + 2, late + ": the newer pane's probe goes out while the earlier one is still out");
+    const asks = asksOf(FIG);
+    if (late === "loads") {
+      probes[n].onload!();                                // the earlier pane's probe loads late
+      await settle();
+      assert.equal(asksOf(FIG), asks, "a late loaded probe of an earlier pane runs no fetch");
+      assert.equal(ctx.error(), "no such file: " + FIG, "and the newer pane stands");
+    } else {
+      probes[n].onerror!();                               // the earlier pane's probe fails late
+      await settle();
+      kernelMessage();
+      assert.equal(probes.length, n + 2, "a late failed probe of an earlier pane leaves the newer pane's probe the one out: the next kernel message sends none");
+      assert.equal(asksOf(FIG), asks, "and no fetch runs");
+    }
+  }
+});
+
+test("the way back's three window listeners (romp:wsup, romp:hostRelayUp and the kernel's messages) leave with the viewer, at a close and at a replacing open: the window's count of each is back where it stood before the open", async (t) => {
+  const kinds = ["romp:wsup", "romp:hostRelayUp", "message"];
+  const live = new Map<string, Set<unknown>>();
+  const add = win.addEventListener, remove = win.removeEventListener;
+  win.addEventListener = function (this: any, type: string, cb: unknown, o?: unknown) { if (!live.has(type)) live.set(type, new Set()); live.get(type)!.add(cb); return add.call(this, type, cb, o); };
+  win.removeEventListener = function (this: any, type: string, cb: unknown, o?: unknown) { live.get(type)?.delete(cb); return remove.call(this, type, cb, o); };
+  t.after(() => { delete win.addEventListener; delete win.removeEventListener; });
+  const count = (): number[] => kinds.map((k) => live.get(k)?.size ?? 0);
+  const fv = await mod();
+  await open(FIG, t);                                     // a first open and close: any listener the page installs once and keeps is in place before the count
+  fv.closeFileView();
+  const start = count();
+  await open(FIG, t);
+  const up = count();
+  assert.deepEqual(up.map((c, i) => c - start[i]), [1, 1, 1], "the open viewer holds one listener of each kind: " + JSON.stringify({ start, up }));
+  await open(PLOT, t);                                    // a replacing open: the first viewer's listeners leave, the second's arrive
+  assert.deepEqual(count(), up, "a replacing open leaves one of each, the new viewer's");
+  fv.closeFileView();
+  assert.deepEqual(count(), start, "the close leaves none of the viewer's: the count is back where it stood");
+});
+
+test("a press of the Source toggle while a fetch that asked the picture's address again is out: its answer, a failure or a landing, paints nothing, so the Source view stands with error() null and mode() the Source view's; back to the picture, it loads afresh at its /file address with no fetch, and its failure asks again; the same over the way back's fetch, and when a press on the toggle parks the failure before its click", async (t) => {
+  const realFetch = (globalThis as any).fetch;
+  let gate: Promise<void> | null = null;
+  (globalThis as any).fetch = async (u: string, i?: { method?: string }) => {
+    if (gate && u.includes("path=" + encodeURIComponent(FIG))) { const g = gate; gate = null; await g; }
+    return realFetch(u, i);
+  };
+  t.after(() => { (globalThis as any).fetch = realFetch; });
+  /** Hold the next fetch of the svg until the returned function runs. */
+  const holdNext = (): (() => void) => { let r!: () => void; gate = new Promise<void>((res) => { r = res; }); return r; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  for (const answer of ["a failure", "a landing"]) {
+    const { ctx, body, wrap } = await open(FIG, t);
+    const release = holdNext();
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-imgbox"), answer + ": the re-ask's loader, its fetch held");
+    sourceBtn(wrap).click();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), answer + ": the Source view is up");
+    const p0 = paints;
+    if (answer === "a failure") delete disk[FIG];
+    release();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), answer + ": the re-ask's answer painted nothing: the Source view stands");
+    assert.equal(body.querySelector(".fileview-err"), null, answer + ": no pane");
+    assert.equal(ctx.error(), null, answer + ": error() null");
+    assert.equal(sourceBtn(wrap).getAttribute("aria-pressed"), "true", answer + ": Source still pressed");
+    assert.equal(ctx.mode(), "raw", answer + ": mode() the Source view's");
+    assert.equal(paints, p0, answer + ": no paint");
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const asks = asksOf(FIG);
+    sourceBtn(wrap).click();
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, address, answer + ": back to the picture, a fresh load at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, answer + ": with no fetch");
+    pic.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, answer + ": that picture's failure asks its address again, once");
+  }
+  // the way back's fetch: a pane stands, romp:wsup asks again, and the toggle is pressed while that fetch is out
+  const { ctx, body, wrap } = await open(FIG, t);
+  delete disk[FIG];
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), "no such file: " + FIG, "the re-ask's pane");
+  const release = holdNext();
+  win.dispatchEvent(new Event("romp:wsup"));
+  sourceBtn(wrap).click();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view over the pane, the way back's fetch held");
+  release();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the way back's failure painted nothing: the Source view stands");
+  assert.equal(body.querySelector(".fileview-err"), null, "no pane");
+  assert.equal(ctx.error(), null, "error() null");
+  // a press on the toggle parks the answer (the landing's hold reads the card) and the press's click then changes the view:
+  // the parked failure paints nothing at the release (the Source view seen once before, so its text is in hand)
+  const o = await open(FIG, t);
+  sourceBtn(o.wrap).click();
+  await settle();
+  sourceBtn(o.wrap).click();
+  const release2 = holdNext();
+  o.body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  const down = new Ev("pointerdown");
+  (down as unknown as { button: number }).button = 0;
+  dispatch(sourceBtn(o.wrap), down);
+  delete disk[FIG];
+  release2();
+  await settle();
+  assert.ok(o.body.querySelector(".fileview-load") && !o.body.querySelector(".fileview-err"), "the failure is parked under the press: the loader still up");
+  sourceBtn(o.wrap).click();
+  assert.ok(o.body.querySelector("code.hljs"), "the press's click put the Source view up");
+  win.dispatchEvent(new Event("pointerup"));
+  await new Promise<void>((r) => setTimeout(r, 5));      // the hold runs a parked landing on a zero timer after the release
+  assert.ok(o.body.querySelector("code.hljs"), "the parked failure painted nothing at the release: the Source view stands");
+  assert.equal(o.body.querySelector(".fileview-err"), null, "no pane");
+  assert.equal(o.ctx.error(), null, "error() null");
+});
+
+test("a reconnect-class event heard while a fetch that asked the picture's address again is out runs nothing then; if that fetch fails it runs once more at once over the pane it painted, and that run's failure arms the way back as any pane does, with nothing more until the next event; for romp:wsup, hostUp and romp:hostRelayUp, over the re-ask's fetch and over the way back's", async (t) => {
+  const realFetch = (globalThis as any).fetch;
+  let gate: Promise<void> | null = null, failHeld = false;
+  (globalThis as any).fetch = async (u: string, i?: { method?: string }) => {
+    if (gate && u.includes("path=" + encodeURIComponent(FIG))) {
+      const g = gate; gate = null; await g;
+      if (failHeld) {                                     // the held fetch meets the relay's 502, whatever the file says now
+        failHeld = false;
+        fetches.push("GET " + u);
+        return { ok: false, status: 502, headers: { get: () => null }, text: async () => "tunnel to TESTHOST is not answering; re-dialing" };
+      }
+    }
+    return realFetch(u, i);
+  };
+  t.after(() => { (globalThis as any).fetch = realFetch; });
+  /** Hold the next fetch of the svg until the returned function runs; `fail`: it then meets the relay's 502. */
+  const holdNext = (fail: boolean): (() => void) => { let r!: () => void; failHeld = fail; gate = new Promise<void>((res) => { r = res; }); return r; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const gone = "no such file: " + FIG;
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const [name, fire] of ways) {
+    // over the re-ask's fetch, which meets the relay's 502; the file answers the run after it
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      const release = holdNext(true);
+      body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));   // the re-ask's fetch, held
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG), asks, name + ": nothing more runs while the re-ask's fetch is out");
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the re-ask's fetch failed and ran once more at once");
+      assert.equal(ctx.error(), null, name + ": the run after it answered: the pane gave way to the picture");
+      assert.equal(body.querySelector("img.fileview-img")!.src, address, name + ": at its /file address");
+    }
+    // over the re-ask's fetch, the file gone: the run after it fails too, arms the way back, and nothing more runs until the next event
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      const release = holdNext(false);
+      body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+      fire();
+      await settle();
+      delete disk[FIG];
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the re-ask's fetch failed and ran once more at once, and that run failed too");
+      assert.equal(ctx.error(), gone, name + ": its pane, in the kernel's words");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": and nothing more runs: the run's failure only arms the way back");
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": that pane is armed as any pane: the next event runs the fetch once");
+    }
+    // over the way back's fetch: a pane stands, one event runs the fetch, and the same event again arrives while it is out
+    {
+      const { ctx, body } = await open(FIG, t);
+      delete disk[FIG];
+      body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), gone, name + ": the re-ask's pane");
+      const asks = asksOf(FIG);
+      const release = holdNext(true);
+      fire();                                             // the way back's fetch, held
+      fire();                                             // the second event, while it is out
+      await settle();
+      assert.equal(asksOf(FIG), asks, name + ": the second event runs nothing while the way back's fetch is out");
+      disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the way back's fetch failed and ran once more at once");
+      assert.equal(ctx.error(), null, name + ": the run after it answered: the picture");
+      assert.equal(body.querySelector("img.fileview-img")!.src, address, name + ": at its /file address");
+    }
+  }
+});
+
+test("a reconnect-class event heard while the picture landed by a fetch that asked the address again is still loading: that picture's failure asks the address once more at once, behind the loader, in place of the pane, and that ask's own picture, failing with no event since, shows SVG_PICTURE_FAILED and arms the way back as any pane does, with nothing more until the next event; the same when the event came while that fetch was out, over the way back's landing and over the ask's own landing, for romp:wsup, hostUp and romp:hostRelayUp; an event after that picture showed changes nothing at a later failure of it; a press of the Source toggle ends the attempt whole, so the picture painted when the person returns is a first showing, whose failure asks the address again once (after an event before the press, over the re-ask's pane, after the re-ask's picture showed, and over the way back's pane), and that ask's own picture, failing with no event since, shows the pane", async (t) => {
+  const fv = await mod();
+  const realFetch = (globalThis as any).fetch;
+  let gate: Promise<void> | null = null;
+  (globalThis as any).fetch = async (u: string, i?: { method?: string }) => {
+    if (gate && u.includes("path=" + encodeURIComponent(FIG))) { const g = gate; gate = null; await g; }
+    return realFetch(u, i);
+  };
+  t.after(() => { (globalThis as any).fetch = realFetch; });
+  /** Hold the next fetch of the svg until the returned function runs; it then answers as the file does. */
+  const holdNext = (): (() => void) => { let r!: () => void; gate = new Promise<void>((res) => { r = res; }); return r; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const gone = "no such file: " + FIG;
+  const pic = (body: El): El => body.querySelector("img.fileview-img")!;
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const [name, fire] of ways) {
+    // the re-ask's landing: the event arrives while its picture loads, and then that picture fails
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      pic(body).dispatchEvent(new Ev("error"));             // the re-ask, which lands
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": one re-ask, landed");
+      const landed = pic(body);
+      fire();                                               // while the landed picture loads
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": the event runs nothing while that picture loads");
+      landed.dispatchEvent(new Ev("error"));
+      assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-err") && !body.querySelector(".fileview-imgbox"), name + ": the picture's failure after the event asks the address once more at once, behind the loader, in place of the pane");
+      assert.equal(ctx.error(), null, name + ": error() null through the wait");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": one fetch more");
+      const again = pic(body);
+      assert.equal(again && again.src, address, name + ": that ask's picture, at its /file address");
+      again.dispatchEvent(new Ev("error"));                 // no event since that ask began
+      assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, name + ": that ask's own picture, failing with no event since, shows the pane");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": and nothing more runs");
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": that pane is armed as any pane: the next event runs the fetch once");
+    }
+    // the event while the re-ask's fetch is out, and that fetch lands: the attempt counts from the fetch's start
+    {
+      const { ctx, body } = await open(FIG, t);
+      const asks = asksOf(FIG);
+      const release = holdNext();
+      pic(body).dispatchEvent(new Ev("error"));             // the re-ask's fetch, held
+      fire();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 0, name + ": nothing runs while the re-ask's fetch is out");
+      release();
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": the held fetch landed");
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": its picture's failure, after an event heard while the fetch was out, asks once more at once");
+      assert.equal(ctx.error(), null, name + ": in place of the pane");
+    }
+    // over the way back's landing, and then over that ask's own landing
+    {
+      const { ctx, body } = await open(FIG, t);
+      delete disk[FIG];
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), gone, name + ": the re-ask's pane");
+      disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+      const asks = asksOf(FIG);
+      fire();                                               // the way back's fetch, which lands
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 1, name + ": the way back's fetch landed");
+      fire();                                               // while its picture loads
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 2, name + ": the way back's picture, failing after an event heard while it loaded, asks once more at once");
+      assert.equal(ctx.error(), null, name + ": in place of the pane");
+      fire();                                               // while that ask's picture loads
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": and so does that ask's own picture, after another event");
+      pic(body).dispatchEvent(new Ev("error"));
+      assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, name + ": with no event since, the pane");
+      await settle();
+      assert.equal(asksOf(FIG) - asks, 3, name + ": and nothing more");
+    }
+  }
+  // the attempt ends when its picture shows
+  {
+    const { ctx, body } = await open(FIG, t);
+    pic(body).dispatchEvent(new Ev("error"));
+    await settle();
+    const asks = asksOf(FIG);
+    const landed = pic(body);
+    landed.dispatchEvent(new Ev("load"));                   // the re-ask's picture shows
+    win.dispatchEvent(new Event("romp:wsup"));
+    await settle();
+    landed.dispatchEvent(new Ev("error"));                  // the stand-in fails it after its load
+    assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, "an event after the landed picture showed: a later failure of that picture shows the pane");
+    await settle();
+    assert.equal(asksOf(FIG), asks, "and asks nothing");
+  }
+  // …and at a press of the Source toggle, which ends the attempt whole: the picture painted when the person returns is a first
+  // showing, so its failure asks the address again once, whatever the landing before the press was and whatever it met
+  for (const before of ["an event while the re-ask's picture loads", "the re-ask's picture failing to the pane", "the re-ask's picture showing", "the way back's picture failing to the pane"]) {
+    const { ctx, body, wrap } = await open(FIG, t);
+    if (before === "the way back's picture failing to the pane") {
+      delete disk[FIG];
+      pic(body).dispatchEvent(new Ev("error"));
+      await settle();
+      assert.equal(ctx.error(), gone, before + ": the re-ask's pane");
+      disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+      win.dispatchEvent(new Event("romp:wsup"));            // the way back's fetch, which lands
+    } else {
+      pic(body).dispatchEvent(new Ev("error"));             // the re-ask, which lands
+    }
+    await settle();
+    const asks = asksOf(FIG);
+    if (before === "an event while the re-ask's picture loads") win.dispatchEvent(new Event("romp:wsup"));
+    else if (before === "the re-ask's picture showing") pic(body).dispatchEvent(new Ev("load"));
+    else {
+      pic(body).dispatchEvent(new Ev("error"));
+      assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, before + ": that landing's picture fails to the pane, with no event since its fetch began");
+    }
+    await settle();
+    assert.equal(asksOf(FIG), asks, before + ": nothing runs then");
+    sourceBtn(wrap).click();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), before + ": the Source view is up");
+    sourceBtn(wrap).click();                                // back to the picture
+    const back = pic(body);
+    assert.equal(back && back.src, address, before + ": back to the picture, at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, before + ": with no fetch");
+    back.dispatchEvent(new Ev("error"));
+    assert.ok(body.querySelector(".fileview-load") && !body.querySelector(".fileview-err") && !body.querySelector(".fileview-imgbox"), before + ": the press ended the attempt: the picture painted after it is a first showing, whose failure asks the address again behind the loader, not the pane");
+    assert.equal(ctx.error(), null, before + ": error() null through the wait");
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, before + ": the address asked again, once");
+    const again = pic(body);
+    assert.equal(again && again.src, address, before + ": that ask's picture, at its /file address");
+    again.dispatchEvent(new Ev("error"));
+    assert.equal(ctx.error(), fv.SVG_PICTURE_FAILED, before + ": that ask's own picture, failing with no event since, shows the pane");
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, before + ": and nothing more runs");
+  }
+});
+
+test("a press of the Source toggle while the Source view waits for its bytes to decode: a failure of the picture painted before the press starts nothing, and so do a probe that loads and a reconnect-class event over the pane; the Source view paints at the decode, and back to the picture, it loads afresh at its /file address with no fetch, and a failure of that picture asks again", async (t) => {
+  const probes = fakeProbes(t);
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  t.after(() => { Blob.prototype.text = realText; });
+  /** Hold the next decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const address = "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT;
+  const gone = "no such file: " + FIG;
+  {
+    const { ctx, body, wrap } = await open(FIG, t);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();
+    assert.equal(body.querySelector("img.fileview-img"), img, "the decode is held: the picture is still up");
+    const asks = asksOf(FIG), p0 = paints;
+    img.dispatchEvent(new Ev("error"));
+    assert.ok(body.querySelector(".fileview-imgbox") && body.querySelector("img.fileview-img") === img, "the picture's failure after the press starts nothing: the picture box stands, with no re-ask's loader in its place");
+    await settle();
+    assert.equal(asksOf(FIG), asks, "and no re-ask");
+    decode();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
+    assert.equal(body.querySelector(".fileview-err"), null, "no pane");
+    assert.equal(ctx.error(), null, "error() null");
+    assert.equal(ctx.mode(), "raw", "mode() the Source view's");
+    assert.equal(paints, p0 + 1, "the Source view's paint alone");
+    sourceBtn(wrap).click();
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, address, "back to the picture, a fresh load at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, "with no fetch");
+    pic.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(asksOf(FIG) - asks, 1, "that picture's failure asks its address again: no press came since its paint");
+  }
+  const ways: Array<[string, () => void]> = [
+    ["romp:wsup", () => win.dispatchEvent(new Event("romp:wsup"))],
+    ["hostUp", () => win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }))],
+    ["romp:hostRelayUp", () => win.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: "TESTHOST" } }))],
+  ];
+  for (const what of ["a probe that loads", ...ways.map(([n]) => n)]) {
+    const { ctx, body, wrap } = await open(FIG, t);
+    delete disk[FIG];
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+    await settle();
+    assert.equal(ctx.error(), gone, what + ": the re-ask's pane");
+    const n = probes.length;
+    if (what === "a probe that loads") { kernelMessage(); assert.equal(probes.length, n + 1, what + ": one probe out over the pane"); }
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };   // the address answers from here on
+    const decode = holdDecode();
+    sourceBtn(wrap).click();                              // the Source view waits for the decode; the pane is still up
+    const asks = asksOf(FIG);
+    if (what === "a probe that loads") probes[n].onload!();
+    else ways.find(([w]) => w === what)![1]();
+    await settle();
+    assert.equal(asksOf(FIG), asks, what + " after the press, the Source view waiting for its decode: nothing starts");
+    kernelMessage();
+    assert.equal(probes.length, what === "a probe that loads" ? n + 1 : n, what + ": and a kernel message sends no probe");
+    decode();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), what + ": the Source view painted at the decode");
+    assert.equal(ctx.error(), null, what + ": error() null");
+    sourceBtn(wrap).click();
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, address, what + ": back to the picture, a fresh load at its /file address");
+    await settle();
+    assert.equal(asksOf(FIG), asks, what + ": with no fetch");
+  }
+});
+
+test("a reload that lands while a press of the Source toggle waits for its bytes to decode paints no picture over the press: the landed bytes go to the Source view, which paints at their decode with their XML and the landed mtime, while the decode of the older bytes paints nothing; back to the picture, it loads at the landed address with no fetch but the reload's", async (t) => {
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  t.after(() => { Blob.prototype.text = realText; });
+  /** Hold the decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const { ctx, body, wrap } = await open(FIG, t);
+  const img = body.querySelector("img.fileview-img")!;
+  const decode = holdDecode();
+  sourceBtn(wrap).click();                                  // the Source view waits for the decode; the picture is still up
+  disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+  const asks = asksOf(FIG), p0 = paints;
+  ctx.reload();
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "the reload's fetch ran");
+  assert.equal(ctx.mtimeNs(), MT7, "and landed: mtimeNs() the landed mtime");
+  assert.equal(body.querySelector("img.fileview-img"), img, "the landing painted no picture over the press: the body holds the picture the press was made over");
+  assert.equal(paints, p0, "and no paint");
+  decode();
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
+  assert.equal(ctx.text(), SVG2, "with the landed bytes' XML, not the older bytes'");
+  assert.equal(ctx.mode(), "raw", "mode() the Source view's");
+  assert.equal(ctx.error(), null, "error() null");
+  assert.equal(paints, p0 + 1, "one paint, the Source view's: the decode of the older bytes painted nothing");
+  sourceBtn(wrap).click();
+  const back = body.querySelector("img.fileview-img")!;
+  assert.equal(back && back.src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT7, "back to the picture, at the landed address");
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "with no fetch but the reload's");
+});
+
+test("a picture still loading when the Source toggle is pressed fires no paint hook at its load: with a reload landing while the Source view waits for its decode, the load of the picture painted before the press runs nothing and the Source view's paint at the decode is the one onRendered, at the landed mtime; with no landing, the same, at the open's mtime; pressed to the Source view and back while the picture still loads, the picture painted on the way back runs onRendered once at its load and the one pressed over runs nothing; with no press, the load runs it once", async (t) => {
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Hold the decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const key = (mt: string): string => "&v=" + mt;
+  /** Every onRendered from here on, as the hook reads the view: its mtime, its mode and what the body holds. */
+  const heard = (ctx: FileViewActionCtx, body: El): string[] => {
+    const out: string[] = [];
+    ctx.onRendered(() => {
+      const img = body.querySelector("img.fileview-img");
+      out.push(ctx.mtimeNs() + " " + ctx.mode() + " " + (img ? "picture" + img.src.slice(img.src.indexOf("&v=")) : body.querySelector("code.hljs") ? "source" : "other"));
+    });
+    return out;
+  };
+  // (i) a reload lands while the press waits for its decode (the change card's road: file-view-svg-reask-browser.test.ts runs it
+  // under the real Comments panel, where a paint heard at this load moved the card before the Source view showed the new bytes)
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();                                // the Source view waits for the decode; the picture, still loading, stays up
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, "(i) the reload landed: mtimeNs() the landed mtime");
+    assert.equal(body.querySelector("img.fileview-img"), img, "(i) the body still holds the picture painted before the press");
+    img.dispatchEvent(new Ev("load"));                      // that picture's own request ends
+    assert.deepEqual(rendered, [], "(i) its load fires no paint hook: the view's mtime is the landing's, and the body shows the picture painted before the press");
+    assert.equal(paints, 0, "(i) no paint at all yet");
+    decode();
+    await settle();
+    assert.deepEqual(rendered, [MT7 + " raw source"], "(i) the one paint: the Source view's at the decode, over the landed bytes");
+    assert.equal(ctx.text(), SVG2, "(i) with the landed bytes' XML");
+  }
+  // (ii) no landing: the picture painted before the press loads while the decode is out
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    const decode = holdDecode();
+    sourceBtn(wrap).click();
+    img.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [], "(ii) the load of the picture pressed over fires no paint hook");
+    decode();
+    await settle();
+    assert.deepEqual(rendered, [MT + " raw source"], "(ii) the decode's paint runs onRendered once, the Source view over the open's bytes");
+  }
+  // (iii) to the Source view and back while the picture still loads: the way back paints a new picture, at the same address
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    const img = body.querySelector("img.fileview-img")!;
+    sourceBtn(wrap).click();
+    await settle();
+    assert.deepEqual(rendered, [MT + " raw source"], "(iii) the Source view painted at the decode, the picture still loading");
+    sourceBtn(wrap).click();                                // back to the picture
+    const back = body.querySelector("img.fileview-img")!;
+    assert.ok(back && back !== img && back.src.endsWith(key(MT)), "(iii) the way back paints a new picture at the same address");
+    img.dispatchEvent(new Ev("load"));                      // the request both joined ends: the picture pressed over hears it first
+    back.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [MT + " raw source", MT + " media picture" + key(MT)], "(iii) the picture shown on the way back runs onRendered once at its load, and the one pressed over nothing");
+    back.dispatchEvent(new Ev("load"));
+    assert.equal(rendered.length, 2, "(iii) once: a second load event on it runs nothing more");
+  }
+  // (iv) no press: the control
+  {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body } = await open(FIG, t);
+    const rendered = heard(ctx, body);
+    body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+    assert.deepEqual(rendered, [MT + " media picture" + key(MT)], "(iv) with no press the picture's load runs onRendered once, over the picture");
+  }
+});
+
+test("a press from the picture back to the Source view while a reload that landed under it still decodes paints no older XML: the press decodes the landed bytes and the Source view paints at that decode, the one onRendered, with the landed XML, also when the two decodes of those bytes finish in the other order; pressed back after the decode, the XML on hand is the landed bytes' and paints at once; a second landing during the wait paints its own XML at its decode; a landing of another type during the wait, or under the Source view, paints its own picture and no XML; a failed reload during the wait paints its pane, and the decode then the landed XML; with no landing, back to the Source view the XML on hand paints at once", async (t) => {
+  const realText = Blob.prototype.text;
+  // while `holding`, every decode of the fetched bytes waits in `pending` until a road releases it, in the order it chooses
+  const pending: Array<() => void> = [];
+  let holding = false;
+  Blob.prototype.text = function (this: Blob): Promise<string> {
+    if (!holding) return realText.call(this);
+    return new Promise<string>((res, rej) => { pending.push(() => { realText.call(this).then(res, rej); }); });
+  };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Release the held decodes, one at a time in the order given (indices in the order they were asked; by default that order). */
+  const release = async (order?: number[]): Promise<void> => {
+    holding = false;
+    const run = pending.splice(0);
+    for (const i of order ?? run.map((_, k) => k)) { run[i](); await settle(); }
+  };
+  const MT7 = "1757145600000000007", MT8 = "1757145600000000008";
+  const SVG2 = SVG.replace("p95", "p99"), SVG3 = SVG.replace("p95", "p50");
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const xmlOf = (x: string | null): string => (x === SVG ? "SVG" : x === SVG2 ? "SVG2" : x === SVG3 ? "SVG3" : String(x));
+  /** Every onRendered from here on, as the hook reads the view: its mtime, its mode, and what the body holds (the picture's
+   *  version key, or blob for an object URL; the Source view's XML, by fixture name; a pane). */
+  const heard = (ctx: FileViewActionCtx, body: El): string[] => {
+    const out: string[] = [];
+    ctx.onRendered(() => {
+      const img = body.querySelector("img.fileview-img");
+      const what = body.querySelector(".fileview-err") ? "pane"
+        : img ? "picture " + (img.src.startsWith("blob:") ? "blob" : img.src.slice(img.src.indexOf("&v=") + 3))
+        : body.querySelector("code.hljs") ? "source " + xmlOf(ctx.text()) : "other";
+      out.push(ctx.mtimeNs() + " " + ctx.mode() + " " + what);
+    });
+    return out;
+  };
+  /** The svg open with the Source view up over the open's bytes, then a reload whose new bytes land under it, their decode held. */
+  const underSource = async (road: string): Promise<{ ctx: FileViewActionCtx; body: El; wrap: El; rendered: string[] }> => {
+    const { ctx, body, wrap } = await open(FIG, t);
+    sourceBtn(wrap).click();
+    await settle();
+    assert.equal(ctx.text(), SVG, road + ": the premise: the Source view up over the open's bytes");
+    const rendered = heard(ctx, body);
+    holding = true;
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, road + ": the reload landed under the Source view");
+    assert.equal(ctx.text(), SVG, road + ": and its decode is held, the older XML still up");
+    return { ctx, body, wrap, rendered };
+  };
+  {
+    const road = "(i) to the picture and back before the decode";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click();                                      // to the picture
+    const pic = body.querySelector("img.fileview-img")!;
+    assert.equal(pic && pic.src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT7, road + ": the press to the picture paints the landed bytes' picture, at its /file address");
+    sourceBtn(wrap).click();                                      // back to the Source view, the landed bytes' decode still held
+    assert.deepEqual(rendered, [], road + ": the press back paints no Source view of the older XML");
+    assert.equal(body.querySelector("img.fileview-img"), pic, road + ": the picture stays up while the landed bytes decode");
+    pic.dispatchEvent(new Ev("load"));                            // the picture pressed over loads
+    assert.deepEqual(rendered, [], road + ": and its load runs no hook");
+    await release();
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": after the landing one onRendered, at the decode, with the landed XML");
+    assert.equal(ctx.text(), SVG2, road + ": the Source view shows the landed bytes' XML");
+  }
+  {
+    const road = "(ii) the same, the two decodes of the landed bytes finishing in the other order";
+    const { wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    assert.equal(pending.length, 2, road + ": two decodes of the landed bytes out, the reload's under the Source view and the press's");
+    await release([1, 0]);                                        // the press's first, then the reload's
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": one paint, the Source view's with the landed XML; the reload's decode, finishing after it, paints nothing more");
+  }
+  {
+    const road = "(iii) to the picture before the decode, and back after it";
+    const { body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click();
+    await release();                                              // the reload's decode ends with the picture up: the XML on hand is the landed bytes'
+    assert.equal(body.querySelector("code.hljs"), null, road + ": the decode paints no Source view over the picture the person went to");
+    sourceBtn(wrap).click();
+    assert.deepEqual(rendered, [MT7 + " raw source SVG2"], road + ": back after the decode, the Source view paints at once, once, with the landed XML");
+  }
+  {
+    const road = "(iv) a second landing during the wait";
+    const { ctx, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    disk[FIG] = { bytes: SVG3, type: "image/svg+xml", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT8, road + ": the second reload landed");
+    assert.deepEqual(rendered, [], road + ": and painted nothing over the press, nor did the press paint the older XML");
+    await release();
+    assert.deepEqual(rendered, [MT8 + " raw source SVG3"], road + ": the one paint, the Source view's at the second landing's decode, with its XML");
+  }
+  {
+    const road = "(v) a landing of another type during the wait";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    disk[FIG] = { bytes: PNG, type: "image/png", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    const png = body.querySelector("img.fileview-img");
+    assert.ok(png && png.src.startsWith("blob:"), road + ": it paints its own picture");
+    png!.dispatchEvent(new Ev("load"));
+    await release();
+    assert.deepEqual(rendered, [MT8 + " media picture blob"], road + ": its picture's load is the one paint: the landed svg's decode paints no XML over it");
+    assert.equal(body.querySelector("img.fileview-img"), png, road + ": the picture stands");
+  }
+  {
+    const road = "(vi) a landing of another type under the Source view";
+    const { ctx, body, wrap, rendered } = await underSource(road);
+    disk[FIG] = { bytes: PNG, type: "image/png", mtimeNs: MT8 };
+    ctx.reload();
+    await settle();
+    const png = body.querySelector("img.fileview-img");
+    assert.ok(png && png.src.startsWith("blob:"), road + ": it paints its own picture, not its bytes as XML");
+    png!.dispatchEvent(new Ev("load"));
+    await release();
+    assert.deepEqual(rendered, [MT8 + " media picture blob"], road + ": its picture's load is the one paint: the svg's decode paints no XML over it");
+    assert.equal(ctx.mode(), "media", road + ": mode() the picture's");
+    disk[FIG] = { bytes: SVG3, type: "image/svg+xml", mtimeNs: "1757145600000000009" };
+    ctx.reload();                                                 // an svg lands again: its picture, with the Source view not up
+    await settle();
+    assert.equal(sourceBtn(wrap).getAttribute("aria-pressed"), "false", road + ": the Source toggle reads not pressed over the picture");
+  }
+  {
+    const road = "(vii) a failed reload during the wait";
+    const { ctx, wrap, rendered } = await underSource(road);
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();
+    delete disk[FIG];
+    ctx.reload();
+    await settle();
+    assert.deepEqual(rendered, [MT7 + " media pane"], road + ": the failed reload paints its pane, and the press painted no older XML before it");
+    await release();
+    assert.deepEqual(rendered, [MT7 + " media pane", MT7 + " raw source SVG2"], road + ": the decode then paints the Source view with the landed bytes' XML");
+  }
+  {
+    const road = "(viii) with no landing, to the picture and back";
+    const { ctx, body, wrap } = await open(FIG, t);
+    sourceBtn(wrap).click();
+    await settle();                                               // the Source view's first paint, at its decode
+    const rendered = heard(ctx, body);
+    holding = true;
+    sourceBtn(wrap).click(); sourceBtn(wrap).click();             // to the picture and back: the XML on hand is these bytes'
+    assert.equal(pending.length, 0, road + ": no second decode");
+    assert.deepEqual(rendered, [MT + " raw source SVG"], road + ": the Source view paints at once from the XML on hand");
+    await release();
+  }
+});
+
+test("a reload's decode under the Source view paints nothing once a press has gone to the picture and back while it was out, the press decoding the landed bytes itself: that decode released alone leaves the picture up and runs no hook, and the press's decode then paints the Source view once (file-view.ts, the reload decode's srcDecode check; road (i) above passes without that check, since the one paint it counts can come from either decode)", async (t) => {
+  const realText = Blob.prototype.text;
+  const pending: Array<() => void> = [];
+  let holding = false;
+  Blob.prototype.text = function (this: Blob): Promise<string> {
+    if (!holding) return realText.call(this);
+    return new Promise<string>((res, rej) => { pending.push(() => { realText.call(this).then(res, rej); }); });
+  };
+  t.after(() => { Blob.prototype.text = realText; });
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const { ctx, body, wrap } = await open(FIG, t);
+  sourceBtn(wrap).click();
+  await settle();
+  assert.equal(ctx.text(), SVG, "the premise: the Source view up over the open's bytes");
+  const rendered: string[] = [];
+  ctx.onRendered(() => { rendered.push(ctx.mtimeNs() + " " + ctx.mode() + " " + (body.querySelector("code.hljs") ? "source" : body.querySelector("img.fileview-img") ? "picture" : "other")); });
+  holding = true;
+  disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+  ctx.reload();
+  await settle();
+  assert.equal(ctx.mtimeNs(), MT7, "the premise: the reload landed under the Source view, its decode held");
+  sourceBtn(wrap).click();                                      // to the picture
+  const pic = body.querySelector("img.fileview-img")!;
+  assert.ok(pic, "the premise: the press put the landed bytes' picture up");
+  sourceBtn(wrap).click();                                      // back to the Source view: the press decodes the landed bytes
+  assert.equal(pending.length, 2, "the premise: two decodes held, the reload's and then the press's");
+  holding = false;
+  const [reloadDecode, pressDecode] = pending.splice(0);
+  reloadDecode(); await settle();
+  assert.equal(body.querySelector("img.fileview-img"), pic, "the reload's decode released alone: the picture is still up");
+  assert.deepEqual(rendered, [], "and no hook ran: that decode paints nothing while the press's is out");
+  pressDecode(); await settle();
+  assert.deepEqual(rendered, [MT7 + " raw source"], "the press's decode paints the Source view once, over the landed bytes");
+  assert.equal(ctx.text(), SVG2, "with their XML");
+});
+
+test("the seam's onLanded runs at an svg picture's landing, with mtimeNs() the landed mtime and before the picture's load, once per landing; a png's landing runs none", async (t) => {
+  const { ctx, body } = await open(FIG, t);
+  assert.equal(typeof ctx.onLanded, "function", "the seam carries onLanded");
+  const landed: string[] = [];
+  ctx.onLanded!(() => { landed.push(ctx.mtimeNs() + " " + paints); });
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: "1757145600000000007" };
+  ctx.reload();
+  await settle();
+  assert.deepEqual(landed, ["1757145600000000007 0"], "one call at the reload's landing, the new mtime in hand and the picture not yet loaded");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+  assert.equal(landed.length, 1, "the picture's load is onRendered's, not onLanded's");
+  const png = await open(PLOT, t);
+  const pl: string[] = [];
+  png.ctx.onLanded!(() => { pl.push("landed"); });
+  png.ctx.reload();
+  await settle();
+  assert.deepEqual(pl, [], "a png's picture is made from the bytes in hand: no onLanded");
+});
+
+test("the seam's onLanded also runs at a landing whose bytes go to the Source view, before their decode paints it: a reload under the Source view, and a reload while a press of the Source toggle waits for its decode, each once, with mtimeNs() the landed mtime and no paint yet", async (t) => {
+  const realText = Blob.prototype.text;
+  let textGate: Promise<void> | null = null;
+  Blob.prototype.text = function (this: Blob): Promise<string> { const g = textGate; return g ? g.then(() => realText.call(this)) : realText.call(this); };
+  const kept = disk[FIG];
+  t.after(() => { Blob.prototype.text = realText; disk[FIG] = kept; });
+  /** Hold the decodes of the fetched bytes until the returned function runs. */
+  const holdDecode = (): (() => void) => { let r!: () => void; textGate = new Promise<void>((res) => { r = res; }); return () => { textGate = null; r(); }; };
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  for (const road of ["a reload under the Source view", "a reload while a press of the Source toggle waits for its decode"]) {
+    disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT };
+    const { ctx, body, wrap } = await open(FIG, t);
+    const landed: string[] = [];
+    ctx.onLanded!(() => { landed.push(ctx.mtimeNs() + " " + paints); });
+    const under = road === "a reload under the Source view";
+    if (under) {
+      sourceBtn(wrap).click();
+      await settle();
+      assert.ok(body.querySelector("code.hljs"), road + ": the Source view is up");
+    }
+    const decode = holdDecode();
+    if (!under) sourceBtn(wrap).click();                    // the Source view waits for the decode
+    disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+    const p0 = paints;
+    ctx.reload();
+    await settle();
+    assert.equal(ctx.mtimeNs(), MT7, road + ": the reload landed");
+    assert.deepEqual(landed, [MT7 + " " + p0], road + ": onLanded ran at the landing, the landed mtime in hand, before any paint (the decode is held)");
+    decode();
+    await settle();
+    assert.ok(body.querySelector("code.hljs"), road + ": the Source view painted at the decode");
+    assert.equal(ctx.text(), SVG2, road + ": with the landed bytes' XML");
+    assert.equal(paints, p0 + 1, road + ": one paint, at the decode");
+    assert.equal(landed.length, 1, road + ": the decode's paint is onRendered's, not onLanded's");
+  }
+});
+
+test("the seam's onReplaced (its doc in file-view.ts) runs as the viewer swaps in a picture still loading or the re-ask's loader, before the onRendered that comes later: a reload's picture (and its landing's onLanded after it), the re-ask's romp loader and its answer's picture, a press back to the picture; never at a text view's paint, the Source view's paint, a pane or a press to the Source view whose decode is still out", async (t) => {
+  const { ctx, body, wrap } = await open(FIG, t);
+  assert.equal(typeof ctx.onReplaced, "function", "the seam carries onReplaced");
+  const seen: string[] = [];
+  ctx.onReplaced!(() => { seen.push("replaced " + (body.querySelector("img.fileview-img") ? "picture" : body.querySelector(".fileview-load") ? "loader" : "other")); });
+  ctx.onLanded!(() => { seen.push("landed"); });
+  ctx.onRendered((why) => { seen.push("rendered " + (why || "paint") + (ctx.error() === null ? "" : " pane")); });
+  const MT7 = "1757145600000000007";
+  disk[FIG] = { bytes: SVG, type: "image/svg+xml", mtimeNs: MT7 };
+  ctx.reload();
+  await settle();
+  assert.deepEqual(seen, ["replaced picture", "landed"], "a reload's landing: the landed bytes' picture goes up, onReplaced told at the swap and onLanded after it, no paint yet");
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
+  assert.deepEqual(seen.slice(2), ["rendered paint"], "its load is the paint");
+  seen.length = 0;
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  assert.deepEqual(seen, ["replaced loader"], "the picture's failure: the re-ask's loader goes up, onReplaced told, no paint");
+  await settle();
+  assert.deepEqual(seen.slice(1), ["replaced picture", "landed"], "the re-ask's answer: its picture goes up, onReplaced told again");
+  seen.length = 0;
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  assert.deepEqual(seen, ["rendered paint pane"], "the answer's picture failing: SVG_PICTURE_FAILED's pane is a paint, with no onReplaced");
+  seen.length = 0;
+  sourceBtn(wrap).click();                                 // to the Source view: its decode is out, the pane stands until it paints
+  assert.deepEqual(seen, [], "a press to the Source view whose decode is still out puts nothing up");
+  await settle();
+  assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
+  assert.deepEqual(seen, ["rendered paint"], "the Source view's paint fires onRendered alone");
+  seen.length = 0;
+  // back to the picture, which the page holds this time (complete once its src is set, as at the case on an img the browser
+  // already holds below): imgs made from here on are complete, the reload and re-ask steps above having kept the shim's own
+  const realCreate = doc.createElement;
+  doc.createElement = (tag: string) => { const e = realCreate(tag); if (tag === "img") (e as unknown as { complete: boolean }).complete = true; return e; };
+  t.after(() => { doc.createElement = realCreate; });
+  sourceBtn(wrap).click();
+  doc.createElement = realCreate;
+  assert.deepEqual(seen, ["replaced picture", "rendered paint"], "a press back to a picture the page holds: onReplaced told first, then the picture's paint in the same call (onReplaced's doc)");
+  const text = await open(REPORT, t);
+  const tseen: string[] = [];
+  text.ctx.onReplaced!(() => { tseen.push("replaced"); });
+  text.ctx.onRendered((why) => { tseen.push("rendered " + (why || "paint") + (text.ctx.error() === null ? "" : " pane")); });
+  disk[REPORT] = { bytes: DOC.replace("p95", "p99"), type: "text/plain; charset=utf-8", mtimeNs: MT7 };
+  text.ctx.reload();
+  await settle();
+  text.b.raw.click();
+  delete disk[REPORT];
+  text.ctx.reload();
+  await settle();
+  assert.deepEqual(tseen, ["rendered paint", "rendered paint", "rendered paint pane"], "a text view's landing, a format click and a failed reload's pane each fire onRendered alone");
+});
+
 // ── Slice 3: the media paint, the media element, the rendered figures (plans/file-review.md, Images and PDFs) ──
 
 test("onRendered for an image fires on the img's load, once; mediaElement() is that img until the decode-failure pane replaces it, which is a paint of its own; a load on the replaced img fires nothing", async (t) => {
@@ -615,6 +1851,9 @@ test("an img the browser already holds (complete) paints at once, without waitin
   assert.equal(ctx.mediaElement(), body.querySelector("img.fileview-img") as unknown as HTMLElement);
   body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("load"));
   assert.equal(paints, 1, "no listener was armed for a picture that had already loaded");
+  const svg = await open(FIG, t);
+  assert.equal(paints, 1, "an svg picture the browser already holds (its address loaded before) paints at once too");
+  assert.equal(svg.body.querySelector(".fileview-load"), null, "with no loader beside it");
 });
 
 test("a PDF body: mediaElement() is the frame, onRendered fires at once (the frame gives no signal to wait for), text() null", async (t) => {
@@ -628,6 +1867,19 @@ test("a PDF body: mediaElement() is the frame, onRendered fires at once (the fra
   assert.equal(b.edit.hidden, true);
 });
 
+test("the viewer's picture box carries the chat page heal's data mark, for an svg's picture and for a raster picture (file-view.ts imgBlock builds both and sets VIEWER_PICTURE_MARK on the box; preview.ts installMdImgHeal skips a picture inside the mark)", async (t) => {
+  const { VIEWER_PICTURE_MARK } = await import("./preview");
+  for (const p of [FIG, PLOT]) {
+    const { body } = await open(p, t);
+    const box = body.querySelector(".fileview-imgbox");
+    assert.ok(box, p + ": the picture's box is up");
+    const src = body.querySelector("img.fileview-img")!.src;
+    if (p === FIG) assert.equal(src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the svg picture's src is its /file address, never an object or data URL");
+    else assert.ok(src.startsWith("blob:"), "the raster picture keeps its object URL: " + src);
+    assert.ok(box!.hasAttribute(VIEWER_PICTURE_MARK), p + ": the box carries the viewer's picture mark, which the heal keys on to leave the viewer's own picture alone. The composition, the heal leaving this picture to the viewer on a real page, is file-view-svg-reask-browser.test.ts's (its probes per message in the chat modal), in Chromium, whose cases CI's Test step skips, since that step runs before the job installs Chromium");
+  }
+});
+
 // ── Slice 4: the PDF's pages while the Comments panel is open (plans/file-review.md Slice 4; contract F3) ──
 
 test("a PDF with the panel open: the loader over the kept frame, then the chunk's pages in its place — mediaElement() the pages root, pdfPages() the shells, onRendered after page 1 and per page; the panel closing brings the frame back and disposes", async (t) => {
@@ -635,9 +1887,12 @@ test("a PDF with the panel open: the loader over the kept frame, then the chunk'
   assert.equal(paints, 1, "the frame showed first: the panel is closed at open");
   assert.equal(pdf.renders, 0, "the chunk is not asked for a PDF nobody is commenting on");
   const shown = body.querySelector("iframe.fileview-frame")!;
+  let replaced = 0;
+  ctx.onReplaced!(() => { replaced++; });
   const aside = new El("div");
   ctx.aside(aside as unknown as HTMLElement);                                      // the panel opens: the seam's aside() IS the event
   assert.ok(body.querySelector(".fileview-load"), "the romp loader first (the loading-state rule)");
+  assert.equal(replaced, 1, "onReplaced told once, as the pages' loader goes up over the kept frame (onReplaced's doc)");
   const host = body.querySelector(".fileview-pdfhost")!;
   assert.ok(host && host.isConnected, "the chunk's host is in the body before render(): the pages fit its width");
   // The frame is NOT dropped for the loader: it stays through the attempt, in place, so the document is not
@@ -664,6 +1919,7 @@ test("a PDF with the panel open: the loader over the kept frame, then the chunk'
   assert.equal(pages.length, 2, "one shell per page");
   assert.deepEqual(pages.map((pg) => (pg as unknown as El).dataset.page), ["1", "2"], "in page order, data-page 1-based");
   assert.equal(paints, 2, "onRendered once page 1 is drawn (the first onPage fired before the resolve, and counted nothing)");
+  assert.equal(replaced, 1, "and onReplaced not again at page 1's draw, which is onRendered's");
   pdf.opts!.onPage!({ index: 2, canvas: pages[1], width: 800, height: 1035 });
   assert.equal(paints, 3, "…and again for every page the chunk draws after that");
   assert.equal(fetches.filter((f) => f.includes("deck.pdf")).length, 1, "one fetch of the file, ever");
@@ -1071,28 +2327,58 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /renderedImages: \(\) => \(ctx\.mode\(\) === "rendered" \? Array\.from\(body\.querySelectorAll\("\.fileview-md img"\)\) as HTMLImageElement\[\] : \[\]\),/);
   // the media arm: build, mount, THEN wait for the picture — so the element is in the DOM when the hook runs
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*whenShown\(shown, fireRendered\);/);
+  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*fireReplaced\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*whenShown\(shown, \(\) => \{ if \(picView === viewSeq\) fireRendered\(\); \}\);/, "the media arm tells onReplaced after the mount and before whenShown (a source pin; the exact order is executed in this file's case on the seam's onReplaced, whose press back to a picture the page holds records onReplaced and then onRendered in the same call), then arms whenShown, its hooks gated on no press of the Source toggle since the picture's paint: a source pin; executed in this file's case on a picture still loading when the Source toggle is pressed");
   const when = VIEW.split("function whenShown(")[1].split("\n}\n")[0];
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 8, "the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly as a paint; the media arm hands it to whenShown (file-comments.test.ts pins the floor); the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 9, "the nine direct calls of fireRendered, each a paint: the media arm's, inside the callback it hands whenShown and gated on the press count there (executed in this file's case on a picture still loading when the Source toggle is pressed), the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) (file-comments.test.ts pins the floor); the PDF paths' kept frame, column and fallback hand fireRendered itself to whenShown; the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
   assert.equal((VIEW.match(/fireRendered\("reflow"\);/g) || []).length, 1, "the reflows' one call, inside fireRenderedKeepingSelection");
+  assert.equal((VIEW.match(/fireReplaced\(\);/g) || []).length, 3, "the seam's onReplaced told at three swaps: the media arm's picture or frame, the re-ask's loader and the PDF pages' loader (onReplaced's doc says which of them paint at once; a source pin only; this file's case on onReplaced executes the first two, and the third, the PDF pages' loader, is executed in this file's case on a PDF with the panel open, over the kept frame, and in file-view-pdf-backstop.test.ts's case with no frame kept, in place of the body)");
   assert.equal((VIEW.match(/fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the two reflow triggers, and nothing else, keep the selection");
-  const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
+  // imgFailed takes the error event since the replaced-picture guard (the case "the picture's error paints nothing once the body no
+  // longer holds that picture" above is the executed witness of the guard; this split only finds the function's body)
+  const failed = VIEW.split("const imgFailed = (e: Event) => {")[1].split("\n  };\n")[0];
   assert.match(failed, /body\.replaceChildren\(why\);\n\s*viewError = words;[^\n]*\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none; error() is set between them (Slice 7, item 3)");
-  assert.match(failed, /why\.textContent = DECODE_FAILED;[^\n]*\n\s*const words = why\.textContent;/, "the exported sentence alone (DECODE_FAILED, hoisted for the guide's pin in the Slice 7 review's round 1), taken before the hint and the button join the pane");
+  assert.match(failed, /if \(!\(e\.target as Node\)\.isConnected\) return;/, "the guard on a picture the body no longer holds: a source pin; executed in the case named above");
+  assert.match(failed, /why\.textContent = isSvgImage \? SVG_PICTURE_FAILED : DECODE_FAILED;[^\n]*\n\s*const words = why\.textContent;/, "the exported sentence alone, DECODE_FAILED for a picture made from its bytes and SVG_PICTURE_FAILED for an svg's picture after its re-ask, taken before the hint and the button join the pane: a source pin; executed in this file, the svg's failed load asking its address again and the png's DECODE_FAILED in the same case");
   assert.match(VIEW, /\nexport const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";\n/, "the constant's export line, the guide's pin");
+  assert.match(VIEW, /\nexport const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, or the file may be mid-write or truncated";\n/, "the svg sentence's export line, the guide's pin (tests/test_guide_files_failures.py)");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify; no fallback stands between them since Slice 7 of
   // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
-  const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
-  const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
+  // code only (codeOnly, below): the order is read off the statements, so a comment quoting the pinned lines above an adopt-first
+  // body cannot satisfy it (the fork PR review's pre-answer record built that reversion and every raw-text pin passed on the comment)
+  const mdFn = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+  const sanitizeAt = mdFn.indexOf("const clean = sanitizeMd(dirty, mintHeadingIds);");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
+  const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(clean, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
+  const gateAt = mdFn.indexOf("gateRemoteFigures(clean, document.baseURI);");
+  const adoptAt = mdFn.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");
   assert.equal(mdFn.indexOf("box.textContent = text;"), -1, "no fallback in mdBlock: the caller keeps the content (file-view.test.ts pins the try)");
-  assert.ok(sanitizeAt >= 0 && rewriteAt > sanitizeAt, "sanitize, then rewrite, in that order, on `box`");
-  assert.ok(mdFn.indexOf("return box;") > rewriteAt);
+  // the figure chain runs on the sanitizer's own body, DOMPurify's inert document, and the adoption into the live document's
+  // box comes after it (2026-09-20): WebKit starts an img's fetch the moment its node document is one with a render tree, so
+  // a chain after the adoption fetched a gated figure while its placeholder stood (file-view-figures-gate-adopt-browser.test.ts)
+  assert.ok(sanitizeAt >= 0 && rewriteAt > sanitizeAt && gateAt > rewriteAt && adoptAt > gateAt, "sanitize, then rewrite, then gate, on `clean`, and only then the adoption into `box`");
+  // the second layer, a name list: the three chain helpers named today must not be called over `box`. The REQUIRED guard for the
+  // contract (no pass after the adoption sets, repoints, moves or creates a fetching element on an unlisted host) is the node
+  // scene's end-state pin through figure-gate's own gateRefs and unlistedHosts (file-view-figures-gate-adopt.test.ts), keyed on
+  // the outcome under the box and on no list of names: a new helper, or a pass that creates an element (the fence class), is red
+  // there and not here (the round-1 ruling of the fork PR's review, defect A, 2026-09-20). That outcome is the gate's own model of
+  // one, gateRefs over FIGURE_SEL's seven tags and the attributes the gate reads per tag, so the scene answers "did the gate's
+  // model see a leak" and not "did anything fetch"; an element outside the gate's table is the gate's blind spot and the product's,
+  // which no guard keyed on the product's model can see (the review's round 2, correctness-3, tests-2, extra6-2, disclosed there)
+  assert.doesNotMatch(mdFn, /(resolveFigureRefs|rewriteFigureSrcs|gateRemoteFigures)\(box,/, "no figure pass runs on the live document's box (a name list, the second layer; the node scene's end-state pin is the guard)");
+  assert.ok(mdFn.indexOf("resolveFigureRefs(clean, doc.href);") >= 0 && mdFn.indexOf("resolveFigureRefs(clean, doc.href);") < adoptAt, "the URL kind's resolution runs on `clean` too, before the adoption");
+  assert.ok(mdFn.indexOf("return box;") > adoptAt);
+  // the fence pass, the one pass that re-parses markup (code-block.ts wrapCodeLines through innerHTML), runs on `clean` between the
+  // sanitize and the chain's first call, so the chain judges the elements its re-parse creates (an svg <image> split from its svg
+  // comes back an HTML <img>; the fourth scene of file-view-figures-gate-adopt-browser.test.ts, 2026-09-20)
+  const fenceAt = mdFn.indexOf('clean.querySelectorAll("pre code").forEach((node) => {');
+  const firstChainAt = mdFn.indexOf("resolveFigureRefs(clean, doc.href);");
+  assert.ok(fenceAt > sanitizeAt && firstChainAt > fenceAt, "the fence pass runs on `clean`, after the sanitize and before the chain's first call");
+  assert.ok(mdFn.indexOf("wrapCodeLines(codeEl);") > fenceAt && mdFn.indexOf("wrapCodeLines(codeEl);") < firstChainAt, "and its re-parse (wrapCodeLines) is inside that pass");
+  assert.equal(mdFn.indexOf('box.querySelectorAll("pre code")'), -1, "no fence pass over the live document's box");
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
   // Slice 4 of plans/markdown-viewer.md widened the walk from `img[src]` to every attribute a figure fetches through
   // (figure-gate.ts figureRefs: img src and srcset, source, video src and poster, audio, track, an svg image's href); the
@@ -1104,6 +2390,605 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(rw, /if \(el\.tagName === "IMG" && ref\.attr === "src"\) \{\n\s*if \(p === null\) \{ el\.removeAttribute\("data-fv-src"\); continue; \}\n\s*el\.setAttribute\("data-fv-src", ref\.value\);\n\s*\}/, "the authored value kept on an img's src (the attribute the comments panel pairs an embed by), removed when the src is not a path");
   assert.doesNotMatch(rw, /innerHTML|outerHTML|\.replace\(|DOMParser/, "never a string rewrite of marked's HTML");
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
+});
+
+// ── the inertness premise, held where CI runs (the review of the gate-before-adoption fix, 2026-09-20) ──────────────
+// The chain-before-adoption order pinned above rests on one fact: the body sanitizeMd hands mdBlock belongs to a document
+// with no browsing context, so the chain's writes over it start no fetch. The browser legs execute that fact in each engine
+// (file-view-figures-gate-adopt-browser.test.ts, the premise probe) and skip wherever Playwright's engines are absent, and
+// in CI's job that runs npm test no browser install precedes that step (.github/workflows/ci.yml; the plan pin
+// tools/markdown-viewer-plan-gate-adopt.test.mjs reads that property off the job's block), so under CI the fact stood on
+// nothing: the pins above and their siblings in the other re-aimed modules match names and call order, and a change that kept both
+// while handing back a live-document body left every CI-run test green. The review's refuters measured that in a scratch
+// copy of the head (2026-09-20): one key, `ADD_ATTR: ["shadowrootmode"]`, on MD_PURIFY, the sanitize line and the chain as
+// written, makes the installed DOMPurify (3.4.10) clone the sanitized body into the LIVE document (its RETURN_DOM branch,
+// pinned below), every CI-run module stayed green, and in WebKit the figure server logged the gated figure while the
+// placeholder stood; a `document.adoptNode(clean)` guarded by `typeof document` after the sanitize did the same. Under
+// node DOMPurify.isSupported is false (the record pin below), so the fact cannot be executed in this suite; this test pins
+// the doors to it instead, each one read off the code and derived where a written list would go stale: the profile literal
+// whole and its runtime key set (a writer elsewhere would show in the keys), the config the sanitize is handed at run time,
+// sanitizeMd's body whole, no live-document call and no config verb in md-sanitize.ts's code, no module of the dashboard but
+// md-sanitize.ts naming the profile or DOMPurify's config verbs, the installed library's sites that pick the body's document
+// (the factory's template document, _initDocument's two parsers, the RETURN_DOM branch's one road into the live document and
+// the guard on it, and the whole dist's count of importNode and adoptNode), the two passes that run over the body INSIDE
+// sanitizeMd before mdBlock's chain sees it (the caller's own pass, mintHeadingIds, and every registered post-pass, the
+// registrant list derived from the code by its registerMdPostPass calls and held to the census REGISTERED_POST_PASSES,
+// red on any new registrant: the round-1 ruling of the fork PR's review, 2026-09-20, found neither swept while this header
+// claimed every door, and its ruling on its third round's finding guards-3 kept the census), each opening no door to the live
+// document, and, in mdBlock, `clean` reaching the four chain calls and the fence pass's one read (`clean.querySelectorAll`)
+// and nothing else before the adoption, and nothing after it. What this test does not do is execute the order: the node scene
+// (below) asserts by execution that no node of the sanitizer's body enters the live document until the gate has run over it.
+// Comments are stripped before any code is read
+// (codeOnly), so a comment may name what the code may not. Red at the head with either of the two changes above (measured
+// in a scratch copy, the same day). A red here means the premise moved: re-run the two gate-adopt browser legs in all three
+// engines and read the servers' logs before re-aiming a pin. The ORDER itself (the chain's writes landing before the nodes
+// enter the live document) is executed under node by file-view-figures-gate-adopt.test.ts, over a stand-in with an inert
+// and a live document; the premise, that DOMPurify's body is inert, is what that scene assumes and this test pins.
+// codeOnly (ui/test-code-only.ts): the compiler's comment ranges, so a string holding `//`, a template holding `/*` and a
+// regex literal ending in backslash-slash are code and stay (the self-check below, and the module's header for the hand
+// scanner it replaced and the line that scanner deleted).
+test("codeOnly reads the compiler's comment ranges: an affected module keeps the line the hand scanner deleted (settings.ts, a regex literal ending in backslash-slash), md-sanitize.ts keeps a string holding // and loses the doc comments' word, and a synthetic module keeps every literal that holds a comment opener and loses every comment", () => {
+  // the affected module the round-1 refuter named: the hand scanner took the regex literal's closing `\//` as a line comment
+  const settings = web("settings.ts");
+  assert.ok(settings.includes("hostname.toLowerCase()"), "the source holds the call (the pin below reads it back through the stripper)");
+  assert.ok(codeOnly(settings).includes("hostname.toLowerCase()"), "settings.ts's hostname.toLowerCase() survives the strip (a regex literal ending in backslash-slash on the same line)");
+  assert.ok(codeOnly(settings).includes('/^[a-z][a-z0-9+.-]*:\\/\\//i.test(s) ? s : "http://" + s'), "and the regex literal itself is intact");
+  const SAN = web("md-sanitize.ts"), SAN_CODE = codeOnly(SAN);
+  assert.ok(SAN_CODE.includes('const HTML_NS = "http://www.w3.org/1999/xhtml";'), "a string literal holding // is kept");
+  assert.match(SAN, /allowedTags/); assert.doesNotMatch(SAN_CODE, /allowedTags|\/\*\*|^\s*\* /m, "the doc comments are gone (dropBodyTitle's names the hook's allowedTags lever; the code never does)");
+  // a synthetic module: each construct a pattern-based stripper has mis-read, one per line, with a marker each that must survive or go
+  const synthetic = [
+    'const a = /x:\\/\\//i.test(s) ? s : "http://" + s; const keepA = 1;',       // the ruling's case: a regex literal ending in backslash-slash, then code
+    'const b = "a // not a comment"; const keepB = 2;',                        // a string holding //
+    'const c = `t /* not a comment */ ${d /* dropC */ + 1}`; const keepC = 3;',  // a template holding /*, with a real comment inside its substitution
+    '/* dropD: a regex /a\\/b/ and a "quote" inside a block comment */ const keepD = 4;',
+    'const e = "https://host.test/p?q=1#f"; const keepE = 5; // dropE',        // a URL in a string, a trailing line comment
+    '/** dropF: see http://x.test/y */ const keepF = 6;',                      // a doc comment holding a URL, code after it on the line
+    'const f = g / h; // dropG: a division, then a comment',
+    'const i = j / /k/.test(l) ? 1 : 0; const keepH = 7;',                    // a division, then a regex literal: the parser's context tells the two slashes apart (ts.createSourceFile over this line: SlashToken, then RegularExpressionLiteral)
+    'const d = a / b / c; // dropH: two divisions, then a comment',           // the division-first control: two slashes that are neither a regex nor a comment opener
+  ].join("\n");
+  const code = codeOnly(synthetic), whole = stripComments(synthetic);
+  for (const keep of ["keepA", "keepB", "keepC", "keepD", "keepE", "keepF", "keepH", '"a // not a comment"', "`t /* not a comment */ ${d  + 1}`", '"https://host.test/p?q=1#f"', "/x:\\/\\//i", "const f = g / h;", "j / /k/.test(l)", "const d = a / b / c;"]) assert.ok(code.includes(keep), "kept: " + keep);
+  for (const drop of ["dropC", "dropD", "dropE", "dropF", "dropG", "dropH"]) assert.ok(!code.includes(drop), "gone: " + drop);
+  assert.deepEqual(code.split("\n").filter((l) => /\/\*|\/\//.test(l.replace(/"[^"]*"|`[^`]*`|\/x:[^;]*\/i/g, ""))), [], "outside the kept string, template and regex literals no comment opener is left");
+  assert.equal(whole.split("\n").length, synthetic.split("\n").length, "stripComments keeps every newline, so line numbers survive");
+  assert.equal(code.split("\n").length, 9, "codeOnly drops no line that holds code");
+});
+/** The profile's keys, in the literal's order: the whole of what sanitizeMd spreads RETURN_DOM onto. */
+const PROFILE_KEYS = ["USE_PROFILES", "ADD_DATA_URI_TAGS", "ALLOW_DATA_ATTR", "FORBID_TAGS", "FORBID_ATTR", "SANITIZE_NAMED_PROPS"];
+
+test("the inertness premise, held where CI runs: MD_PURIFY is its six-key literal at the source and at run time and reaches the sanitize with RETURN_DOM alone added; sanitizeMd's body is its five statements; md-sanitize.ts's code opens no door to the live document and no config verb, and no other dashboard module names the profile or those verbs; the installed DOMPurify parses into a template's document, returns that body itself, and clones into the live document only under a shadowroot attribute no profile here allows, and its whole dist holds importNode at four sites and adoptNode at none; the passes that run over the body inside sanitizeMd before the chain, mintHeadingIds and every registered post-pass (derived from the code), open no door to the live document; in mdBlock `clean` reaches the four chain calls and the fence pass's one read (`clean.querySelectorAll`) and nothing else before the adoption, and nothing after it", () => {
+  const SAN = web("md-sanitize.ts");
+  const SAN_CODE = codeOnly(SAN);
+  // the reader's self-check, over an AFFECTED module too (the round-1 refuter's condition): settings.ts keeps the line the hand
+  // scanner deleted; md-sanitize.ts keeps a string holding `//` and loses a word the doc comments use and the code does not
+  assert.ok(codeOnly(web("settings.ts")).includes("hostname.toLowerCase()"), "codeOnly keeps settings.ts's hostname.toLowerCase() (a regex literal ending in backslash-slash sits before it on the line)");
+  assert.ok(SAN_CODE.includes('const HTML_NS = "http://www.w3.org/1999/xhtml";'), "codeOnly keeps a string literal holding //");
+  assert.match(SAN, /allowedTags/); assert.doesNotMatch(SAN_CODE, /allowedTags|\/\*\*|^\s*\* /m, "codeOnly drops the doc comments (dropBodyTitle's names the hook's allowedTags lever; the code never does)");
+  // ── the profile: the literal whole, the object's keys, the config the sanitize is handed ──
+  const literal = /^export const MD_PURIFY: Config = \{\n([\s\S]*?)\n\};$/m.exec(SAN_CODE);
+  assert.ok(literal, "the profile is one exported literal");
+  assert.deepEqual(literal![1].split("\n"), [
+    "  USE_PROFILES: { html: true, svg: true },",
+    '  ADD_DATA_URI_TAGS: ["img"],',
+    "  ALLOW_DATA_ATTR: false,",
+    "  FORBID_TAGS: [...MD_FORBID_TAGS],",
+    "  FORBID_ATTR: [...MD_FORBID_ATTR],",
+    "  SANITIZE_NAMED_PROPS: true,",
+  ], "the six entries and no other: no ADD_ATTR, ADD_TAGS or ALLOWED_* (an allowed `shadowroot` or `shadowrootmode` makes DOMPurify clone the body into the live document, below), no RETURN_DOM_FRAGMENT, IN_PLACE or WHOLE_DOCUMENT");
+  assert.deepEqual(Object.keys(MD_PURIFY), PROFILE_KEYS, "the object at run time has the literal's keys: no module added one after load");
+  const seen: Array<Record<string, unknown>> = [];
+  const recorder = { addHook: () => { /* the hooks are DOMPurify's; the recorder has none */ }, sanitize: (_dirty: string, cfg: Record<string, unknown>) => { seen.push(cfg); return new El("body"); } };
+  setMdSanitizer(recorder as unknown as Parameters<typeof setMdSanitizer>[0]);
+  try { sanitizeMd('<p><img src="http://remote.test/x.png"></p>'); }
+  finally { setMdSanitizer(fakeSanitizer as unknown as Parameters<typeof setMdSanitizer>[0]); }   // the suite's stand-in back, for every paint after this test
+  assert.equal(seen.length, 1, "one sanitize per sanitizeMd");
+  assert.deepEqual(Object.keys(seen[0]), [...PROFILE_KEYS, "RETURN_DOM"], "the sanitize is handed the profile's keys and RETURN_DOM, nothing else");
+  assert.equal(seen[0].RETURN_DOM, true);
+  assert.deepEqual(seen[0].USE_PROFILES, { html: true, svg: true }, "DOMPurify's html and svg attribute lists, which quote no shadowroot attribute (below)");
+  // ── sanitizeMd's body, whole ──
+  const fnAt = SAN_CODE.indexOf("export function sanitizeMd(");
+  assert.ok(fnAt > 0);
+  assert.deepEqual(SAN_CODE.slice(fnAt, SAN_CODE.indexOf("\n}\n", fnAt) + 2).split("\n"), [
+    "export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void): HTMLElement {",
+    "  installMdSanitizeHooks();",
+    "  const clean = purifier().sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;",
+    "  keepOnlyInertCheckboxes(clean);",
+    "  if (own) own(clean);",
+    "  for (const pass of postPasses) pass(clean);",
+    "  return clean;",
+    "}",
+  ], "the body DOMPurify returns is the body handed back: no statement between the sanitize and the return moves it or its nodes anywhere");
+  assert.equal((SAN_CODE.match(/\bRETURN_DOM\b/g) || []).length, 1, "RETURN_DOM is spelled at the one sanitize");
+  // ── no door to the live document, no config verb, in md-sanitize.ts's code ──
+  for (const door of [/\bdocument\./, /\b(?:window|globalThis|self)\.document\b/, /adoptNode/, /importNode/, /RETURN_DOM_FRAGMENT/, /\bIN_PLACE\b/, /WHOLE_DOCUMENT/,
+    /ADD_ATTR/, /ADD_TAGS/, /ALLOWED_ATTR/, /ALLOWED_TAGS/, /allowedAttributes/, /shadowroot/i, /setConfig/, /clearConfig/, /DOMParser/, /createHTMLDocument/,
+    /createElement\(/, /innerHTML/, /outerHTML/, /insertAdjacentHTML/]) {
+    assert.doesNotMatch(SAN_CODE, door, "md-sanitize.ts's code never spells " + String(door) + ": the live document (adoptNode, importNode, createElement, a fragment of it), a DOMPurify option or verb that changes which document the body belongs to (RETURN_DOM_FRAGMENT, IN_PLACE, an allowed shadowroot attribute through ADD_ATTR or ALLOWED_ATTR, setConfig), or a re-parse of the markup");
+  }
+  assert.deepEqual(SAN_CODE.match(/^.*ownerDocument.*$/gm), ["  (node.ownerDocument as Document).createDocumentFragment().appendChild(node);"],
+    "the one call on a node's document is dropBodyTitle's fragment of the node's OWN document, DOMPurify's parse document during a sanitize");
+  // ── no other module of the dashboard names the profile or DOMPurify's config verbs (a writer to MD_PURIFY, or a setConfig, which
+  // makes DOMPurify ignore the per-call config, would change the body's document with the literal above intact) ──
+  const UI_DIR = path.resolve(process.cwd(), "..", "ui", "webview");
+  const others = fs.readdirSync(UI_DIR).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts") && f !== "md-sanitize.ts");
+  assert.ok(others.includes("file-view.ts") && others.includes("render.ts"), "the sweep reads the dashboard's modules");
+  const namers = others.filter((f) => { const code = codeOnly(web(f)); return /\b(?:MD_PURIFY|setConfig|clearConfig|addHook|RETURN_DOM|adoptNode|importNode)\b/.test(code) || /shadowroot/i.test(code); });
+  assert.deepEqual(namers, [], "the profile, DOMPurify's config verbs, its hook registry and RETURN_DOM are md-sanitize.ts's alone (md-sanitize.test.ts sweeps the sanitize call and the seam the same way), and no dashboard module adopts or imports a node between documents (a guarded document.adoptNode inside the gate's own helper left every CI-run module green in the fork PR review's pre-answer mutation table, 2026-09-20)");
+  // ── the passes that run over the body INSIDE sanitizeMd, before mdBlock's chain: the caller's own pass (mdBlock hands
+  // mintHeadingIds; the sanitize-line pin above) and every registered post-pass (md-sanitize.ts postPasses, run in sanitizeMd's
+  // fifth statement, above). Neither is in the chain block, so the mdBlock pins below never read them, and a live-document
+  // adoption in either puts the body in the page before the chain with every pin below green (the round-1 ruling of the fork
+  // PR's review, defect D, 2026-09-20). The registrant list is DERIVED here from the code and held to a written census: every
+  // `registerMdPostPass(<name>)` in a dashboard module's comment-stripped code, the name resolved to its defining module
+  // (the module itself, or a `./` module it imports the name from). A registration the resolver cannot follow (an inline
+  // function, a member expression, a renamed or namespace import) is red here, so it is widened before it is trusted. ──
+  assert.equal((SAN_CODE.match(/\bregisterMdPostPass\b/g) || []).length, 1, "md-sanitize.ts spells registerMdPostPass once, at its definition: the registry has no second writer there");
+  assert.equal((SAN_CODE.match(/\bpostPasses\b/g) || []).length, 4, "and postPasses four times: the declaration, the includes and the push inside registerMdPostPass, the loop inside sanitizeMd (a fifth is a new door into the registry)");
+  const REGISTER = /(?<!function )\bregisterMdPostPass\s*\(([^)]*)\)/g;
+  const named = (clause: string): string[] => clause.split(",").map((raw) => raw.replace(/\btype\s+/, "").trim().split(/\s+as\s+/).pop() || "").filter(Boolean);
+  const fnBody = (src: string, name: string, where: string): string => {
+    const at = src.search(new RegExp("^(?:export )?function " + name + "\\(", "m"));
+    assert.ok(at >= 0, where + " defines `function " + name + "(` at the top level (the sweep reads a top-level function's body; another form is widened here first)");
+    const end = src.indexOf("\n}\n", at);   // the next top-level close; the module's last function closes at the end of the stripped text
+    assert.ok(end >= 0 || src.endsWith("\n}"), where + ": " + name + "'s body closes at the top level");
+    return src.slice(at, end < 0 ? src.length : end + 2);
+  };
+  const registrants: Array<{ site: string; name: string; module: string; body: string }> = [];
+  for (const f of others) {
+    const code = codeOnly(web(f));
+    for (const m of code.matchAll(REGISTER)) {
+      const arg = m[1].trim();
+      assert.match(arg, /^[A-Za-z_]\w*$/, f + ": a registration the derivation cannot follow, `registerMdPostPass(" + arg + ")`: register a named function, and widen the resolver here first");
+      let module = f;
+      if (!new RegExp("^(?:export )?function " + arg + "\\(", "m").test(code)) {
+        module = "";
+        for (const im of code.matchAll(/import (?:type )?\{([^}]*)\} from "\.\/([^"]+)"/g)) if (named(im[1]).includes(arg)) module = im[2] + ".ts";
+        assert.ok(module, f + ": registrant `" + arg + "` is neither a function of the module nor a name it imports from a `./` module under `import { ... }` (a namespace, default or renamed import: widen the resolver here first)");
+      }
+      registrants.push({ site: f, name: arg, module, body: fnBody(codeOnly(web(module)), arg, module) });
+    }
+  }
+  assert.ok(registrants.length > 0, "the derivation found the registrations (an empty derivation is a broken reader, not a clean tree)");
+  // ── the census: the derived list against REGISTERED_POST_PASSES, and red on ANY registrant not in it, a read-only one included
+  // (the fork PR review's ruling on its third round's finding guards-3, 2026-09-20). The census cannot tell a read-only
+  // registrant from one whose body it cannot follow: the sweep below reads a body's own text and not its callees, so a road to
+  // the live document through a helper the body calls is invisible to it, and greening the first would green the second, which
+  // reopens the premise this fix rests on, that nothing puts the body in the live document before the gate runs. A person adding
+  // a read-only registrant pays one red and one line here; the red names both. ──
+  const REGISTERED_POST_PASSES = ["md-config.ts: registerMdPostPass(renderMathPlaceholders) -> math.ts"];
+  const CENSUS_REMEDY = "a registrant outside the census: judge the new registrant's body for live-document roads (the doors the sweep below reads, and any callee of its own that reaches the live document, which the sweep does not follow), then add its line to REGISTERED_POST_PASSES in ui/webview/file-view-seam.test.ts; the census refuses a read-only registrant too, since it cannot tell one from a registrant whose body it cannot follow";
+  // The remedy's two names are read off the message and checked against this module's own source, never repeated here: the
+  // constant it names must be declared in this file as an array literal (so a rename of the declaration that leaves the
+  // message stale is red), and the file it names must be the one this module reads itself from (the one literal handed to
+  // web). Found by the fork PR review's verification of the guards-3 change, 2026-09-20: the check before this one held
+  // the message to a second copy of both names, and a rename of the declaration, its use and that copy stayed green.
+  const SEAM_FILE = "file-view-seam.test.ts";
+  const SELF = web(SEAM_FILE);
+  const remedyNames = /add its line to (\w+) in ui\/webview\/([\w.-]+);/.exec(CENSUS_REMEDY);
+  assert.ok(remedyNames !== null && new RegExp("^\\s*const " + remedyNames[1] + " = \\[", "m").test(SELF) && remedyNames[2] === SEAM_FILE,
+    "the census's red names its remedy: the constant it says to add the line to is declared in this module as an array literal, and the file it names is the one this module reads itself from (the message names " + JSON.stringify(remedyNames && remedyNames.slice(1)) + ")");
+  assert.deepEqual(registrants.map((r) => r.site + ": registerMdPostPass(" + r.name + ") -> " + r.module), REGISTERED_POST_PASSES,
+    "the registered post-passes, derived from the code, are the census REGISTERED_POST_PASSES (one, the math fill, registered by md-config.ts and defined in math.ts); " + CENSUS_REMEDY);
+  const preChain = [{ label: "mintHeadingIds (file-view.ts, the pass mdBlock hands sanitizeMd)", body: fnBody(codeOnly(VIEW), "mintHeadingIds", "file-view.ts") }, ...registrants.map((r) => ({ label: r.name + " (" + r.module + ", registered by " + r.site + ")", body: r.body }))];
+  // no door to the live document in any of them: no `document`, `window`, `globalThis` or `self` (the live document and its
+  // window), no cross-document verb, no element creation (a node created outside the body's document is a road out of it when
+  // the body is appended into it), no re-parse; and every insertion verb's receiver is a binding of the pass's own (a parameter
+  // or a local), never a module-level or imported element
+  const PRE_CHAIN_DOORS = [/\bdocument\b/, /\b(?:window|globalThis|self)\b/, /adoptNode/, /importNode/, /createElement(?:NS)?\(/, /createTextNode\(/, /createDocumentFragment\(/, /createContextualFragment/, /innerHTML|outerHTML|insertAdjacentHTML|insertAdjacentElement|DOMParser|\bsetHTML\w*\s*\(|parseHTMLUnsafe/];
+  const INSERT = /\b([A-Za-z_]\w*)\.(appendChild|append|prepend|insertBefore|replaceChildren|replaceWith|after|before)\(/g;
+  for (const { label, body } of preChain) {
+    assert.ok(body.split("\n").length > 2, label + ": the body was read");
+    for (const door of PRE_CHAIN_DOORS) assert.doesNotMatch(body, door, label + " spells " + String(door) + " in a pass that runs over the sanitizer's body BEFORE the chain: a live-document road there puts the body in the page before the gate has run (the node scene's order leg executes this; this pin reads the code)");
+    for (const m of body.matchAll(INSERT)) {
+      const recv = m[1];
+      const own = new RegExp("\\b(?:const|let|var)\\s+" + recv + "\\b|function \\w+\\([^)]*\\b" + recv + "\\b|\\(\\s*" + recv + "\\s*[,)]|[(,]\\s*" + recv + "\\s*[,)]|\\b" + recv + "\\s*=>");
+      assert.ok(own.test(body), label + ": `" + m[0] + "` inserts into `" + recv + "`, which is not a parameter or a local of the pass (an element from outside the body is a road out of it)");
+    }
+  }
+  // ── the installed library: the sites that pick the body's document, in every dist a bundler can take ──
+  const DP = path.resolve(process.cwd(), "node_modules", "dompurify");
+  const version = (JSON.parse(fs.readFileSync(path.join(DP, "package.json"), "utf8")) as { version: string }).version;
+  for (const f of ["purify.es.mjs", "purify.cjs.js", "purify.js"]) {
+    const lib = fs.readFileSync(path.join(DP, "dist", f), "utf8");
+    const tag = "dompurify " + version + " " + f + ": ";
+    // the factory: the live document is kept as originalDocument and importNode is its method; `document` becomes a <template>'s
+    // content document, one with no browsing context, where the engine has templates
+    assert.match(lib, /\n\s*let document = window\.document;\n\s*const originalDocument = document;\n/, tag + "the factory keeps the live document as originalDocument");
+    assert.match(lib, /const template = document\.createElement\('template'\);\n\s*if \(template\.content && template\.content\.ownerDocument\) \{\n\s*document = template\.content\.ownerDocument;\n/, tag + "and works in a template's content document from then on");
+    assert.match(lib, /\n\s*const importNode = originalDocument\.importNode;\n/, tag + "importNode is the live document's, the one method of it the sanitize keeps");
+    // _initDocument: the parse document is DOMParser's, or one implementation (the template document's) creates; the only
+    // `document.` call lends a text node, which insertBefore adopts into the body's document
+    const initAt = lib.indexOf("_initDocument = function _initDocument(dirty) {");
+    const initEnd = lib.indexOf("return WHOLE_DOCUMENT ? doc.documentElement : body;", initAt);
+    assert.ok(initAt > 0 && initEnd > initAt, tag + "_initDocument is where the parse document is made");
+    const init = codeOnly(lib.slice(initAt, initEnd), "js");
+    assert.match(init, /doc = new DOMParser\(\)\.parseFromString\(dirtyPayload, PARSER_MEDIA_TYPE\);/, tag + "DOMParser first");
+    assert.match(init, /doc = implementation\.createDocument\(NAMESPACE, 'template', null\);/, tag + "a created document when DOMParser gives none");
+    assert.deepEqual(init.match(/\b(?:document|originalDocument|window)\.\w+/g), ["document.createTextNode"], tag + "the live document is not consulted for the parse document; the template document lends a text node");
+    assert.doesNotMatch(init, /adoptNode|importNode/, tag + "nothing in the parse is moved between documents");
+    // the RETURN_DOM branch: the parse document's body itself (or a fragment of the same document), cloned into the live document
+    // by importNode ONLY when shadowroot or shadowrootmode is an allowed attribute
+    const at = lib.indexOf("if (RETURN_DOM) {");
+    const end = lib.indexOf("return returnNode;", at);
+    assert.ok(at > 0 && end > at, tag + "the RETURN_DOM branch");
+    const branch = codeOnly(lib.slice(at, end), "js");
+    assert.match(branch, /if \(RETURN_DOM_FRAGMENT\) \{\n\s*returnNode = createDocumentFragment\.call\(body\.ownerDocument\);/, tag + "a fragment, were one asked for, is the body's own document's");
+    assert.match(branch, /\} else \{\n\s*returnNode = body;\n\s*\}/, tag + "RETURN_DOM alone hands back the parse document's body itself");
+    assert.match(branch, /if \(ALLOWED_ATTR\.shadowroot \|\| ALLOWED_ATTR\.shadowrootmode\) \{\n\s*returnNode = importNode\.call\(originalDocument, returnNode, true\);\n\s*\}\n?$/, tag + "the one road into the live document, a deep clone under importNode, taken only when shadowroot or shadowrootmode is allowed");
+    assert.deepEqual(branch.match(/\b(?:originalDocument|document|adoptNode|importNode)\b/g), ["importNode", "originalDocument"], tag + "no other door in the branch");
+    assert.doesNotMatch(lib, /['"]shadowroot(?:mode)?['"]/, tag + "no attribute list quotes shadowroot or shadowrootmode: neither the html nor the svg profile allows either, so the profile above cannot take that road by itself");
+    // the whole dist, not the two regions above: every cross-document verb in the library's code, counted (comments stripped:
+    // the raw text holds importNode seven times per dist, three of them in comments)
+    const code = codeOnly(lib, "js");
+    assert.equal((code.match(/\bimportNode\b/g) || []).length, 4, tag + "importNode at four sites in the whole dist's code: the factory's `const importNode = originalDocument.importNode` (the binding and the method), the RETURN_DOM branch's `importNode.call(originalDocument, returnNode, true)` (the one road into the live document, guarded above), and `body.ownerDocument.importNode(dirty, true)`, which clones a Node handed to sanitize into the PARSE document's body (sanitizeMd hands a string); a fifth site is a new cross-document road, judged here first");
+    assert.equal((code.match(/\badoptNode\b/g) || []).length, 0, tag + "adoptNode nowhere in the dist's code");
+  }
+  // ── mdBlock: `clean` reaches the chain's four calls and the fence pass's one read before the adoption, and nothing after it ──
+  const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+  const bind = "const clean = sanitizeMd(dirty, mintHeadingIds);", adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
+  const bindAt = mdCode.indexOf(bind), adoptAt = mdCode.indexOf(adopt);
+  assert.ok(bindAt > 0 && adoptAt > bindAt, "the body is bound to `clean` and adopted later");
+  const between = mdCode.slice(bindAt + bind.length, adoptAt);
+  assert.deepEqual(between.match(/\w+\(clean\b/g), ["dropDimmingClasses(clean", "dropPressThrough(clean", "dropStackClasses(clean", "resolveFigureRefs(clean", "gateRemoteFigures(clean", "rewriteFigureSrcs(clean", "gateRemoteFigures(clean", "keepAuthoredSpellings(clean", "capAuthoredFileUrls(clean"],
+    "between the sanitize and the adoption `clean` is handed to the file kind's drop of the dimming classes around its figures (dropDimmingClasses, which removes classes and moves, creates and repoints nothing; the file review's round 16, extra5-2), to its drop of what lets a press pass through an author element (dropPressThrough, which removes classes, the inert attribute and a style declaration and moves, creates and repoints nothing; the file review's round 16, extra5-1), to its drop of the classes that would raise an author element to the control's stacking level and, off a figure's ancestors, of the classes that would make one a stacking context around it (dropStackClasses, which removes classes and moves, creates and repoints nothing; the same round and finding, and its round 17, extra9-1), to the four chain calls (the URL kind's resolution and gate, the file kind's rewrite and gate), to the file kind's keepAuthoredSpellings (it writes data-fv-src and data-fv-srcset, attributes nothing fetches through, with the spelling the cap pass is about to change), and to the cap pass (authored-file-caps.ts: it adds this page's cap to this origin's /file URLs, and sets no other attribute), and to nothing else");
+  assert.deepEqual(between.match(/\bclean\.\w+/g), ["clean.querySelectorAll"], "and the one property read of `clean` there is the fence pass's (a new use of the body before the adoption, a call or a read, is red here first)");
+  assert.deepEqual(between.match(/\bdocument\.\w+/g), ["document.baseURI", "document.baseURI", "document.baseURI"], "the live document is read there for its base URI alone");
+  assert.doesNotMatch(between, /\bbox\b|adoptNode|importNode|appendChild|\bappend\(|prepend\(|insertBefore|replaceChildren|replaceWith|\bafter\(|\bbefore\(/, "nothing moves a node into the live document before the chain is done");
+  assert.doesNotMatch(mdCode.slice(adoptAt + adopt.length), /\bclean\b/, "after the adoption every pass reads `box`; the body is not touched again");
+  assert.doesNotMatch(mdCode.slice(0, bindAt), /\bclean\b/, "and nothing is called `clean` before the sanitize binds it");
+});
+
+// ── no re-parse after the adoption: the population of re-parsing sites, derived from the code ──────────────────────────────
+// The rule mdBlock's chain block states (file-view.ts): every pass that sets, repoints, moves or CREATES a fetching element runs
+// before the adoption. A pass creates one by re-parsing or re-serializing markup in the live document: the fence pass's
+// wrapCodeLines (code-block.ts) does that through innerHTML, and with the pass after the adoption an svg <image> split from its
+// <svg> by the line splitter came back an HTML <img> the chain had never judged, which fetched from an unlisted host in all three
+// engines (the fork PR review's pre-answer record, 2026-09-20; the fourth scene of file-view-figures-gate-adopt-browser.test.ts).
+// The walk of attribute writes above cannot see that road (it writes no fetching attribute), so this test greps for the verbs that
+// re-parse or re-serialize: RE_PARSE, over comment-stripped code, in the region of mdBlock after the adoption line and in every
+// module a pass in that region reaches. The reach is walked in three steps, each derived from the code and pinned: the
+// identifiers called in the region (every bare call there, no method call on an imported binding), each resolved through
+// file-view.ts's named imports to its module or to a local function; the local functions reached from those, transitively over
+// bare calls (REACHED_LOCALS), and every IMPORTED function a reached local calls, resolved the same way to its module
+// (IMPORTED_CALLEES, each to its module, the one-line record the plan's paragraph is filled from; before the file review's
+// landing round the walk followed a reached local's LOCAL calls alone, so the modules those functions live in sat outside the
+// judged set while this header already promised the transitive reach, and a live re-parse write planted in any of them left
+// this test green); then
+// every module those modules name in an import the compiler parses (an import declaration under any clause: a named import, a
+// type-only one, a namespace or default import, a side-effect import; an `export ... from`; an `import x = require()`; and a
+// dynamic `import()` or `require()` of a string literal), under any quote and across any line break, a specifier that is not a
+// string literal refused with its file and line, and a module the parser reports a diagnostic on refused with its line rather
+// than judged over the parser's recovery (the file review's round 8, tests-1 with extra5-1, extra7-1 and extra7-2:
+// the regex resolver before it read a double-quoted specifier at a line's start alone, so a single-quoted import in any reached
+// module dropped that module and its whole closure from the judged set with nothing red, and its binding reader read
+// `import ... from` lines alone, so file-view.ts's require-bound gclock was outside the method-call guard), transitively, and
+// from every path relative to the importing module (`./x` and the vendored engine anchor-map.ts
+// reads from `../../vendor/`, and gesture-clock.js), so the closure (REACHED_MODULES) is the whole set of modules a pass in the region can reach
+// through the viewer's own code, on the safe side: a type-only import is followed too, since deciding which imports the
+// compiler erases is a judgement this census need not make, and file-view.ts itself re-enters the set through file-comments.ts's
+// type import of the viewer's action type, which brings every module file-view.ts imports along. What the walk does not read,
+// stated so a green here is read for what it covers: the npm packages a reached module imports (PACKAGE_IMPORTS, derived and
+// pinned: marked, DOMPurify, KaTeX, and highlight.js's core with its grammars), whose own code is not the viewer's; the sanitizer's and the highlighter's
+// parses run before the adoption over `clean` (pinned above), and a write a package makes onto an element handed to it is that
+// caller's site, judged where the caller is. The verbs are the HTML-parsing entry points an element or a document offers, the
+// string-serializing reads a write can round-trip through, and a template element, whose content is parsed markup: innerHTML and
+// outerHTML writes, insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTMLUnsafe
+// and parseHTMLUnsafe (which the installed lib.dom.d.ts carries), setHTML (the Sanitizer API's, not in those typings yet), and a
+// template created by createElement or this module's `el` helper under any spelling of the argument (`[^)]*template`, the
+// form the derivation command below and the plan's paragraph spell: a name under any quote, or one chosen or assembled inside
+// the call; the fork PR review's verification found the first spelling of this list without setHTML, setHTMLUnsafe and
+// parseHTMLUnsafe, and matching the double-quoted createElement alone, 2026-09-20, and the author's closing pass after the
+// file review's landing round found RE_PARSE matching a name under a quote alone while the command spelled the wider form,
+// and widened RE_PARSE to the command's form, the same lines matching at that head under both). The derivation itself is
+// pinned (the callee list, the reached locals, the imported callees, the module
+// set, the package list, and the import forms the resolver follows, by synthetic modules holding each form, the spellings the
+// regex resolver once dropped among them, with a non-literal specifier asserted to refuse), so a new pass,
+// call or import widens it here first, and a new such site after the adoption is red until it is judged in this list. The
+// judged sites: mdBlock holds one write, the hljs highlight's, inside the fence pass BEFORE the adoption (escaped text: hljs
+// creates spans alone); a reached local holds one, the figure control's glyph parsed onto a holder that enters no document;
+// and every other module the walk reaches holds the sites JUDGED_SITES lists for it, each with its reason, or none: a write of
+// the viewer's own constant markup onto a node outside the Rendered box (a tray or status icon, the panel's loader), a write
+// onto a node that enters no document (anchor-map.ts's detached textarea, its character-reference decoder), a parse into a
+// document of its own that is read and never adopted (reader-place.ts's DOMParser), a type annotation naming the property, and
+// code-block.ts's wrapCodeLines, run before the adoption. None re-parses markup under `box` after the adoption. The whole
+// file's count for file-view.ts is pinned as well, in the one assertion below that holds the number (the plan's re-parse
+// paragraph and its tools pin read the count from that assertion, so the figure has one home), and file-view.ts is judged by
+// that count rather than in the per-module loop; a new site anywhere in file-view.ts is red here until it is judged and the
+// plan's count follows. The two property names are matched BARE (`\b(?:innerHTML|outerHTML)\b`, a read or a write under any
+// spelling), not as `innerHTML =`: a write spelled `x["innerHTML"] = s`, `Object.assign(x, { innerHTML: s })` or
+// `x.innerHTML ||= s` reaches the same setter and the assignment spelling did not match it (the fork PR review's round 2,
+// its finding on the guards, 2026-09-20: such a write planted inside an existing post-adoption callee left this test green); a read of
+// either in the region or a reached module is as suspect as a write, so the judged lines include a type annotation and the
+// decoder's reads. The node scene records the write itself, by the property's setter, whatever the spelling
+// (file-view-figures-gate-adopt.test.ts, Reparse). Derivation command, for a reader by hand (the test runs the same over
+// codeOnly): grep -nE '\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|
+// insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template' over
+// file-view.ts's mdBlock after the adoption line and over the modules REACHED_MODULES names.
+const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template/;
+/** The local functions of file-view.ts a post-adoption pass reaches, transitively over bare calls (derived below; a new one
+ *  widens this list first and is judged against RE_PARSE with the rest). */
+const REACHED_LOCALS = ["keepVideoShape", "addFigureControls", "pxDimension", "decideFigureControl", "figureAnchor", "figureControlAfter", "figureWantsControl", "figureTarget", "dressFigureTitle", "dressFigureMark", "removeFigureControl", "dressFigureControl", "el", "oneImg", "linkAround", "figureState", "figureHasPicture", "figureTooSmall", "linkAbove", "chosenSource", "ownFileRoute", "absUrl", "figureLinkOf", "figureFoldOf", "figureWebTitleLine", "figureSourceCredentialed", "shownAddress", "ringOf", "figureOpenWebTitle", "targetHost", "figureControlGlyph", "figureBox", "decodeEscapes", "authorityCut", "decodeEscapesOnce"];   // the file review's round 11, ui-1 with extra8-1: the dress (dressFigureControl, dressFigureTitle) and its word, host and address helpers joined the walk, and figureTarget is reached from the decision itself; the file review's round 12, fresh-1: the picture's own mark (dressFigureMark) joined beside the title; the file review's round 14, fresh-1: the summary that toggles a fold (figureFoldOf), which the title and the mark read, joined after figureLinkOf; the file review's round 15, correctness-1 with extra9-2: the one sign-in rule (figureSourceCredentialed), which the title and the control's words read, joined after the title's line, and its decode helpers (decodeEscapes, decodeEscapesOnce) and the refused address's authority cut (authorityCut, which shownAddress and targetHost read) at the walk's end; the coordinator's ruling on the same-origin figure after the file review's round 19: the classifier of a figure at this origin's /file route (ownFileRoute), which figureTarget reads before its web arm, joined after chosenSource
+/** The imported functions a reached local calls, each to the module file-view.ts imports it from (derived below; a new one
+ *  widens the module set first). One line with quoted keys: tools/markdown-viewer-plan-gate-adopt.test.mjs reads it as JSON
+ *  and fills the plan's re-parse paragraph from it, so the names and their modules' count have this one home. */
+const IMPORTED_CALLEES: Record<string, string> = { "figurePath": "file-comments-model.ts", "parseSrcset": "figure-gate.ts", "pictureDest": "file-comments.ts" };
+/** The bare calls in a reached local that are neither a local function, an import nor a name the body binds itself: the
+ *  language's globals (derived below; a new one is judged here first; none parses markup, and DOMParser is RE_PARSE's).
+ *  decodeURIComponent and parseInt joined with the sign-in rule's decode (decodeEscapesOnce; the file review's round 15,
+ *  correctness-1): each reads a string and returns a string or a number, and neither touches the document. */
+const GLOBAL_CALLS = ["Number", "URL", "decodeURIComponent", "parseInt"];
+/** The modules a post-adoption pass reaches (derived below): the region's and the reached locals' imported callees' modules,
+ *  then every module those name in an import the compiler parses, transitively, under any quote and any line break (a
+ *  specifier that is not a string literal refuses); paths relative to
+ *  ui/webview, a suffix kept as written (`.js` for the two JavaScript modules) and `.ts` supplied where the import has none.
+ *  A new import widens this list first. authored-file-caps.ts and file-cap.ts joined with main's cap pass (PR 919: file-view.ts
+ *  imports both, and url-links.ts imports file-cap.ts); each computes strings and attributes and holds no re-parse site. */
+const REACHED_MODULES = ["../../vendor/track-changents/engine.js", "actions.ts", "anchor-map.ts", "authored-file-caps.ts", "backend-names.ts", "capped-read.ts", "card-layout.ts", "code-block.ts", "commands.ts", "comments.ts", "ctx-color.ts", "docreview.ts", "fence-source.ts", "figure-gate.ts", "file-cap.ts", "file-comments-model.ts", "file-comments-regions.ts", "file-comments.ts", "file-trail.ts", "file-view-links.ts", "file-view.ts", "gesture-clock.js", "host-prefix.ts", "icons.ts", "keybindings.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-literal-tags.ts", "md-sanitize.ts", "media.ts", "path-links.ts", "pdf-cap.ts", "pick-held.ts", "pinch.ts", "preview.ts", "reader-place.ts", "region-geometry.ts", "session-badge.ts", "settings.ts", "status-widgets.ts", "tab-state.ts", "tab-widgets.ts", "url-links.ts", "viewer-grammars.ts", "widget-prefs.ts"];
+/** The npm packages the reached modules import (derived below), which the walk does not read (the header says why). */
+const PACKAGE_IMPORTS = ["dompurify", "highlight.js/lib/core", "highlight.js/lib/languages/bash", "highlight.js/lib/languages/c", "highlight.js/lib/languages/css", "highlight.js/lib/languages/diff", "highlight.js/lib/languages/go", "highlight.js/lib/languages/ini", "highlight.js/lib/languages/java", "highlight.js/lib/languages/javascript", "highlight.js/lib/languages/json", "highlight.js/lib/languages/markdown", "highlight.js/lib/languages/python", "highlight.js/lib/languages/rust", "highlight.js/lib/languages/sql", "highlight.js/lib/languages/typescript", "highlight.js/lib/languages/xml", "highlight.js/lib/languages/yaml", "katex", "marked"];
+/** The re-parse sites RE_PARSE finds in the reached modules other than file-view.ts (judged by its whole-file count below):
+ *  per module, each matching code line (comment-stripped, trimmed) with the judgement that lets it stand. A module absent here
+ *  holds none; a new line, a moved one or a module gaining one is red until it is judged here. */
+const JUDGED_SITES: Record<string, Array<[line: string, why: string]>> = {
+  "anchor-map.ts": [
+    ["let refDecoder: { innerHTML: string; textContent: string | null } | null | undefined;", "a type annotation naming the property: no read, no write"],
+    ['if (d) { d.innerHTML = "&amp;&ltimes;"; if (d.textContent === "&\\u22c9") refDecoder = d; }', "domRefText's probe: a constant reference written onto a textarea created from the document and inserted nowhere, its text read back"],
+    ['if (v === undefined) { refDecoder.innerHTML = ref; v = refDecoder.textContent || ""; refMemo.set(ref, v); }', "the decoder itself: a character reference written onto that detached textarea and read back as text; the textarea enters no document (pinned below)"],
+  ],
+  "code-block.ts": [["code.innerHTML = wrapLinesHtml(code.innerHTML);", "wrapCodeLines, the fence pass's re-parse, run over `clean` before the adoption (pinned above and below)"]],
+  "file-comments.ts": [
+    ["w.innerHTML = '<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>'", "the Comments panel's loader row: the viewer's own constant markup with a same-origin /media path, on a row of the panel, never under the Rendered box"],
+    ["w.innerHTML = '<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>'", "the composer's wait line (waitLine, added by batch 921's PR 915), the viewer's own constant markup with a root-relative /media path, appended to the composer's button row in the Comments panel, never under the Rendered box"],
+  ],
+  "preview.ts": [
+    ["dl.innerHTML = ICON_DOWNLOAD;", "the lightbox tray's download control: icons.ts's constant drawing on the tray's own anchor"],
+    ['btn.innerHTML = icon; btn.title = word; btn.setAttribute("aria-label", word);', "the tray's copy control swapping among icons.ts's constant drawings"],
+  ],
+  "reader-place.ts": [
+    ['if (!isHtmlBlock(source, span) || typeof DOMParser !== "function") return false;', "a presence test of the parser, no parse"],
+    ['const body = new DOMParser().parseFromString(source.slice(span.start, span.end) + "\\n<p " + PROBE + "></p>", "text/html").body;', "opensWrapper: the note's html block parsed into a document of its own, read for its shape and never adopted"],
+    ['if (typeof DOMParser !== "function") return null;', "a presence test of the parser, no parse"],
+    ['const parsed = elementsOf(new DOMParser().parseFromString(source.slice(span.start, span.end), "text/html").body);', "ownedElements: the same parse into its own document, its elements counted and compared, never adopted"],
+  ],
+  "status-widgets.ts": [["span.innerHTML = FOLDER_ICON_SVG;", "the statusline's folder icon, this module's constant markup, on the status line"]],
+};
+test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code through the reached locals' imported callees and every import form transitively, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element outside the judged sites; the two judged sites on the road before the adoption sit inside the fence pass and the third, a reached local's, writes onto a holder that enters no document; the whole file's count for file-view.ts is pinned in the one assertion the plan's paragraph reads", () => {
+  const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+  const adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
+  const adoptAt = mdCode.indexOf(adopt);
+  assert.ok(adoptAt > 0, "the adoption line");
+  const after = mdCode.slice(adoptAt + adopt.length), before = mdCode.slice(0, adoptAt);
+  // the region: no verb after the adoption; the one site before it is the highlight's escaped text, inside the fence pass
+  assert.deepEqual(after.split("\n").filter((l) => RE_PARSE.test(l)), [], "no re-parsing or re-serializing write after the adoption line in mdBlock");
+  assert.deepEqual(before.split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim()), ["codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;"],
+    "the one such write in mdBlock is the highlight's, before the adoption (hljs escapes the text: it creates spans and nothing that fetches)");
+  assert.ok(before.indexOf('clean.querySelectorAll("pre code")') < before.indexOf("codeEl.innerHTML = hljs.highlight"), "inside the fence pass over `clean`");
+  // the whole file: the count below is the figure's one home (the plan's re-parse paragraph and tools/markdown-viewer-plan-gate-adopt.test.mjs
+  // read it from this assertion's literal); the highlight's is the one site inside mdBlock, the others the viewer's own constant
+  // markup outside it (the tray's icon constants, the loading glyph, codeBlock's numbered rows, and two judged at the merge of
+  // the trail and figure-control branch, 2026-09-20: the bar's Back and Forward arrows, written at the bar's build outside the box like
+  // the other icon buttons, and the figure control's glyph, parsed once onto a holder that enters no document and cloned into
+  // each control, since the control itself stands under the box during the render and a live write there is what the node
+  // scene refuses; the control had written its glyph through innerHTML, two live re-parses under the box in that scene, red at
+  // the merge)
+  const whole = codeOnly(VIEW).split("\n").filter((l) => RE_PARSE.test(l));
+  assert.equal(whole.length, 14, "the whole file's count of re-parse sites in comment-stripped file-view.ts (a new one is judged here and in the plan's paragraph before this number moves)");
+  assert.equal(whole.filter((l) => l.trim() === "codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;").length, 1, "the highlight's write among them, the one inside mdBlock, so all but one sit outside it");
+  assert.equal(whole.filter((l) => /holder\.innerHTML = ICON_EXPAND/.test(l)).length, 1, "the figure control's glyph is parsed onto its holder, never onto the control (the control is placed under the box)");
+  // the callees of the post-adoption region: every identifier called there that is not a method, resolved through the imports
+  const called = [...new Set([...after.matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)].map((m) => m[1]))].filter((n) => !["if", "for", "while", "return", "switch", "catch"].includes(n));
+  assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "addFigureControls", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
+  // a pass written as a method call on an imported binding (`ns.pass(box)`, `hljs.highlight(...)`) is no bare call, so the list
+  // above would not see it: every binding file-view.ts imports, under any form and from any source (the compiler's tree, so a
+  // require-bound one, gclock, and a clause wrapped over lines are in the set; the file review's round 8, extra7-1), is
+  // asserted absent as the object of a method call in the region and in every reached local (the fork PR review's round-2
+  // verification named this blind spot, 2026-09-20), the calls read off the compiler's tree under any access spelling (a property
+  // access, an optional chain, a bracket; the author's closing pass after the file review's round 8: one regex
+  // over `b.name(` had left `gclock?.learnAll(box)` and `gclock["learnAll"](box)` silent)
+  /** The compiler's tree for `src`, REFUSED when the parser reports a diagnostic: a module the parser recovers over would be judged
+   *  over its recovery (an unterminated block comment before an import drops the import silently, an unterminated specifier is
+   *  followed as a wrong path), and a form this census cannot follow refuses with its line rather than passing over it (the author's
+   *  closing pass after the file review's round 8). Every reader below parses through this. */
+  const parsed = (file: string, src: string): ts.SourceFile => {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+    const diags = (sf as unknown as { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics;
+    if (diags.length) { const d = diags[0]; throw new Error(file + ":" + (sf.getLineAndCharacterOfPosition(d.start ?? 0).line + 1) + ": the parser reports a diagnostic, so the module is refused rather than judged over the parser's recovery: " + ts.flattenDiagnosticMessageText(d.messageText, " ")); }
+    return sf;
+  };
+  /** Every binding a module imports, by the compiler's tree: a default, a namespace, a named one (as renamed), an
+   *  `import x = require()`, and a variable bound to require() or to await import() (destructured or not), the loader reached
+   *  through an await, a cast (`as`, `<T>`, `satisfies`), a non-null mark, parentheses or a member chain (`require("./p").default`:
+   *  a binding to a member of a loaded module is one the module's code is called through), under any quote and across any line
+   *  break. */
+  const bindingsOf = (src: string, file: string): Set<string> => {
+    const sf = parsed(file, src);
+    const names = new Set<string>();
+    const isLoader = (e: ts.Expression): boolean => ts.isCallExpression(e) && ((ts.isIdentifier(e.expression) && e.expression.text === "require") || e.expression.kind === ts.SyntaxKind.ImportKeyword);
+    const unwrap = (e: ts.Expression): ts.Expression => {
+      let x = e;
+      for (;;) {
+        if (ts.isAwaitExpression(x) || ts.isAsExpression(x) || ts.isTypeAssertionExpression(x) || ts.isSatisfiesExpression(x) || ts.isNonNullExpression(x) || ts.isParenthesizedExpression(x) || ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x)) x = x.expression;
+        else return x;
+      }
+    };
+    const bindName = (nm: ts.BindingName): void => { if (ts.isIdentifier(nm)) names.add(nm.text); else for (const el of nm.elements) if (ts.isBindingElement(el)) bindName(el.name); };
+    const walk = (n: ts.Node): void => {
+      if (ts.isImportDeclaration(n) && n.importClause) { const c = n.importClause; if (c.name) names.add(c.name.text); if (c.namedBindings) { if (ts.isNamespaceImport(c.namedBindings)) names.add(c.namedBindings.name.text); else for (const el of c.namedBindings.elements) names.add(el.name.text); } }
+      else if (ts.isImportEqualsDeclaration(n)) names.add(n.name.text);
+      else if (ts.isVariableDeclaration(n) && n.initializer) { if (isLoader(unwrap(n.initializer))) bindName(n.name); }
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return names;
+  };
+  const bindings = bindingsOf(VIEW, "file-view.ts");
+  assert.ok(bindings.has("hljs") && bindings.has("linkifyFileText") && bindings.has("marked") && bindings.has("gclock"), "the reader sees the default, the named, the singleton and the require-bound imports (gclock: `const gclock = require(\"./gesture-clock.js\")`)");
+  // the binding reader, pinned by execution over a synthetic module holding each binding form it reads: a default, a namespace, a
+  // named and a renamed one, a default beside a namespace under single quotes, a clause wrapped over lines, a namespace wrapped over
+  // lines, an import-equals, a require-bound name, a destructured require, an awaited import(), and a require reached through an
+  // `as` cast, parentheses, a `.default` member, a non-null mark and an awaited import()'s member
+  const bindingForms = 'import a from "./a";\nimport * as b from "./b";\nimport { c, d as e } from "./c";\nimport f, * as g from \'./f\';\nimport {\n  h,\n} from "./h";\nimport * as\n  i from "./i";\nimport j = require("./j");\nconst k = require("./k");\nconst { l } = require("./l");\nconst m = await import("./m");\nconst n = require("./n") as { learnAll: (x: unknown) => void };\nconst o = (require("./o"));\nconst p = require("./p").default;\nconst q = require("./q")!;\nconst r = (await import("./r")).default;\n';
+  assert.deepEqual([...bindingsOf(bindingForms, "x.ts")].sort(), ["a", "b", "c", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r"], "the binding reader sees each binding form pinned here, under any quote, across a line break and through a cast, parentheses, a non-null mark or a member of the loaded module (a form outside this list is outside the reader: a binding it missed would leave a method call on that binding unguarded)");
+  /** The imported bindings the code in `text` calls a method on, by the compiler's tree: every call whose callee, parentheses
+   *  unwrapped, is a property access (`ns.pass(box)`, `ns?.pass(box)`) or an element access (`ns["pass"](box)`) whose chain roots in an
+   *  identifier in `bindings` (so `ns.pass.call(null, box)` is seen through its inner access). `shape` says what `text` is: a
+   *  statement list (the region after the adoption) or a function's text from its parameter list on (a reached local's body as
+   *  localBody cuts it), each wrapped into a function so the compiler parses it whole; a parse diagnostic refuses. */
+  const methodCallsIn = (text: string, shape: "statements" | "signature" = "statements"): string[] => {
+    const sf = parsed("region.ts", shape === "statements" ? "function __region() {\n" + text + "\n}\n" : "function __region(" + text + "\n}\n");
+    const found = new Set<string>();
+    const walk = (n: ts.Node): void => {
+      if (ts.isCallExpression(n)) {
+        let c: ts.Expression = n.expression;
+        while (ts.isParenthesizedExpression(c)) c = c.expression;
+        if (ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c)) {
+          let root: ts.Expression = c.expression;
+          while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root) || ts.isParenthesizedExpression(root) || ts.isNonNullExpression(root)) root = root.expression;
+          if (ts.isIdentifier(root) && bindings.has(root.text)) found.add(root.text);
+        }
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return [...found].sort();
+  };
+  assert.deepEqual(methodCallsIn("gclock.learnAll(box); hljs.highlight(raw, { language: lang }); linkifyFileText(box);"), ["gclock", "hljs"], "the guard, driven: a method call on the require-bound binding and on the default import is seen, a bare call is not (the file review's round 8, extra7-1: `gclock.learnAll(box)` planted after the adoption had left this test green, gclock being outside the binding set)");
+  assert.deepEqual(methodCallsIn("gclock?.learnAll(box);"), ["gclock"], "an optional chain is a method call on the binding");
+  assert.deepEqual(methodCallsIn('gclock["learnAll"](box);'), ["gclock"], "a bracket access is one too (both spellings had passed the one-spelling regex)");
+  assert.deepEqual(methodCallsIn("(marked.parse)(s); hljs.highlight.call(null, raw); gclock!.learnAll(box);"), ["gclock", "hljs", "marked"], "parentheses around the callee, a call through .call and a non-null mark are seen through");
+  assert.deepEqual(methodCallsIn("const gclock2 = { x() {} }; gclock2.x(); learnAll(box); box.replaceChildren();"), [], "a name outside the binding set and a bare call are not method calls on an imported binding");
+  assert.deepEqual(methodCallsIn("figurePath: string): FigureTarget | null {\n  return gclock.learnAll(box);", "signature"), ["gclock"], "a local's text from its parameter list on is read whole");
+  assert.deepEqual(methodCallsIn(after), [], "no method call on an imported binding after the adoption (the compiler's tree, under any access spelling): a pass in that form would hide from the callee list above");
+  /** file-view.ts's named imports from `./`: the binding to the module, for resolving a bare call (the compiler's tree, so any
+   *  quote and any line break; a type-only clause included, as the reader before it took `import type {`). */
+  const importsOf = (src: string): Record<string, string> => {
+    const map: Record<string, string> = {};
+    const sf = parsed("file-view.ts", src);
+    for (const st of sf.statements) {
+      if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings || !ts.isNamedImports(st.importClause.namedBindings)) continue;
+      if (!ts.isStringLiteral(st.moduleSpecifier) || !st.moduleSpecifier.text.startsWith("./")) continue;
+      const rel = st.moduleSpecifier.text.slice(2);
+      for (const el of st.importClause.namedBindings.elements) map[el.name.text] = /\.[cm]?[jt]s$/.test(rel) ? rel : rel + ".ts";
+    }
+    return map;
+  };
+  /** Every module `src` (at `from`, a path relative to ui/webview) names in an import the compiler parses: an import declaration
+   *  under any clause (named, type-only, namespace, default, default beside a namespace or a clause, side-effect), an export
+   *  with a module specifier, an `import x = require()`, and a require() or import() whose argument is a string literal, under
+   *  any quote and across any line break; each as a path relative to ui/webview (`x` to `x.ts`, a suffix kept as written), the
+   *  npm packages apart. A specifier that is not a string literal (a template, with or without a substitution, a variable, an
+   *  expression) REFUSES with the file, the form and the line, on the safe side: a module the walk cannot name is a module it
+   *  cannot judge (the file review's round 8, tests-1, extra5-1, extra7-1, extra7-2); a module the parser
+   *  reports a diagnostic on refuses with its line too (`parsed`, above), never judged over the parser's recovery. */
+  const importTargets = (src: string, from: string): { local: string[]; packages: string[] } => {
+    const local = new Set<string>(), packages = new Set<string>();
+    const sf = parsed(from, src);
+    const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+    const take = (spec: ts.Node | undefined, form: string, holder: ts.Node): void => {
+      if (!spec || !ts.isStringLiteral(spec)) throw new Error(from + ":" + lineOf(holder) + ": " + form + " whose specifier is not a string literal (refused, on the safe side): " + holder.getText(sf).split("\n")[0].slice(0, 100));
+      if (!spec.text.startsWith(".")) { packages.add(spec.text); return; }
+      const rel = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec.text));
+      local.add(/\.[cm]?[jt]s$/.test(rel) ? rel : rel + ".ts");
+    };
+    const walk = (n: ts.Node): void => {
+      if (ts.isImportDeclaration(n)) take(n.moduleSpecifier, "import", n);
+      else if (ts.isExportDeclaration(n)) { if (n.moduleSpecifier) take(n.moduleSpecifier, "export from", n); }
+      else if (ts.isImportEqualsDeclaration(n)) { if (ts.isExternalModuleReference(n.moduleReference)) take(n.moduleReference.expression, "import = require", n); }
+      else if (ts.isCallExpression(n)) { const c = n.expression; const isReq = ts.isIdentifier(c) && c.text === "require"; if (isReq || c.kind === ts.SyntaxKind.ImportKeyword) take(n.arguments[0], isReq ? "require()" : "import()", n); }
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return { local: [...local].sort(), packages: [...packages].sort() };
+  };
+  // the forms the resolver follows, pinned by execution over synthetic modules holding each one (the walk before the file
+  // review's landing round followed the named form alone and asserted the namespace and default forms absent; preview.ts's
+  // namespace import of pinch.ts is followed now); the spellings the regex resolver once dropped are followed here by
+  // execution, each with a specifier of its own so the expected list grows with them (both refuters of tests-1: same-named
+  // twins resolve to the same module and pass unpatched), and a non-literal specifier is asserted to refuse with its line
+  const forms = 'import { a } from "./a";\nimport type { B } from "./b";\nimport * as c from "./c";\nimport d from "./d";\nimport e, { e2 } from "./e";\nexport { f } from "./f";\nexport * from "./g";\nimport "./h";\nconst i = await import("./i");\nconst j = require("./j");\nimport k from "../k/k.js";\nimport { l } from "pkg-l";\nimport m from "pkg-m/sub";\n';
+  assert.deepEqual(importTargets(forms, "x.ts"), { local: ["../k/k.js", "a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts", "i.ts", "j.ts"], packages: ["pkg-l", "pkg-m/sub"] }, "the resolver follows every import form and keeps the packages apart");
+  // the spellings the regex resolver dropped silently (the file review's landing round): a single-quoted named import, a
+  // single-quoted side-effect import, a single-quoted require, a single-quoted `export *`, a default beside a namespace, an
+  // import after another statement on its line, a clause wrapped over lines, a namespace wrapped over lines, an import-equals,
+  // a type-only re-export and a namespace re-export
+  const more = "import { a } from './a';\nimport './b';\nconst c = require('./c');\nexport * from './d';\nimport e, * as f from \"./e\";\nexport {}; import { g } from \"./g\";\nimport {\n  h,\n} from \"./h\";\nimport * as\n  i from \"./i\";\nimport j = require(\"./j\");\nexport type { K } from './k';\nexport * as l from \"./l\";\n";
+  assert.deepEqual(importTargets(more, "x.ts"), { local: ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "g.ts", "h.ts", "i.ts", "j.ts", "k.ts", "l.ts"], packages: [] }, "the spellings the regex resolver once dropped are followed: single quotes, default beside a namespace, an import after another statement on its line, a clause or a namespace wrapped over lines, an import-equals, a type-only and a namespace re-export");
+  // and a specifier that is not a string literal is refused with the file, the form and the line, never dropped: a template
+  // with and without a substitution, a variable and an expression, under import() and under require()
+  for (const [bad, form] of [["export function f() { return import(`./x`); }", "import()"], ["const s = './x'; export function f() { return import(s); }", "import()"], ["const q = import('./' + name);", "import()"], ["const p = require(`./x`);", "require()"], ["const p = require(`./${name}`);", "require()"], ["const p = require(spec);", "require()"]] as const) {
+    assert.throws(() => importTargets(bad, "x.ts"), new RegExp("^Error: x\\.ts:1: " + form.replace(/[()]/g, "\\$&") + " whose specifier is not a string literal \\(refused, on the safe side\\): "), "a non-literal specifier is refused with its line, never dropped: " + bad);
+  }
+  // and a module the parser reports a diagnostic on is refused with its line by every reader, never judged over the recovery: an
+  // unterminated block comment before an import had dropped the import silently, an unterminated specifier was followed as a wrong
+  // path (the author's closing pass after the file review's round 8)
+  assert.throws(() => importTargets("/* open\nimport { zz } from './zz-plant';", "x.ts"), /^Error: x\.ts:2: the parser reports a diagnostic, so the module is refused rather than judged over the parser's recovery: '\*\/' expected/, "the resolver refuses an unterminated block comment before an import, naming the line the diagnostic points at (the file's end)");
+  assert.throws(() => importTargets("import { zz } from './zz-plant;\n", "x.ts"), /^Error: x\.ts:1: the parser reports a diagnostic/, "and an unterminated specifier");
+  assert.throws(() => bindingsOf("const x = ;\nconst y = require('./y');\n", "x.ts"), /^Error: x\.ts:1: the parser reports a diagnostic/, "the binding reader refuses the same way");
+  assert.throws(() => importsOf("import { zz } from './zz-plant;\n"), /^Error: file-view\.ts:1: the parser reports a diagnostic/, "and the named-import reader");
+  const viewImports = importsOf(VIEW);
+  const localFns = new Set([...codeOnly(VIEW).matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1]));
+  const modules = new Set<string>(); const locals: string[] = [];
+  for (const c of called) { if (viewImports[c]) modules.add(viewImports[c]); else if (localFns.has(c)) locals.push(c); else assert.fail("a callee neither imported nor local: " + c); }
+  assert.deepEqual(locals, ["keepVideoShape", "addFigureControls"], "two local callees: the video's shape and the figure controls (the trail and figure-control branch's pass, judged at its merge, 2026-09-20)");
+  // a local callee's own bare calls are followed too, transitively: to other local functions (so a write two levels down is read:
+  // the figure control's decision sat one call below addFigureControls and wrote its glyph through innerHTML onto a button placed
+  // under the box; the node scene caught it at the merge, and this walk reads it now), to imported functions (whose modules join
+  // the set: the file review's round 7, fresh-1 with fresh-2) and to the language's globals (pinned, so a new one is judged)
+  const localBody = (l: string): string => codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]);
+  const reached = [...locals]; const importedCallees: Record<string, string> = {}; const globals = new Set<string>();
+  for (let i = 0; i < reached.length; i++) {
+    const body = localBody(reached[i]);
+    // a name the body binds itself (an inner arrow, a nested function, a variable) is read with the body it stands in;
+    // removeFigureControl's `take` is a handler read from the keyboardTakers register, which the viewer's open fills with its
+    // own takeKeyboard (file-view.ts, judged by its whole-file count above)
+    const inner = new Set([...body.matchAll(/\b(?:const|let|var|function)\s+(\w+)/g)].map((m) => m[1]));
+    for (const m of body.matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)) {
+    const n = m[1];
+    if (["if", "for", "while", "return", "switch", "catch"].includes(n) || inner.has(n)) continue;
+    if (localFns.has(n)) { if (!reached.includes(n)) reached.push(n); }
+    else if (viewImports[n]) importedCallees[n] = viewImports[n];
+    else if (bindings.has(n)) assert.fail("a reached local calls the imported binding `" + n + "`, not from `./`: " + reached[i]);
+    else globals.add(n);
+    }
+  }
+  assert.deepEqual(reached, REACHED_LOCALS, "the local functions a post-adoption pass reaches, transitively over bare calls (a new one widens this list first; the property, derived by the walk, against its expected list)");
+  assert.deepEqual(importedCallees, IMPORTED_CALLEES, "the imported functions a reached local calls, each to its module (a new one widens the module set first)");
+  assert.deepEqual([...globals].sort(), [...GLOBAL_CALLS].sort(), "the globals a reached local calls (a new one is judged here first)");
+  for (const l of reached) assert.deepEqual(methodCallsIn(localBody(l), "signature"), [], "no method call on an imported binding in the reached local " + l + " (the compiler's tree, under any access spelling): a pass in that form would hide from the walk");
+  const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.firstElementChild ?? null; figureWebGlyph = figureGlyph ? figureGlyph.nextElementSibling : null; }';
+  assert.deepEqual(reached.flatMap((l) => localBody(l).split("\n").filter((x) => RE_PARSE.test(x)).map((x) => l + ": " + x.trim())), ["figureControlGlyph: " + GLYPH_HOLDER], "the one re-parse a reached local holds is the glyph's holder (figureControlGlyph), judged: parsed once, both drawings in one write, cloned into each control (the holder line's spelling, a sentence pin, inside the derived count)");
+  const glyphBody = localBody("figureControlGlyph");
+  assert.equal(glyphBody.split("\n").filter((x) => /\bholder\b/.test(x)).length, 1, "the holder lives on that one line: it is inserted nowhere, so it enters no document");
+  assert.match(glyphBody, /return drawing \? drawing\.cloneNode\(true\) : null;/, "and the control takes a clone (a sentence pin)");
+  // the module closure: the region's imported callees' modules and the reached locals' imported callees' modules, then every
+  // module those name, transitively, under every import form; the packages kept apart and pinned
+  for (const m of Object.values(importedCallees)) modules.add(m);
+  const packages = new Set<string>();
+  const queue = [...modules];
+  while (queue.length) { const m = queue.shift() as string; const t = importTargets(web(m), m); for (const p of t.packages) packages.add(p); for (const dep of t.local) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
+  assert.deepEqual([...modules].sort(), REACHED_MODULES, "the modules a post-adoption pass reaches, transitively over every import form (a new import widens this list first)");
+  assert.ok(modules.has("file-view.ts"), "file-view.ts itself re-enters the set (file-comments.ts's type import of the viewer's action type), and is judged by its whole-file count above, not in the loop below");
+  assert.deepEqual([...packages].sort(), PACKAGE_IMPORTS, "the npm packages the reached modules import, which the walk does not read (the header says why; a new one is judged here first)");
+  // every reached module other than file-view.ts holds exactly the sites judged for it, in order, or none
+  for (const m of modules) {
+    if (m === "file-view.ts") continue;
+    const found = codeOnly(web(m), m.endsWith(".js") ? "js" : "ts").split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim());
+    const judged = JUDGED_SITES[m] ?? [];
+    assert.deepEqual(found, judged.map(([line]) => line), m + ": every re-parsing or re-serializing site in a module a post-adoption pass reaches is judged in JUDGED_SITES with its reason, and none is missing" + (judged.length ? " (judged: " + judged.map(([, why]) => why).join("; ") + ")" : ""));
+  }
+  for (const m of Object.keys(JUDGED_SITES)) assert.ok(modules.has(m), m + " is judged in JUDGED_SITES but the walk no longer reaches it: retire the entry");
+  // the two sums the plan's re-parse paragraph states (its tools pin reads them from these two literals): the matching lines
+  // across the reached set, file-view.ts's included, and the modules holding one
+  assert.equal(whole.length + Object.values(JUDGED_SITES).flat().length, 27, "the matching lines across every module the walk reaches, file-view.ts's among them");
+  assert.equal(Object.keys(JUDGED_SITES).length + 1, 7, "the modules holding a matching line, file-view.ts among them");
+  // the judgements that rest on a claim about the code, pinned: anchor-map.ts's decoder is a textarea inserted nowhere (every line
+  // naming it is the decoder's own), and code-block.ts's wrapCodeLines is called by the fence pass before the chain, never after
+  const decoderLines = codeOnly(web("anchor-map.ts")).split("\n").filter((l) => /\brefDecoder\b/.test(l));
+  assert.equal(decoderLines.length, 7, "anchor-map.ts names refDecoder on its declaration, the probe's four lines and the decoder's two, and nowhere else");
+  assert.ok(decoderLines.every((l) => !/append|insertBefore|replaceChild|prepend|after\(|before\(/.test(l)), "and no line inserts it anywhere: the textarea enters no document");
+  assert.equal(after.includes("wrapCodeLines("), false, "nothing after the adoption calls wrapCodeLines");
 });
 
 // ── editing over pending changes (plans/file-review.md Slice 5) ────────────────────────────────────
@@ -1150,6 +3035,203 @@ test("Edit over pending changes: the mount carries the status's records and the 
   assert.equal(posted.filter((x) => x.type === "fileComments" && x.verb === "status").length, statusAsks,
     "no status re-ask after the save: the reply IS the panel's status");
   assert.equal(wrap.querySelector(".fileview-fc button")!.textContent, "Comments · 0", "…and the glance follows the reply (a sidecar, no changes left)");
+});
+
+// ── the Comments panel's change cards over a save through the panel that lands with the editor still up: the viewer's saved()
+// moves mtimeNs() to the saved bytes, which the editor then holds, and tells the seam's onSaved (its doc), which the panel takes
+// as the card-state rule's content paint of those bytes (file-comments.ts, #cardState's doc, event 1). The real viewer and the
+// real panel. ──
+const P95 = DOC.indexOf("p95");
+/** A substitution over "p95" (the change's own text), which keeps its offsets in DOC with lines added after it. */
+const overP95 = (id: string): Hunk => ({ ...hunk(id), curFrom: P95, curTo: P95 + 3, baseFrom: P95, baseTo: P95 + 3 });
+/** A second substitution, over "40%". */
+const over40 = (id: string): Hunk => ({ ...hunk(id), curFrom: DOC.indexOf("40%"), curTo: DOC.indexOf("40%") + 3, baseFrom: DOC.indexOf("40%"), baseTo: DOC.indexOf("40%") + 3, oldText: "30%", newText: "40%" });
+const SAVED_TEXT = DOC + "\nMore.\n";
+const EDIT_CARD = { buttons: ["Accept", "Reject", "Comment on this change"], link: false };
+const NS9 = "1757145600000000009", NS10 = "1757145600000000010", NS11 = "1757145600000000011";
+/** The change card `id` in the open Comments panel: its buttons, and whether its reference links to its mark. */
+const changeCard = (o: Open, id: string): { buttons: string[]; link: boolean } => {
+  const c = o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:' + id + '"]');
+  assert.ok(c, "the change card of " + id + " is listed");
+  return { buttons: c!.querySelectorAll(".fc-actions button").map((x) => x.textContent), link: c!.querySelector(".fc-ref")!.classes.includes("fc-link") };
+};
+/** REPORT open with `hunks` pending, the Comments panel opened, then the editor up; `id`'s card read at each step, the read
+ *  view's returned with the open viewer. */
+async function editUnderPanel(t: TestContext, hunks: Hunk[], id: string): Promise<{ o: Open; read: { buttons: string[]; link: boolean } }> {
+  const o = await open(REPORT, t, SID, undefined, true);   // the Raw preference: the view Edit leaves as it found it
+  await answerStatus(status(hunks));
+  o.wrap.querySelector(".fileview-fc button")!.click();
+  await answerStatus(status(hunks));                   // the open's own read of the status
+  const read = changeCard(o, id);
+  assert.ok(read.buttons.includes("Comment on this change"), "the read view shows the status's bytes: the card offers Comment on this change");
+  await enterEdit(o);
+  assert.deepEqual(changeCard(o, id), EDIT_CARD, "the editor up: Accept and Reject answer in place, no Reveal or link into the read view it replaced");
+  return { o, read };
+}
+/** The panel closed and opened again, its status read as `s`. */
+async function reopenPanel(o: Open, s: Status): Promise<void> {
+  const btn = o.wrap.querySelector(".fileview-fc button")!;
+  btn.click(); await settle();
+  assert.equal(o.wrap.querySelector(".fileview-aside"), null, "the panel closed");
+  btn.click(); await answerStatus(s);
+}
+
+test("a save whose reply lands with the editor kept up by keystrokes typed above the change while the save was out (file-comments.ts, #cardState's doc, event 1): the substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes; the composer it opens quotes the saved bytes' span, the text the offsets index, not the buffer's; the editor's exit gives the card the read view gave", async (t) => {
+  const { o, read } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  typeInto("Draft. " + SAVED_TEXT);                    // typed above the change while the save is out
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the keystrokes keep the editor up");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the viewer's mtime is the saved bytes'");
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  aside.querySelector('[data-act="fcchangecomment"][data-id="h1"]')!.click(); await settle();
+  assert.notEqual(o.ctx.text()!.slice(P95, P95 + 3), "p95", "the buffer's text at the change's offsets is other words (control)");
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-quote")!.textContent, "p95", "the composer quotes the change's own text, cut from the saved bytes (#cardState's doc)");
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-tag"), null, "no passage-changed tag");
+  o.b.cancel.click(); await settle();                  // the buffer is dirty: the confirm says yes
+  assert.equal(o.ctx.editing(), false);
+  assert.deepEqual(changeCard(o, "h1"), read, "the exit repaints the saved bytes: the card as the read view gave it before the editor");
+});
+
+test("a save whose reply lands with the editor kept up by a decision clicked in it while the save was out (file-comments.ts, #cardState's doc, event 1): the substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  decideInEditor("accepted", "h1", "p95", "p99");      // clicked while the save is out: not in this save
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the decision keeps the editor up");
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h1"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+});
+
+test("a save whose reply lands with the editor kept up by the accept it carried, undone in the editor while the save was out (file-comments.ts, #cardState's doc, event 1): the other substitution's card keeps Comment on this change at the reply, at a render and at a later status for the saved bytes", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1"), over40("h2")], "h2");
+  decideInEditor("accepted", "h1", "p95", "p99");
+  const m = saveTracked(o, SAVED_TEXT);
+  assert.deepEqual(m.args.accepted, [{ id: "h1", oldText: "p95", newText: "p99" }], "the save carries the accept");
+  ed.records = [record("h1"), record("h2")]; ed.decisions = { accepted: [], rejected: [] }; ed.trackOpts!.onDecisions(ed.decisions);   // the accept undone while the save is out
+  await saveReply(m.reqId, status([over40("h2")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.equal(o.ctx.editing(), true, "the undone accept keeps the editor up");
+  assert.match(errBar(o.body)!.textContent, /had already landed with this save/, "and the bar says the accept landed");
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "at the reply the card keeps Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h2"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "a render moves nothing");
+  await reopenPanel(o, status([over40("h2")], { fileMtimeNs: NS9, storeMtimeNs: NS11 }));
+  assert.deepEqual(changeCard(o, "h2"), EDIT_CARD, "nor does a later status for the saved bytes, the sidecar moved");
+});
+
+// ── the two roads where a save's onSaved is no event for the change cards (file-comments.ts, #cardState's doc, event 1) ──
+const INTRO = "Intro line.\n";                          // a line above the change: the saved bytes' offsets are the loaded text's plus its length
+/** overP95 in the saved bytes INTRO + DOC, where the same "p95" sits INTRO.length further on. */
+const overP95Saved = (id: string): Hunk => ({ ...overP95(id), curFrom: P95 + INTRO.length, curTo: P95 + INTRO.length + 3, baseFrom: P95 + INTRO.length, baseTo: P95 + INTRO.length + 3 });
+
+test("a save through saveFile (Edit clicked before the panel's first status, so the save does not go through the panel), the first status answered and keystrokes typed while it was out (file-comments.ts, #cardState's doc, event 1): the card keeps Comment on this change at the ack; a status for the saved bytes then takes it away, so no composer can quote the loaded text at the saved bytes' offsets; the editor's exit paints the saved bytes and the card offers it again, quoting them", async (t) => {
+  const o = await open(REPORT, t, SID, undefined, true);
+  await enterEdit(o);                                  // before the panel's first status: nothing rode in, and Save follows the status (none yet)
+  const reqId = save(o, INTRO + DOC);                  // the saveFile frame (save() asserts it went out)
+  assert.equal(lastOf("fileComments", "save"), undefined, "the save did not go through the panel");
+  await answerStatus(status([overP95("h1")]));         // the panel's first status, answered while the save is out
+  o.wrap.querySelector(".fileview-fc button")!.click();
+  await answerStatus(status([overP95("h1")]));         // the open's own read of it
+  const before = changeCard(o, "h1");
+  assert.ok(before.buttons.includes("Comment on this change"), "the premise: with a status for the loaded bytes the card offers Comment on this change");
+  typeInto("Draft. " + INTRO + DOC);                   // typed while the save is out
+  disk[REPORT] = { bytes: INTRO + DOC, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+  fileSaved(reqId, { mtimeNs: NS9, logged: true }); await settle();
+  assert.equal(o.ctx.editing(), true, "the keystrokes keep the editor up");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the viewer's mtime is the saved bytes'");
+  assert.deepEqual(changeCard(o, "h1"), before, "at the ack the card is as it was (#cardState's doc, event 1)");
+  await answerStatus(status([overP95Saved("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));   // onSaved's re-read of the status: the saved bytes'
+  assert.deepEqual(changeCard(o, "h1"), { buttons: ["Accept", "Reject"], link: false }, "a status for the saved bytes takes Comment on this change away (#cardState's doc, event 2)");
+  o.b.cancel.click(); await settle();                  // the buffer is dirty: the confirm says yes
+  assert.equal(o.ctx.editing(), false);
+  assert.ok(changeCard(o, "h1").buttons.includes("Comment on this change"), "the exit paints the saved bytes: the card offers Comment on this change again (#cardState's doc, event 1)");
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  aside.querySelector('[data-act="fcchangecomment"][data-id="h1"]')!.click(); await settle();
+  assert.equal(aside.querySelector(".fc-composer-ref .fc-quote")!.textContent, "p95", "the composer quotes the change's own text, cut from the saved bytes");
+});
+
+test("a late ack over a pane: a save through the panel, Cancel while it was out, a reload landing the saved bytes, a second reload failing to a pane, then the save's reply (file-comments.ts, #cardState's doc, event 1): the card offers no Reveal and no Comment on this change over the pane, at the ack and at a render", async (t) => {
+  const { o } = await editUnderPanel(t, [overP95("h1")], "h1");
+  const m = saveTracked(o, SAVED_TEXT);
+  o.b.cancel.click(); await settle();                  // Cancel while the save is out (the buffer is dirty: the confirm says yes)
+  assert.equal(o.ctx.editing(), false);
+  disk[REPORT] = { bytes: SAVED_TEXT, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+  o.ctx.reload(); await settle();                      // the saved bytes land
+  assert.equal(o.ctx.mtimeNs(), NS9);
+  delete disk[REPORT];
+  o.ctx.reload(); await settle();                      // a second reload fails to a pane
+  assert.notEqual(o.ctx.error(), null, "the pane stands");
+  assert.equal(o.ctx.mtimeNs(), NS9, "the view's mtime is still the saved bytes'");
+  await saveReply(m.reqId, status([overP95("h1")], { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+  assert.notEqual(o.ctx.error(), null, "the pane still stands after the ack's re-read");
+  const pane = { buttons: ["Accept", "Reject"], link: false };
+  assert.deepEqual(changeCard(o, "h1"), pane, "at the ack over the pane: no Reveal and no Comment on this change (#cardState's doc, event 1)");
+  o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
+  assert.deepEqual(changeCard(o, "h1"), pane, "a render moves nothing");
+});
+
+/** What the person sees of the change cards h1 and h2 (buttons, link, Reveal's title, tags), the whole aside's text and the viewer's
+ *  bar. */
+const seen2 = (o: Open): { cards: Array<{ id: string; buttons: string[]; link: boolean; reveal: string | null; tags: string[] }>; aside: string; bar: string | null } => {
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  const cards = ["h1", "h2"].map((id) => {
+    const c = aside.querySelector('.fc-card[data-id="chg:' + id + '"]')!;
+    const rv = c.querySelectorAll(".fc-actions button").find((x) => x.dataset.act === "fcreveal");
+    return { id, buttons: c.querySelectorAll(".fc-actions button").map((x) => x.textContent), link: c.querySelector(".fc-ref")!.classes.includes("fc-link"), reveal: rv ? rv.title : null, tags: c.querySelectorAll(".fc-card-head .fc-tag").map((x) => x.textContent) };
+  });
+  const bar = errBar(o.body);
+  return { cards, aside: aside.textContent, bar: bar ? bar.textContent : null };
+};
+
+test("a late ack under a later editor: a save through the panel, Cancel while it was out, the editor taken up again over the bytes from before the save or over the saved bytes a reload landed first, then the save's reply (file-comments.ts, #cardState's doc, event 1: under a later editor the latch's run at that ack changes nothing a card reads): at the ack and after that editor's exit the change cards, the aside and the viewer's bar read as they do where the ack runs no latch (before this change the save latch did not run at this ack, and the reads were these); over the old bytes the ack itself still moves the cards and the bar, the reply's status taking Comment on this change away (event 2) and the bar saying the earlier save landed under the reopened editor (SAVE_LANDED_UNDER_NEW_EDITOR)", async (t) => {
+  const fv = await mod();
+  const cards = (buttons: string[], reveal: string | null = null, tags: string[] = []) => ["h1", "h2"].map((id) => ({ id, buttons, link: false, reveal, tags }));
+  const AR = ["Accept", "Reject"], ARC = ["Accept", "Reject", "Comment on this change"];
+  for (const over of ["old", "saved"] as const) {
+    const hs = [overP95("h1"), over40("h2")];
+    const o = await open(REPORT, t, SID, undefined, true);
+    await answerStatus(status(hs));
+    o.wrap.querySelector(".fileview-fc button")!.click();
+    await answerStatus(status(hs));
+    await enterEdit(o);
+    const m = saveTracked(o, SAVED_TEXT);
+    o.b.cancel.click(); await settle();                  // Cancel while the save is out
+    assert.equal(o.ctx.editing(), false, over + ": the premise: the editor that sent the save is gone");
+    if (over === "saved") {
+      disk[REPORT] = { bytes: SAVED_TEXT, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+      o.ctx.reload(); await settle();
+      await reopenPanel(o, status(hs, { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+    }
+    await enterEdit(o);                                  // the later editor
+    const before = seen2(o);
+    assert.deepEqual(before.cards, cards(ARC), over + ": the premise: under the later editor each card answers in place and offers Comment on this change");
+    await saveReply(m.reqId, status(hs, { fileMtimeNs: NS9, storeMtimeNs: "1757145600000000012" }));
+    assert.equal(o.ctx.editing(), true, over + ": the premise: the later editor is still up at the ack");
+    const ack = seen2(o);
+    if (over === "old") {
+      assert.deepEqual(ack.cards, cards(AR), "old bytes, at the ack: the reply's status, for the saved bytes, is not the text the later editor loaded, so Comment on this change goes (event 2)");
+      assert.equal(ack.aside, before.aside.split("Comment on this change").join(""), "old bytes, at the ack: the aside moves by that alone");
+      assert.equal(ack.bar, fv.SAVE_LANDED_UNDER_NEW_EDITOR + "Reload file", "old bytes, at the ack: the viewer's bar says the earlier save landed under the reopened editor");
+    } else {
+      assert.deepEqual(ack.cards, cards(ARC), "saved bytes, at the ack: the cards as before it");
+      assert.equal(ack.aside, before.aside, "saved bytes, at the ack: the aside as before it");
+      assert.equal(ack.bar, null, "saved bytes, at the ack: no bar");
+    }
+    o.b.cancel.click(); await settle();                  // the later editor's exit
+    const exit = seen2(o);
+    assert.deepEqual(exit.cards, over === "old" ? cards(AR) : cards([...ARC, "Reveal"], "Show the change in the Raw view (line 4)", ["not shown"]),
+      over + ": after the exit the read view's cards, as its repaint takes them (event 1): " + JSON.stringify(exit.cards));
+    assert.equal(exit.bar, null, over + ": and no bar");
+    assert.ok(exit.aside.includes("Show changes inline"), over + ": the read view's head is back");
+  }
 });
 
 test("a tracked file with nothing pending, or one with only a sidecar, still saves through the panel with no records; an untracked file saves through saveFile, byte for byte", async (t) => {
@@ -1369,7 +3451,7 @@ test("the chunk failing to load over pending changes: no fallback textarea (it c
   await settle();
   assert.equal(ed.mounted, mounted, "no mount");
   assert.match(errBar(body)!.textContent, /^The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes\. 1 change is pending/,
-    "the consequence stated literally, as docs/guide.md states it: this is copy the person acts on (the sentence names CR and CRLF since Slice 7 of plans/markdown-viewer.md, item 7)");
+    "the consequence stated literally, as docs/reference.md states it: this is copy the person acts on (the sentence names CR and CRLF since Slice 7 of plans/markdown-viewer.md, item 7)");
   assert.ok(errBar(body)!.textContent.startsWith(o.fv.CR_REFUSAL + " 1 change is pending"), "the exported constant (contract C5), a space, then the panel's own refusal");
   assert.doesNotMatch(errBar(body)!.textContent, /\bride/, "no metaphor in the refusal");
   assert.equal(b.save.hidden, true);
@@ -1400,7 +3482,7 @@ test("the paint pass runs as one fileview:paint frame of the page's performance 
     now: () => clock.t, wallNow: () => clock.wall, post: (m) => posted.push(m), raf: null, caf: null, setInterval: null,
     observer: null, supportedEntryTypes: [], heapBytes: () => null, domCount: () => 42, visible: () => true, hiddenPane: () => false,
     ua: "chrome-desktop", pageUrl: "http://h:1/files", windowEvents: null, documentEvents: null,
-    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, env: () => null,
+    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, fedBytes: () => null, fedAttached: () => null, env: () => null,
   });
   const observers: Array<{ cb: (entries: any[]) => void; targets: any[] }> = [];
   (globalThis as any).ResizeObserver = class {

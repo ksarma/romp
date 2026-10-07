@@ -88,6 +88,18 @@ export function followBoxBelow(stick: boolean, dh: number): boolean {
   return stick && dh !== 0;
 }
 
+/** Where the reader stood BEFORE a box below grew, from the geometry after it (2026-09-20, the held-mail chat lab red in a
+ *  whole-suite run with its payload: sh 8819, scrollTop 8174, clientHeight 447, the approval box just shown). The browser keeps
+ *  scrollTop across the growth, so the pre-growth distance from the bottom is today's distance less what #content gave up:
+ *  the box's FOOTPRINT change, its border box plus its vertical margins (`dfoot`), never the observer's content-rect delta,
+ *  which misses the borders and the margin a box brings when it first shows (10.7 px there, and the 2 px band read the
+ *  reader as scrolled up). The clientHeight is an integer and the footprint is not, so the distance carries a residual under
+ *  one pixel (the review of PR 1926): a reader exactly at the band's edge can read past it, an edge accepted rather than
+ *  rounded (either rounding misreads the browser's other one). Pure, so node executes it with the captured numbers. */
+export function atBottomBeforeGrowth(scrollHeight: number, scrollTop: number, clientHeight: number, dfoot: number): boolean {
+  return atBottomDist(scrollHeight - scrollTop - (clientHeight + dfoot));
+}
+
 /** Follow-the-tail after an append, for a reader whose view is in follow mode (T262, the user 2026-09-08: "jumped
  *  up slightly on my scroll" in busy sessions). A tab within the old 80 px band used to be pinned to the bottom on
  *  EVERY frame the pane received — including a status-only tail that changed no content — so a reader wheeling
@@ -116,4 +128,16 @@ export function followTail(distBefore: number, heightBefore: number, heightAfter
  *  event). Off: nothing — the clamp cannot reach a reader more than the shrink above the bottom. Pure. */
 export function followTailShrink(stick: boolean, dh: number): boolean {
   return stick && dh < 0;
+}
+
+/** A follow-mode reader whose window was just REBUILT at the tail (a jump to the live bottom, re-windowed by virtualizeToViewport; PR E)
+ *  follows the rebuilt rows' height changes of EITHER sign. The re-window writes the bottom synchronously, and the rows then settle
+ *  by a few pixels each before the view observer's report at frame end: when the net was a shrink the tail-shrink rule wrote the reader
+ *  back; when it was growth nothing did, and the go-to-the-live-tail jump ended 40 to 67 px above the bottom (the landing lab, under the
+ *  median per-turn estimate, whose spacer runs a little taller than the old one). `armed` is the re-window's mark; the events that END
+ *  the re-window clear it (render.ts): the reader's own scroll and the view's next paint, never an observer delivery, which a rebuild
+ *  that changed no height never makes (the maintainer's round 1 addendum). Growth at the tail is otherwise the append path's (append-stick), as
+ *  followTailShrink says. Pure. */
+export function followRebuiltTail(stick: boolean, armed: boolean, dh: number): boolean {
+  return armed && stick && dh !== 0;
 }

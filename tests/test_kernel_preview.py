@@ -616,16 +616,38 @@ class SvgSandboxPolicy(unittest.TestCase):
         cls.srv.shutdown()
         cls.tmp.cleanup()
 
-    def _req(self, path, method="GET", headers=None):
+    def _req(self, path, method="GET", headers=None, query=""):
         # returns the raw header MESSAGE, not a dict: a dict keeps one value per name, and the sandbox
         # policy rides BESIDE _send's frame-ancestors one under the same header name on the 200 branch
         url = "http://127.0.0.1:%d/file?path=%s&token=%s" % (self.port, urllib.parse.quote(path), TOKEN)
+        url += query                                   # more keys, as the viewer's picture address adds sid and v
         req = urllib.request.Request(url, method=method, headers=headers or {})
         try:
             with urllib.request.urlopen(req, timeout=3) as r:
                 return r.status, r.headers, r.read()
         except urllib.error.HTTPError as e:
             return e.code, e.headers, e.read()
+
+    @staticmethod
+    def _answer(r):
+        # the whole answer: status, Content-Type, body, and every header pair but Date as a list, so a name with two values
+        # keeps both (the MESSAGE, as _req returns it)
+        code, msg, body = r
+        return code, msg.get("Content-Type"), body, [(k, v) for k, v in msg.items() if k.lower() != "date"]
+
+    def test_the_v_key_changes_no_answer_for_an_svg(self):
+        # file-view.ts fetchFile's svg landing shows the picture from the address the viewer fetched plus a v key (the landed
+        # mtime): a GET or a HEAD with sid and v must answer exactly as the same request without v
+        sid = "&sid=11111111-2222-4333-8444-000000000913"
+        for method in ("GET", "HEAD"):
+            plain = self._answer(self._req(self.svg, method=method, query=sid))
+            keyed = self._answer(self._req(self.svg, method=method, query=sid + "&v=1757145600000000001"))
+            self.assertEqual(plain[0], 200, method)
+            self.assertEqual(keyed, plain, "%s: the v key on the picture's address (file-view.ts fetchFile's svg landing) changed "
+                                           "the answer" % method)
+        # the control: two requests without v, compared the same way, are equal
+        self.assertEqual(self._answer(self._req(self.svg, query=sid)), self._answer(self._req(self.svg, query=sid)),
+                         "the comparison holds for two answers to the same request")
 
     @staticmethod
     def _csp(msg):

@@ -7,6 +7,7 @@ the two-phase `cwdPending` reg write, the names-file rewrite, the prior-episode 
 the boot-reconcile heal, and the guard that keeps the move's turn-less ResultMessage from settling a
 turn that never was. All fixtures SYNTHETIC: placeholder uuids, temp dirs, hostname TESTHOST."""
 import asyncio
+import concurrent.futures
 import json
 import os
 import shutil
@@ -30,6 +31,7 @@ SID = "11111111-2222-3333-4444-555555555555"        # the session's stable romp 
 EPISODE_FSID = "22222222-3333-4444-5555-666666666666"   # an earlier /clear episode of the same session
 FORK_FSID = "33333333-4444-5555-6666-777777777777"      # a resume-fork transcript of the same session
 THREAD = "99999999-8888-7777-6666-555555555555"
+LOOP_THREAD = "move-test-loop"                          # the name _wire gives each fixture loop's thread
 
 
 def _ok(cwd, changed=True):
@@ -66,12 +68,12 @@ class MoveBase(unittest.TestCase):
         self.be._log = lambda m, problem=None: self.logs.append((m, bool(problem)))
         self.old = os.path.realpath(tempfile.mkdtemp())
         self.new = os.path.realpath(tempfile.mkdtemp())
+        # A cleanup, not a tearDown, registered before any _wire: cleanups run last-in first-out, so
+        # every loop's _end_loop runs before these directories go.
+        self.addCleanup(self._remove_fixtures)
         self.be.spawn("web", self.old, bg="#123456", fg="#ffffff", sid=SID)
-        self.loops = []
 
-    def tearDown(self):
-        for loop in self.loops:
-            loop.call_soon_threadsafe(loop.stop)
+    def _remove_fixtures(self):
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
         for d in (self.td, self.claude, self.old, self.new):
             shutil.rmtree(d, ignore_errors=True)
@@ -89,14 +91,35 @@ class MoveBase(unittest.TestCase):
         the scripted fake, its thread reporting alive so _ensure hands it back instead of spawning."""
         s = sb.SdkSession(self.be, dict(sb.read_reg(self.be.state_dir, SID) or {}, sid=SID))
         loop = asyncio.new_event_loop()
-        threading.Thread(target=loop.run_forever, daemon=True).start()
-        self.loops.append(loop)
+        thread = threading.Thread(target=loop.run_forever, name=LOOP_THREAD, daemon=True)
+        self.addCleanup(self._end_loop, loop, thread)
+        thread.start()
         s.loop = loop
         s.client = _Client(_Query(arms))
         s._connected.set()
         s.thread = types.SimpleNamespace(is_alive=lambda: True)
         self.be.sessions[SID] = s
         return s
+
+    def _end_loop(self, loop, thread):
+        """Shut the default executor down on the running loop, stop, join, close, each wait bounded at
+        10 s and failing loudly past it. A loop only stopped stays open, and an open loop keeps its
+        default executor, so a worker a test started (run_in_executor) idled on until a garbage
+        collection happened to free the loop; the session-end thread guard found one in CI.
+        LoopsEndWithTheirTest pins this."""
+        if thread.ident is None:                   # the start raised: nothing ever ran on this loop
+            loop.close()
+            return
+        shut = asyncio.run_coroutine_threadsafe(loop.shutdown_default_executor(), loop)
+        try:
+            shut.result(10)
+        except concurrent.futures.TimeoutError:
+            self.fail("an executor worker was still busy 10 s into the loop's cleanup")
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(10)
+        self.assertFalse(thread.is_alive(), "the loop thread did not stop within 10 s")
+        loop.close()
 
     def _place(self, cwd, fsid, sidecar=False, text="x"):
         p = Path(sb.transcript_path(cwd, fsid))
@@ -205,13 +228,16 @@ class MoveOk(MoveBase):
         out = {}
         ta = threading.Thread(target=lambda: out.__setitem__("a", self.be.move(SID, self.new)))
         ta.start()
-        for _ in range(500):                         # until the first call has claimed the flag
-            if self._reg().get("cwdPending"):
-                break
-            time.sleep(0.01)
-        out["b"] = self.be.move(SID, self.new)       # the second asker, while the first is in flight
-        gate.set()
+        try:
+            for _ in range(500):                     # until the first call has claimed the flag
+                if self._reg().get("cwdPending"):
+                    break
+                time.sleep(0.01)
+            out["b"] = self.be.move(SID, self.new)   # the second asker, while the first is in flight
+        finally:
+            gate.set()        # even on a failure above: the loop's cleanup (_end_loop) waits for this worker
         ta.join(10)
+        self.assertFalse(ta.is_alive(), "the first asker's move did not return within 10 s")
         self.assertEqual(out.get("a"), "")
         self.assertIn("already pending", out["b"])
         self.assertEqual(len(s.client._query.requests), 1, "one set_cwd, not two")
@@ -252,10 +278,10 @@ class MoveRefusals(MoveBase):
         self._unchanged(s)
 
     def test_a_text_queued_after_the_idle_reading_is_busy_before_any_request(self):
-        # review round 4 (2026-09-08): the busy reading and the arm are one step under the session lock
-        # (the feeder pops under that lock and holds the head while the arm stands), so a text queued
-        # between move()'s first idle reading and the arm is caught by the locked re-read: no request goes
-        # out, nothing is armed, and the claim is returned
+        # the busy reading and the arm are one step under the session lock (the feeder pops under that
+        # lock and holds the head while the arm stands), so a text queued between move()'s first idle
+        # reading and the arm is caught by the locked re-read: no request goes out, nothing is armed, and
+        # the claim is returned
         s = self._wire([_ok(self.new)])
         real = self.be._claim_cwd_pending
 
@@ -343,7 +369,7 @@ class LostReply(MoveBase):
         self.assertTrue(s._move_settle_expected, "the CLI's turn-less result is still coming — the arm stands")
         self.assertTrue(os.path.exists(sb.transcript_path(self.new, EPISODE_FSID)), "prior episodes follow")
         self.assertTrue(any("reply was lost" in m and p for m, p in self.logs),
-                        "on the problem ring: the arm outlives move() and holds the queue (review round 5)")
+                        "on the problem ring: the arm outlives move() and holds the queue")
 
     def test_a_lost_reply_with_the_transcript_nowhere_is_uncertain_and_keeps_the_flag(self):
         s = self._wire([RuntimeError("control request timed out")])
@@ -447,6 +473,65 @@ class Helpers(MoveBase):
         self.assertTrue(os.path.exists(sb.transcript_path(self.old, SID)))
 
 
+def _executor_workers():
+    """The threads in the stdlib's exit-join table (concurrent.futures.thread._threads_queues): the
+    ThreadPoolExecutor workers, including ended ones until their Thread objects are collected, so the
+    caller keeps only the threads threading.enumerate lists. A worker another thread starts mid-read
+    changes the table's size, so the read is retried, as conftest's guard does."""
+    import concurrent.futures.thread as cft
+    for _ in range(100):
+        try:
+            return set(cft._threads_queues)
+        except RuntimeError:
+            continue
+    raise AssertionError("concurrent.futures.thread._threads_queues changed during each of 100 reads")
+
+
+class LoopsEndWithTheirTest(unittest.TestCase):
+    """Every thread a fixture loop starts has ended when its test does: the loop's thread (_wire names it
+    LOOP_THREAD) and every worker of the loop's default executor. Each MoveBase test is run here through
+    unittest (setUp, body, cleanups) and the threads it left are read right after. Before _end_loop
+    joined and closed each loop, the concurrent-moves test left its run_in_executor worker idle on an
+    open loop; the session-end thread guard (tests/conftest.py) reported it in CI whenever no garbage
+    collection had freed the loop first, and a run of that test alone reported it every time."""
+
+    def test_every_move_test_ends_the_threads_its_loops_started(self):
+        prior = os.environ.get("CLAUDE_CONFIG_DIR")     # each MoveBase cleanup pops it
+        self.addCleanup(lambda: os.environ.__setitem__("CLAUDE_CONFIG_DIR", prior) if prior is not None
+                        else os.environ.pop("CLAUDE_CONFIG_DIR", None))
+        # What each loop's cleanup saw on entry, per case: the loop thread's name (the read below filters
+        # on it) and whether the loop had started its default executor (the witness that a case used it).
+        ends = {}
+        real = MoveBase._end_loop
+
+        def spy(case, loop, thread):
+            ends.setdefault(case.id(), []).append((thread.name, loop._default_executor is not None))
+            return real(case, loop, thread)
+        MoveBase._end_loop = spy
+        self.addCleanup(setattr, MoveBase, "_end_loop", real)
+        kinds = [k for k in globals().values()
+                 if isinstance(k, type) and issubclass(k, MoveBase) and k is not MoveBase]
+        cases = [c for k in kinds for c in unittest.defaultTestLoader.loadTestsFromTestCase(k)]
+        executor_case = [c.id() for c in cases
+                         if c._testMethodName == "test_two_concurrent_moves_send_one_request"]
+        self.assertEqual(len(executor_case), 1, "the population holds the test that uses the loop's executor")
+        for case in cases:
+            with self.subTest(case=case.id()):
+                before = set(threading.enumerate())
+                result = unittest.TestResult()
+                case.run(result)
+                self.assertEqual((result.testsRun, result.skipped, result.errors, result.failures),
+                                 (1, [], [], []), "the case ran and passed")
+                workers = _executor_workers()
+                left = [t.name for t in threading.enumerate()
+                        if t not in before and (t.name == LOOP_THREAD or t in workers)]
+                self.assertEqual(left, [], "these threads were still running after the case's cleanups")
+        self.assertTrue(ends, "no case wired a loop")
+        self.assertEqual({name for runs in ends.values() for name, _ in runs}, {LOOP_THREAD})
+        self.assertTrue(any(used for _, used in ends.get(executor_case[0], [])),
+                        "the concurrent-moves test's loop never started its default executor")
+
+
 class FakeResultMessage:
     def __init__(self, num_turns):
         self.num_turns = num_turns
@@ -487,9 +572,8 @@ class SpuriousSettle(unittest.TestCase):
         self.assertFalse(s._move_settle_expected, "spent on the match")
 
     def test_the_guard_only_fires_on_an_armed_zero_turn_result(self):
-        # review round 4 (2026-09-08): rewritten to round 3's model. A real turn's result while the arm
-        # stands proves the arm stale (the move's result would have preceded it) and DROPS it, logged, so
-        # a zero-turn result after that goes to the ordinary settle; the earlier pin kept the arm.
+        # A real turn's result while the arm stands proves the arm stale (the move's result would have
+        # preceded it) and DROPS it, logged, so a zero-turn result after that goes to the ordinary settle.
         logs = []
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=lambda m: logs.append(str(m)))
         s = self._session(be, armed=False)

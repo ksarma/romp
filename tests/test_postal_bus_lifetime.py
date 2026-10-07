@@ -73,9 +73,10 @@ class KernelUp(unittest.TestCase):
         # The seam is popped for the class and put back by a cleanup registered right here, restore-or-delete
         # (review round 1 of the peers-leak fix, 2026-09-18). tearDown put it back only when a prior value existed,
         # so with the variable unset at setUp the "/nonexistent" the seam test writes outlived the class, and a set
-        # value means "a test with no live kernel" to every postal call on the worker afterwards. Masked in a full
-        # xdist run: ten postal modules write the seam at import, so conftest's guard saw no unset-to-set change. The
-        # module alone, and KernelUpSeamRestore below, are the fails-before.
+        # value means "a test with no live kernel" to every postal call on the worker afterwards. It was masked in a
+        # full xdist run until fork PR #894: ten postal modules wrote the seam at import, so conftest's guard saw no
+        # unset-to-set change; no module writes it at import now. The module alone, and KernelUpSeamRestore below, are
+        # the fails-before.
         self._seam = os.environ.pop("ROMP_SESSIONS_FILE", None)
         self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", self._seam)
 
@@ -105,7 +106,7 @@ class KernelUpSeamRestore(unittest.TestCase):
     """Executed pin for the restore above (review round 1, 2026-09-18): KernelUp's seam test is run through unittest
     with ROMP_SESSIONS_FILE unset, and the variable must be unset afterwards. Red on a tearDown that puts back only a
     prior value ('/nonexistent' is not None), whatever else is collected; conftest's _shared_state_restored names the
-    same leftover, but only in a run that collects no module writing the seam at import."""
+    same leftover."""
 
     def test_the_seam_test_leaves_the_variable_unset_when_it_found_it_unset(self):
         prior = os.environ.pop("ROMP_SESSIONS_FILE", None)
@@ -123,9 +124,21 @@ GAMMA = "99999999-8888-7777-6666-555555555555"
 
 
 def _forget_presence():
-    """A bus that has never seen an answered listing: no in-memory rows, no disk twin."""
+    """A bus that has never seen an answered listing: no in-memory rows, no disk twin, and no listing read yet for the
+    deadness mirror's release (_LOCAL_LISTING; round 3 of fork PR #897)."""
     pm._LOCAL_PRESENCE_GOOD[0], pm._LOCAL_PRESENCE_GOOD[1] = [], False
     pm._PRESENCE_GOOD_FILE.unlink(missing_ok=True)
+    pm._LOCAL_LISTING[0] = None                      # read directly: a renamed record fails loudly (the eighteenth commit)
+
+
+def _mirror_rows():
+    """key -> (heard, expired, sids) from the mirror the poll wrote, or the raw text when it is not a document (so a writer
+    of another shape fails a pin by its message rather than by an exception)."""
+    text = (pm.STATE / "remote-sids").read_text()
+    try:
+        return {k: (r["heard"], r["expired"], r["sids"]) for k, r in json.loads(text)["hosts"].items()}
+    except (ValueError, KeyError, TypeError):
+        return text
 
 
 class IdleGate(unittest.TestCase):
@@ -232,7 +245,10 @@ class IdleGate(unittest.TestCase):
 class MonitorTick(unittest.TestCase):
     """One _monitor poll, end to end: an answered listing is remembered as evidence, an unanswered one
     holds the count only on that evidence, and the deadness mirror (STATE/remote-sids) is rewritten
-    every poll so an expired heartbeat leaves it within one tick (2026-09-06)."""
+    every poll so an expired heartbeat is MARKED within one tick (2026-09-06 made the poll write; fork PR
+    #897's round 2 made the write mark rather than prune: the row stays with its roster, expired and so
+    unreachable to the judge, which answers cannot-determine for its sid instead of presuming it closed).
+    The mirror is removed between tests: the writer carries the previous file's rows forward."""
 
     def setUp(self):
         self._saved = (pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans, pm._warn_stuck_mail)
@@ -240,11 +256,13 @@ class MonitorTick(unittest.TestCase):
         pm._sweep_orphans = pm._warn_stuck_mail = lambda: None
         pm.HEARTBEATS.clear()
         pm.STATE.mkdir(parents=True, exist_ok=True)
+        (pm.STATE / "remote-sids").unlink(missing_ok=True)
         _forget_presence()
 
     def tearDown(self):
         pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans, pm._warn_stuck_mail = self._saved
         pm.HEARTBEATS.clear()
+        (pm.STATE / "remote-sids").unlink(missing_ok=True)
         _forget_presence()
 
     def test_a_never_answered_bus_stops_at_the_grace(self):
@@ -284,16 +302,46 @@ class MonitorTick(unittest.TestCase):
         pm.HEARTBEATS[GAMMA] = ("gamma", pm.time.time())
         self.assertEqual(pm._monitor_tick(pm.IDLE_GRACE - 1), (0, False))
 
-    def test_an_expired_heartbeat_leaves_the_mirror_after_one_tick(self):
+    def test_an_expired_heartbeat_is_marked_unreachable_by_the_polls_write_and_stays(self):
         pm._kernel_sessions_checked = lambda threads=False: ([], True)
         old, fresh = GAMMA, "99999999-8888-7777-6666-555555555556"
         now = pm.time.time()
         pm.HEARTBEATS[old] = ("gamma", now - pm.HEARTBEAT_TTL - 1)
         pm.HEARTBEATS[fresh] = ("delta", now)
-        (pm.STATE / "remote-sids").write_text(old + "\n" + fresh + "\n")   # what the last beat wrote
+        (pm.STATE / "remote-sids").write_text(old + "\n" + fresh + "\n")   # what the last beat wrote, in the
+        pm._monitor_tick(0)                                                  # shape before 2026-09-22
+        text = (pm.STATE / "remote-sids").read_text()
+        try:
+            rows = {k: (r["heard"], r["expired"], r["sids"]) for k, r in json.loads(text)["hosts"].items()}
+        except (ValueError, KeyError, TypeError):
+            rows = text                                                      # not a document: the pin reads the text
+        self.assertEqual(rows, {"heartbeat:" + old: (True, True, [old]), "heartbeat:" + fresh: (True, False, [fresh])},
+                         "the poll's write marks the expired beat's row expired and keeps its roster: the judge "
+                         "reads it as unreachable and answers cannot-determine for its sid (the shape before "
+                         "2026-09-22 pruned the sid, and a live session that missed a beat was presumed closed); "
+                         "the legacy list is not carried, both its sids being named by heard sources")
+
+    def test_the_polls_write_releases_a_beat_the_answered_listing_owns_within_one_tick(self):
+        """Round 3 of fork PR #897, the reviewer's ruling (the seventeenth commit): the poll reads the listing BEFORE it writes
+        the mirror, so its write releases a heartbeat row whose sid this poll's ANSWERED listing owns (rules 1 and 2 of the
+        judge's ladder own that sid) and forgets the entry with it, within the tick. An unanswered listing releases nothing
+        (a local session's beat filed during a blink stays), and an answered listing that does not own the sid releases
+        nothing. The writer's own pins are tests/test_postal_remote_sids_mirror.py; the composition with the reader is
+        tests/test_dead_session_staleness.py ReaderFollowsTheWriter."""
+        pm._kernel_sessions_checked = lambda threads=False: ([], False)
+        pm.HEARTBEATS[GAMMA] = ("gamma", pm.time.time())              # a beat filed while the listing did not answer
         pm._monitor_tick(0)
-        self.assertEqual((pm.STATE / "remote-sids").read_text(), fresh + "\n",
-                         "the expired sid is pruned by the poll's write, not by the next beat")
+        self.assertEqual((_mirror_rows(), GAMMA in pm.HEARTBEATS), ({"heartbeat:" + GAMMA: (True, False, [GAMMA])}, True),
+                         "an unanswered listing releases nothing: the beat's row is written, heard, and the entry stays")
+        pm._kernel_sessions_checked = lambda threads=False: ([{"id": ALPHA, "name": "web"}], True)
+        pm._monitor_tick(0)
+        self.assertEqual((_mirror_rows(), GAMMA in pm.HEARTBEATS), ({"heartbeat:" + GAMMA: (True, False, [GAMMA])}, True),
+                         "an answered listing that does not own the sid releases nothing")
+        pm._kernel_sessions_checked = lambda threads=False: ([{"id": GAMMA, "name": "gamma"}], True)
+        pm._monitor_tick(0)
+        self.assertEqual((_mirror_rows(), GAMMA in pm.HEARTBEATS), ({}, False),
+                         "THE RULED RELEASE within one tick: the poll's read owns the sid and its write drops the row and forgets "
+                         "the entry (a tick that wrote before it read releases at the NEXT tick, one poll late)")
 
 
 class MonitorLoop(unittest.TestCase):
@@ -365,6 +413,10 @@ class MonitorLoop(unittest.TestCase):
 
 class RefusedNotifyRevives(unittest.TestCase):
     def setUp(self):
+        # a kernel that OWNS a bus: the run's floor sets ROMP_POSTAL_CLIENT_ONLY=1 (2026-09-18, so no in-process kernel starts a bus
+        # by an ensure or a revive) and the revive skips under it; these pins are the contract of a kernel that owns one, so the
+        # flag goes for the class and comes back in tearDown after the revive thread is waited out (the ensure is a stub here)
+        self._client_only = os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
         self._bp = km.BUS_PORT
         self._ens = km._ensure_postal_bus
         km.BUS_PORT = _dead_port()
@@ -373,9 +425,15 @@ class RefusedNotifyRevives(unittest.TestCase):
         km._bus_reviving[0] = False
 
     def tearDown(self):
+        for _ in range(200):                      # the revive thread finishes before the world goes back
+            if not km._bus_reviving[0]:
+                break
+            time.sleep(0.01)
         km.BUS_PORT = self._bp
         km._ensure_postal_bus = self._ens
         km._bus_reviving[0] = False
+        if self._client_only is not None:
+            os.environ["ROMP_POSTAL_CLIENT_ONLY"] = self._client_only
 
     def test_refused_peer_notify_kicks_one_ensure(self):
         self.assertFalse(km._notify_bus_peer("TESTHOST", 1, True), "the caller still sees the failure")

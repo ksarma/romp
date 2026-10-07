@@ -15,36 +15,29 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
+PANES_ROWS = 5      # Sessions, Outline, Feed, Files and the Pane docking switch: the driver's rows list names each
+GENERIC_ROWS = 1    # the registry rows the gear renders at open from body[data-panes]: the Artifacts record on a kernel with no data pane (plans/panes-as-data.md phase three)
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment: a list of names, never a copy of the runner's
 
 NAMES = ["web", "api"]
 SIDS = {n: "%s-1111-2222-3333-444444444444" % (chr(ord("a") + i) * 8) for i, n in enumerate(NAMES)}
 PALETTE = [("#9cd2ff", "#0c1a2e"), ("#1EA1EB", "#ffffff")]
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -111,11 +104,11 @@ const out = {};
       await page.screenshot({ path: cfg.shots + "-" + tab + "-" + theme + ".png", clip: { x: fr.x + card.x, y: fr.y + card.y, width: card.width, height: card.height } });
     };
     out.bar = {};
-    // T407 / T408: the Panes rows' labels; the Automation rows' permanent lines and the card's scroll box at rest and with the
-    // pointer on the last row (a hover tooltip there ran past the card and scrolled it), in both themes, with a shot of the pane
+    // T407 / T408: the Panes rows' labels; the Automation rows' permanent lines (the Nudges and the Model rows) and the card's scroll box at rest and with the
+    // pointer on the last Nudges row (a hover tooltip there ran past the card and scrolled it), in both themes, with a shot of the pane
     const readAutomation = () => setF.evaluate(() => {
       const card = document.querySelector("#rsettings .rs-card");
-      const rows = ["rs-autonudge", "rs-suggestcompact"].map((id) => { const el = document.getElementById(id), row = el && el.closest("label"); const line = row && row.querySelector(".rs-line");
+      const rows = ["rs-autonudge", "rs-suggestcompact", "rs-alwaysfast", "rs-retryupgrade"].map((id) => { const el = document.getElementById(id), row = el && el.closest("label"); const line = row && row.querySelector(".rs-line");
         return { id, label: row ? row.querySelector("b").textContent : null, line: line ? line.textContent : null, lineShown: !!line && getComputedStyle(line).display !== "none" && line.getBoundingClientRect().height > 0,
                  lineBelowLabel: !!line && line.getBoundingClientRect().top >= row.querySelector("b").getBoundingClientRect().bottom - 1,
                  hasSub: !!(row && row.querySelector(".rs-sub")), title: row ? row.getAttribute("title") : null, inputTitle: el ? el.getAttribute("title") : null }; });
@@ -131,8 +124,8 @@ const out = {};
       await page.mouse.move(2, 2); await setF.waitForTimeout(100);   // the pointer off the rows (the mouse is the page's, not the frame's)
       out.automationRows[theme] = { rest, hoverCard: hover.card, theme };
     }
-    out.panesLabels = await setF.evaluate(() => ["rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl"].map((id) => { const el = document.getElementById(id), row = el && el.closest("label"); return row ? row.querySelector("b").textContent : null; }));
-    out.panesRowClasses = await setF.evaluate(() => ["rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl"].map((id) => { const el = document.getElementById(id), row = el && el.closest("label"); return row ? row.className : null; }));
+    out.panesLabels = await setF.evaluate(() => ["rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl", "rs-pane-artifacts"].map((id) => { const el = document.getElementById(id), row = el && el.closest("label"); return row ? row.querySelector("b").textContent : null; }));
+    out.panesRowClasses = await setF.evaluate(() => ["rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl", "rs-pane-artifacts"].map((id) => { const el = document.getElementById(id), row = el && el.closest("label"); return row ? row.className : null; }));
     // the popover stays inside the card (the T408 read): four rows near their pane's bottom sent it past the card's edge, which grew a
     // scrollbar for it and clipped it; hovered, each must leave the card unscrollable with the popover inside the card's rect
     const hoverRow = async (tab, id) => {
@@ -185,16 +178,17 @@ const out = {};
       return { subHeight: sr.height, roomAbove: rr.top - cr.top, roomBelow: cr.bottom - rr.bottom, up: row.classList.contains("rs-up"), subTop: sr.top, subBottom: sr.bottom, cardTop: cr.top, cardBottom: cr.bottom, viewport: window.innerHeight }; });
     await page.mouse.move(4, 4);
     await page.setViewportSize({ width: 1200, height: 800 }); await page.waitForTimeout(200);
-    // the off-dashboard hide's outcome (round two, low 4): the selector the hide uses takes the four Panes rows and their head; hidden,
+    // the off-dashboard hide's outcome (round two, low 4): the selector the hide uses takes the six Panes rows (the Pane docking switch
+    // joined Sessions, Outline, Feed and Files, plans/pane-docking.md phase two) and their head; hidden,
     // each reads display none and height 0; shown again, display flex (its trigger is the VS Code host, ownPage false, not this page)
     out.panesHide = await setF.evaluate(() => {
       const els = Array.from(document.querySelectorAll("#rs-panes-sec,.rs-panes-row"));
-      const rows = ["rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl"].map((id) => document.getElementById(id).closest("label"));
-      const covered = rows.every((r) => els.includes(r));
+      const rows = ["rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl", "rs-pane-artifacts", "rs-panedock"].map((id) => { const el = document.getElementById(id); return el ? el.closest("label") : null; });   // a row the gear lacks reads as not covered, never a dead driver
+      const covered = rows.every((r) => !!r && els.includes(r));
       els.forEach((el) => { el.hidden = true; });
-      const hidden = rows.map((r) => ({ display: getComputedStyle(r).display, height: r.getBoundingClientRect().height }));
+      const hidden = rows.filter(Boolean).map((r) => ({ display: getComputedStyle(r).display, height: r.getBoundingClientRect().height }));
       els.forEach((el) => { el.hidden = false; });
-      const shown = rows.map((r) => getComputedStyle(r).display);
+      const shown = rows.filter(Boolean).map((r) => getComputedStyle(r).display);
       return { count: els.length, covered, hidden, shown };
     });
     await setF.click('#rsettings .rs-tab[data-tab="debug"]'); await setF.waitForTimeout(150);
@@ -333,19 +327,14 @@ class ServedSettingsTabs(unittest.TestCase):
                                  "content": [{"type": "text", "text": "It keeps the %s side of the notes-api tidy." % name}]}}]
             Path(proj, sid + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
-        cls.port, cls.token = _free_port(), "testtok-tabwidgets"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-tabwidgets"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.state = state
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -358,6 +347,7 @@ class ServedSettingsTabs(unittest.TestCase):
                 k.kill(); k.wait()
             time.sleep(0.5)
         lab = getattr(cls, "lab", "")
+        lab_ports.release(lab)
         shutil.rmtree(lab, ignore_errors=True)
         time.sleep(0.3)
         shutil.rmtree(lab, ignore_errors=True)
@@ -435,23 +425,23 @@ class ServedSettingsTabs(unittest.TestCase):
         self.assertEqual(g["heads"]["chat"], ["Display", "Comments", "Thinking", "Waiting on you", "Chat history", "Tab strip", "Tab widgets", "Status line"], "Transcript is Display; the text scheme and the strip row joined it; Thinking creates, so it is Chat's; Waiting on you is this fork's User todos section, after Thinking and before Chat history (ruling 15 a of the 2026-09-15 pull-in); the Status line section follows Tab widgets (T409)" + table)
         self.assertEqual(g["heads"]["debug"], ["Judging bands", "Diagnostics"], "Updates went to General" + table)
         self.assertEqual(g["heads"]["tasks"], ["Task tracking", "Judges"], "the master switch, then the judges (T404 PR 2)" + table)
-        self.assertEqual(g["heads"]["automation"], ["Nudges"], table)
+        self.assertEqual(g["heads"]["automation"], ["Nudges", "Model"], "the two model switches sit after the Nudges: kernel policies applied to sessions on the kernel's own initiative (2026-09-17)" + table)
         self.assertEqual(g["heads"]["feed"], ["Cards"], table)
         self.assertEqual(g["heads"]["sessions"], ["New sessions"], "the Sessions-pane rows left settings: the pane carries them" + table)
 
     def test_the_files_row_reads_files_like_the_pane_rows_above_it(self):
         # T407 (the user 2026-09-13, a screenshot of the Panes section): the row read "Files control in the dashboard bar"
         r = self._run(); table = "\n  " + json.dumps(r.get("panesLabels"))
-        self.assertEqual(r.get("panesLabels"), ["Sessions", "Outline", "Feed", "Files"], table)
+        self.assertEqual(r.get("panesLabels"), ["Sessions", "Outline", "Feed", "Files", "Artifacts"], table)   # the generic row for the shipped Artifacts record, after the Files row
 
-    def test_the_off_dashboard_hide_takes_all_four_panes_rows(self):
+    def test_the_off_dashboard_hide_takes_all_five_panes_rows(self):
         # round two, low 4: the outcome, not the class: hidden by the selector the hide uses, every row reads display none and height 0
         r = self._run(); h = r["panesHide"]; table = "\n  " + json.dumps(h) + " classes: " + json.dumps(r.get("panesRowClasses"))
-        self.assertTrue(h["covered"], "the hide's selector reaches all four Panes rows (the Files row too since this tidy)" + table)
-        self.assertEqual(h["count"], 5, "the head and the four rows, nothing else" + table)
+        self.assertTrue(h["covered"], "the hide's selector reaches all six Panes rows (the Files row since the T404 tidy, the generic Artifacts row and the Pane docking switch since phase two and three)" + table)
+        self.assertEqual(h["count"], PANES_ROWS + GENERIC_ROWS + 1, "the head, the five hand-written rows and the one generic row (the Artifacts record), nothing else" + table)
         for x in h["hidden"]:
             self.assertEqual((x["display"], x["height"]), ("none", 0), "hidden: display none, height 0" + table)
-        self.assertEqual(h["shown"], ["flex"] * 4, "shown again: display flex" + table)
+        self.assertEqual(h["shown"], ["flex"] * (PANES_ROWS + GENERIC_ROWS), "shown again: display flex" + table)
 
     def test_the_fast_mode_boxes_popovers_stay_inside_the_card_at_a_short_window(self):
         # round two, the medium: the box's own popover, nested in the judge row, ran 15 px past the card at 380 px (48 at 300)
@@ -500,13 +490,16 @@ class ServedSettingsTabs(unittest.TestCase):
             self.assertEqual(rows["rs-autonudge"]["label"], "Auto Nudge", table)
             self.assertEqual(rows["rs-autonudge"]["line"], "When a session goes idle with its work still in progress and nothing awaited, nudge it once for a status update, on every connected machine.", table)
             self.assertEqual(rows["rs-suggestcompact"]["line"], "When a session has sat idle for an hour with a lot of context built up, suggest one /compact at a natural point, once per fill-up, on every connected machine.", table)
-            for rid in ("rs-autonudge", "rs-suggestcompact"):
+            # the two model switches (2026-09-17) take the tab's row shape too: a line each, no hover popover
+            self.assertEqual(rows["rs-alwaysfast"]["line"], "Every Opus session runs Claude Code's fast mode, billed at a premium; a session you set to Slow stays slow.", table)
+            self.assertEqual(rows["rs-retryupgrade"]["line"], "A session whose model fell back without a pick asks for its picked model again every ten minutes, once quiet, until it is back.", table)
+            for rid in ("rs-autonudge", "rs-suggestcompact", "rs-alwaysfast", "rs-retryupgrade"):
                 self.assertTrue(rows[rid]["lineShown"] and rows[rid]["lineBelowLabel"], rid + ": the line is on screen, under the label" + table)
                 self.assertFalse(rows[rid]["hasSub"], rid + ": no hover tooltip" + table)
                 self.assertIsNone(rows[rid]["title"], rid + ": no title on the row" + table)
                 self.assertIsNone(rows[rid]["inputTitle"], rid + ": no title on the box" + table)
-            self.assertFalse(t["rest"]["card"]["scrollable"], theme + ": no scrollbar with the two rows and their lines" + table)
-            self.assertFalse(t["hoverCard"]["scrollable"], theme + ": …nor with the pointer on the last row" + table)
+            self.assertFalse(t["rest"]["card"]["scrollable"], theme + ": no scrollbar with the Nudges rows, their lines and the Model rows" + table)
+            self.assertFalse(t["hoverCard"]["scrollable"], theme + ": …nor with the pointer on the last Nudges row" + table)
             self.assertEqual(t["hoverCard"]["scrollHeight"], t["rest"]["card"]["scrollHeight"], theme + ": hovering adds nothing to the scroll box" + table)
 
     def test_the_seven_pills_sit_on_one_row_of_the_card_in_both_themes(self):

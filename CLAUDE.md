@@ -68,8 +68,8 @@ This repo may go public; assume every commit is permanent and world-readable.
   and symlink targets), plus, for every commit new to every fetched remote, the
   lines it ADDS, its message, and the domain of any author or committer address
   the clone is not configured to use (`user.email` in any scope, or the
-  environment's), and an annotated tag's own tagger and message, for the strings in
-  `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
+  environment's), and an annotated tag's own tagger and message, for the strings
+  in `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
   are unaffected; it reads pushed shas, not the working tree, so it arms every
   worktree — a working-tree scan missed a leak pushed from a peer worktree on
   2026-07-25; added lines rather than every commit's tree, so a branch that
@@ -78,8 +78,40 @@ This repo may go public; assume every commit is permanent and world-readable.
   remote, so a clone with a fork and the project as two remotes is not refused
   over the project's own history when it pushes a branch cut from the project's
   main to the fork — 2026-09-07; and the metadata since 2026-09-09, when a
-  clone with no `user.email` had git stamp `<login>@<hostname -f>`, a tailnet
-  name, on a slice's commits and a pushed merge, through both content scans);
+  clone with no `user.email` had git stamp `<login>@<hostname -f>` on a
+  branch's commits and a pushed merge, through both content scans); a text
+  file whose diff attribute marks it binary (a `-diff` line or the `binary`
+  macro in `.gitattributes`, `.git/info/attributes` or the file
+  `core.attributesFile` names, or a driver with `diff.<driver>.binary` true)
+  is refused rather than read, since git's grep and diff both skip such a file
+  and a banned string in one published (2026-09-21); the refusal names the
+  path and the attribute as the cause, and the remedy: remove the attribute
+  for that path, or keep the file text on purpose with an explicit `diff`
+  line for it that outranks the `-diff`; a rename or copy of such a file is
+  refused the same way, since its bytes reach the remote under the new path;
+  the same refusal covers any other text blob that git's own read calls
+  binary, whatever rule made it so, when that blob is absent from the pushed
+  tip (one the tip holds is read by the tip's own scan): a blob over
+  `core.bigFileThreshold`, where the refusal names the blob's size and the
+  key's value, since no attribute of the path accounts for the verdict, and
+  the remedy: an explicit `diff` line for the path, which outranks the key,
+  or the key raised above the size or unset (for a symlink's target only the
+  key helps); and a commit that turns a file binary by its bytes into text,
+  where the refusal names the previous version's bytes as the cause, since
+  git prints no text diff for such a pair and the scan could not read the
+  new text, and the remedy: fetch the remote whose history already holds the
+  commit and push again, or, when no remote holds it yet, set an explicit
+  `<path> diff` line in `.gitattributes` on the previous version's path (the
+  old path for a rename; the file's own path otherwise, a merge's parents'
+  included), so git prints the change and the scan reads it; the hook names
+  `--no-verify` last, since it publishes the new text unread;
+  a commit whose header names an encoding off the hook's list of those git
+  converts to UTF-8 with every ASCII byte kept (UTF-8, EUC-JP, ISO-8859-1 and
+  CP1252 are on it; UTF-16, SHIFT_JIS, BIG5 and the EBCDIC pages are not) is
+  refused by name, clean or not, since the message and address checks read
+  the commit as git converts it, which under such an encoding can drop or
+  change the bytes of a banned string (one published that way, 2026-09-26);
+  recommit it under UTF-8, or push with `--no-verify`;
   and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
@@ -92,18 +124,177 @@ This repo may go public; assume every commit is permanent and world-readable.
 The rule above is about identifiers a human can enumerate. Credentials are the
 other half and cannot work that way: nobody knows a token's text until it leaks,
 so there is no list to write. **gitleaks** covers them, in two places:
-- **`.githooks/pre-push`** runs it over the commits a push would publish (a
-  merge by its first-parent diff, so a secret typed into a conflict resolution
-  is read too) and refuses the push on a hit. No gitleaks on the machine means a
+- **`.githooks/pre-push`** reads for itself the changes a push would publish:
+  the lines the pushed commits add, each merge by its combined diff (the lines
+  in none of its parents, so a secret typed into a conflict resolution is read
+  too) and by its first-parent diff, and a merge's binary path whole (below).
+  It hands those bytes to gitleaks, which runs no git, and refuses the push on
+  a hit. It needs
+  gitleaks 8.25.0 or later: the hook's flags need 8.24.0, and this
+  repository's `.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks
+  reads correctly from 8.25.0 on (CI's pinned 8.28.0 is above the floor). A
+  push with something to scan is refused under an older gitleaks, or one whose
+  version the hook cannot read, and the refusal names the floor and the
+  remedies. No gitleaks on the machine means a
   loud notice and no scan (requiring an install to push would break every clone
   that never asked for it); a gitleaks that fails to run refuses the push and
-  says so. `ROMP_NO_GITLEAKS=1` skips the scan, `ROMP_GITLEAKS` points at a
-  binary. This is the same hook as the identifier scan and both report before
-  it refuses, so one push tells you about both.
-- **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
-  tag the checkout brings, on every PR and every push to `main`, from a
-  pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
-  scans one commit and reports clean.
+  says so, and so does one that ran but cannot show what it scanned: an error
+  line in its own log, a scanned-byte figure that is not the count of bytes
+  the hook handed it or no figure at all, or a count of files read that is
+  not the count of files the hook handed it. The
+  hook's read carries `--text`, so a diff attribute cannot hide a credential
+  in a commit that is not a merge (except in a submodule's own diff, below):
+  a path git would otherwise call binary (a
+  `-diff` line or the `binary` macro in an attributes file, or a blob over
+  `core.bigFileThreshold`) is diffed as text and scanned like any other, while
+  a plain patch stream prints no hunk for it. A merge's combined diff applies
+  git's binary verdict whatever `--text` says, so the hook reads a merge's
+  binary path whole from the merge's result blob. That whole read has a cost:
+  a push is now refused when the blob holds a credential already published.
+  Its witness is the round 10b case in `tests/pre-push-hook.bats` titled
+  "A.2's disclosed cost, with its witness". The first-parent read has the
+  same kind of cost: a merge that brings in a credential a remote already
+  holds (say, a branch merging a `main` that gained one since the branch was
+  cut) is refused, as it was before the hook read the changes itself.
+  The hook also refuses a push on a line of git's answer it cannot read, and a
+  push carrying a commit of 64 or more parents (the identifier scan refuses
+  that too), since git's combined diff drops or garbles the lines such a merge
+  adds. A push that changes a path whose diff attribute names a driver with
+  a `diff.<driver>.textconv` is refused, naming the path and the driver, even
+  for a pure rename or a mode change: a credential could show only in the
+  driver's rendering, which the hook does not read. Review the path by hand,
+  then set `ROMP_NO_GITLEAKS=1` for that push. The hook cuts the pushed
+  lines into hunks as gitleaks' own git mode (`git log -p -U0`) would in
+  this clone: it reads the clone's `diff.algorithm`, `diff.interHunkContext`,
+  `diff.renames` and `diff.submodule`, and the environment's
+  `GIT_DIFF_OPTS`, as git log does. It refuses a push under a value of any
+  of those four `diff.` keys that it does not read, and under any
+  `diff.<driver>.algorithm` in the clone's config, whether or not a file's
+  attribute names that driver; each refusal names the key and its remedy.
+  For `diff.submodule`, a value it does not read is anything but `short`,
+  `log` or `diff`, spelled so: a spelling git warns about and ignores
+  (`Diff`, say) is refused too, since the hook fails closed. Under
+  `diff.submodule=diff` the hook also scans a submodule change's own diff,
+  as git log shows it. Git produces that diff without `--text`, so a file
+  git calls binary there is skipped, as it is in git log. An external diff
+  that reaches the submodule's diff (`diff.external`, a driver's `command`,
+  or `GIT_EXTERNAL_DIFF`) makes the hook refuse even a clean push, on lines
+  it cannot read, until the external diff is unset. And the hook still
+  reads a submodule change that `diff.ignoreSubmodules=all` or
+  `submodule.<name>.ignore=all` has git log skip, so a credential there is
+  refused.
+  The hook refuses a push with something to scan when the gitleaks config gives
+  any rule a path condition, naming the rule and the config file, since the
+  scan cannot apply the condition; support for such rules is a held follow-up.
+  Two path values are exempt: an empty one, which gitleaks reads as no
+  condition, and, on each of the five gitleaks default rules scoped to a path,
+  that rule's default path exactly as the hook's own table spells it, so a
+  config copied from gitleaks' default passes. The hook reads the config before
+  any scan: the repository's `.gitleaks.toml`, or, with none, the one
+  `GITLEAKS_CONFIG` or `GITLEAKS_CONFIG_TOML` gives, each with the files its
+  `[extend]` names. With none of these, gitleaks uses its own default, which
+  the hook does not read. It refuses the push on a construct it cannot parse,
+  and on a key set twice in one table, naming the key, both lines and the
+  file. Keys are compared without case, as gitleaks compares them, so `id`
+  beside `ID` refuses, and so does a table named in two spellings
+  (`[extend]` beside `[Extend]`): gitleaks keeps one of the two by a rule
+  the hook cannot follow. Every scanner run reads the hook's copy of the
+  config, so the hook's check and the scan read the same bytes.
+  A path allowlist on a rule (the rule's own, or a targeted one) is matched
+  against the names the scan gives the pushed lines, not against the files'
+  paths. Those names are numbers, and, for the five default rules scoped to
+  a path, the names of two copies the hook makes of a file those rules
+  could match. One that matches none of those names changes nothing, and
+  the rule fires. One that matches them makes gitleaks skip the rule when
+  its paths decide alone, as in an OR allowlist (the default condition) or
+  an AND one that gives only paths: the push is then refused, even when the
+  file is clean, naming the rule and the file. An allowlist for
+  extensionless names does this, and so does `paths = ['.*']` written to
+  switch a rule off. An AND allowlist that also gives a regex or stopwords
+  drops only the values they match. Where its paths match the numbers, the
+  push is still refused when it drops a value, and a clean file passes.
+  Where they match both copies' names but not the file's path, a credential
+  its regex or stopwords match is published. This is the residual stated in
+  the hook's header: such an allowlist keys on names the hook makes up, and
+  has no honest use.
+  Excuse a false alarm by its value, with a regex or stopword allowlist
+  that gives no paths, and switch a rule off with `disabledRules`.
+  Under a config that carries such an allowlist, the hook first runs
+  gitleaks once more, over text of its own, to check that the running
+  release reports the skip in words the hook reads (every release from
+  8.25.0 to 8.30.1 does); when it does not, the push is refused, naming the
+  gitleaks version: re-verify the hook against that release, or set
+  `ROMP_NO_GITLEAKS=1` for one push.
+  A repository rule anchored at the start of the text (`^` outside `(?m)`,
+  or `\A`) misses a credential on the first added line of a hunk whose
+  leading bytes gitleaks' file-type check would skip (an executable's `MZ`,
+  a PDF's `%PDF`, a zip's `PK` and the like); write such a rule with
+  `(?m)^`, which matches there.
+  `ROMP_NO_GITLEAKS=1` skips the credential scan for one push, and
+  `ROMP_GITLEAKS` points at a binary. A clone that carries any replace ref
+  (`git replace`) is refused before either scan runs when either scan is armed,
+  whatever the ref replaces and whether or not that object is in the push: under
+  a replacement what a scan reads and what the push transfers can differ, so a
+  clean report could be false; the remedy is `git replace -d <object>`, or a
+  push from a clone that carries none. This is the same hook as the identifier
+  scan and both report before it refuses, so one push tells you about both.
+- **CI's secret scan** runs on every push to the fork, of a branch or a tag,
+  whose commit carries `.github/workflows/secret-scan.yml`: that workflow's push
+  trigger has no branch filter, so every branch push is scanned, once, with no
+  run cancelled by a later one (2026-09-30), and it has no `pull_request`
+  trigger (dropped 2026-10-04, since the private runner bills every run).
+  `ci.yml`'s `Secret scan (gitleaks)` job runs the same job on a batch push, a
+  manual run, and, under `ci.yml`'s smaller shape alone, its weekly schedule
+  (THE SHAPE SWITCH in `ci.yml`'s header), and
+  `tests/test_ci_secret_scan.py` holds the two copies equal but for the job's
+  name. Each run scans all of history from a pinned, checksummed binary: the
+  commit its push put on its ref, and every branch and tag the checkout
+  brings. When a push's ref has moved on or
+  been deleted before the run, the checkout fetches that commit by its sha, so
+  a commit force-pushed over is still scanned. It needs `fetch-depth: 0`: a
+  default checkout scans one commit and reports clean. Its history scan
+  carries `--text` too, so a committed `-diff` attribute cannot hide a path's
+  credential from it: a plain patch stream prints no hunk for such a path, and
+  the job's tree scan reads `HEAD` alone, where a removed file is gone (the
+  road was verified 2026-09-21 on the pinned scanner and closed by the fork's
+  PR 890; the tree's one `.gitattributes` sets `-text`, not `-diff`, so no
+  commit here was hidden). GitHub reads a push's workflows from the commit the
+  push puts on its ref. So a push to an open pull request's branch is scanned
+  once when the branch carries the file, and not by this workflow when the
+  branch never had it (a branch cut from `main` before the file landed, or cut
+  from the project), until the branch merges `main`. A pull request from
+  another repository is not scanned by this workflow, since its pushes go to
+  that repository; its commits are scanned by the next run here whose checkout
+  reaches them, such as a batch push that merges them.
+  When a pull request's branch and its base both lack the file, its merge
+  commit carries an older `ci.yml`, whose `Secret scan (gitleaks)` job runs on
+  pull requests (`main`'s copy before the file landed runs it, and so does the
+  project's), though that copy cancels a pull request's run in progress when a
+  newer push to it arrives. Three kinds of push start no run: a push to a
+  branch cut before the file landed, until it merges `main`, whether or not it
+  has an open pull request; a tag on such a commit; and a push whose commit
+  lacks the file because it or an earlier commit on its branch deleted it. A
+  push that edits the file runs its edited copy. Nor does GitHub start a run
+  for a push whose head commit's message carries a skip instruction (`[skip
+  ci]` and the like), for the tags of a push of more than three tags at once,
+  or for a push of more than 5,000 branches at once. A commit only such a push carries is
+  scanned by the next run whose checkout reaches it, and by none if it leaves
+  every branch and tag first. The hook does not scan six kinds of push or
+  commit, and CI scans each in the run of the push when the push starts one: a
+  push where no gitleaks resolves (none installed, or `ROMP_GITLEAKS` naming a
+  non-executable), a push with `ROMP_NO_GITLEAKS=1` (the hook skips its
+  credential scan), a push with `git push --no-verify` (no hook runs), a push
+  from a clone where `install.sh` never linked the hook into git's hooks
+  directory (no hook runs at all), a commit any of the clone's remote-tracking
+  refs reaches, which the hook does not read (another remote's ref, or a stale
+  ref of the pushed-to remote whose commit that remote has since dropped), and a
+  commit GitHub makes itself (a web edit or suggestion, the Update branch
+  button). What the hook's scan passes inside a push it does scan, and CI's
+  git-mode history scan reports, is reported by the run of the same push when it
+  starts one: the residuals the hook's header states (a path allowlist with an
+  AND condition keyed on the hook's own copy names, a repository rule anchored
+  at the start of the text on a hunk led by a file signature, and a change that
+  only removes lines from a text `.p12` or `.pfx` file).
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
@@ -155,10 +346,11 @@ repos are in play and only ONE of them is ours to write to:
   `gh pr view N` or `gh pr merge N` reads the fork's PR N. Without that key gh
   consults `upstream` first: on a fresh clone with both remotes and no terminal
   to ask on, `gh pr view N` read the project's PR N (2026-09-09), and
-  `scripts/land.sh`, which merges by number without `-R`, would have aimed a
-  merge at the project. `scripts/fork-remotes.sh --check` verifies all of it
-  without changing anything, and is worth a run in any new clone or worktree,
-  since this lives in git config and a fresh clone starts without it.
+  `scripts/batch.py land` (which `scripts/land.sh` runs), merging by number
+  without `-R`, would have aimed a merge at the project.
+  `scripts/fork-remotes.sh --check` verifies all of it without changing
+  anything, and is worth a run in any new clone or worktree, since this lives
+  in git config and a fresh clone starts without it.
 - **Checking for upstream changes.** `scripts/upstream-check.sh` fetches and
   reports what the project has added since we diverged, and which of those files
   we have also changed — the ones a merge will actually cost attention on. It
@@ -192,8 +384,36 @@ broad `git add` will sweep up your work). Conventions:
      the fork section above, and `scripts/fork-remotes.sh` makes it fail if tried.
   2. Open a PR within the fork against `main`. PRs land through a batch
      (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
-     must land alone is merged on the user's word. Opening a PR against the upstream
+     must land alone lands as a one-member batch (`scripts/batch.py plan --only N`) on the
+     user's word; `scripts/land.sh` runs `scripts/batch.py land`. Opening a PR against the upstream
      project is a separate decision only the user makes.
+  A fork PR runs no `ci.yml` of its own (2026-09-27): its Checks tab shows the secret scan's
+  run of each push whose commit carries `secret-scan.yml` (that workflow's push trigger has no
+  branch filter, and it has had no pull request trigger since 2026-10-04; the credentials section
+  above says which pushes start none), the tier-label check (next bullet) after the PR opens or
+  reopens or its labels change, Tier policy's skipped rows, which evaluate nothing on the fork, and,
+  on a PR that touches the site's inputs (`docs/`, `mkdocs.yml`, `overrides/` or `docs.yml` itself),
+  `docs.yml`'s `build` check (a strict `mkdocs build`) and its `deploy` row, which always skips on a
+  pull request.
+  GitHub's CI (`ci.yml`) runs once
+  per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
+  gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
+  sha `scripts/batch.py verify` and `land` read. `land` also requires that batch push's CI
+  run green at the batch head, read from GitHub when it runs, and refuses a batch whose head
+  does not contain `main`. It reads `main` once more right before the merge call; `main` moving
+  between that read and GitHub's merge, or before an `--auto` merge fires later (`--auto` is
+  refused until auto-merge is allowed and a rule on `main` gates a merge; the fork had neither
+  on 2026-09-27), is not stopped, and `finish` then fails loudly: the merge commit's first
+  parent is not the `main` verify read, so the tree on `main` was never swept or tested. The
+  button and `gh pr merge` make no such check, so a batch merged by hand needs `main` unmoved
+  since verify, and `finish` makes the same first-parent check after it (docs/batching.md,
+  maintainer step 6).
+  A PR owes a passing `scripts/sweep.py` result at its own head before its review round and
+  again before its closing check: the round and the check read that result (`scripts/sweep.py
+  check --tree <worktree>`) where they read CI before, so a push after the sweep needs a new
+  one. `scripts/batch.py plan` leaves out a PR without one, naming the case, and `assemble
+  --repin` refuses a new head without one; both read the batcher's state dir, so a result
+  recorded on another machine is missing there (docs/batching.md, "If you open a PR").
   Anything in the code that reads the canonical repo (the release script's post-merge
   fast-forward and tag push, the kernel's update and drift probes) resolves the remote
   as `upstream` when the clone has one, else `origin` (`_release_remote` in
@@ -222,10 +442,13 @@ broad `git add` will sweep up your work). Conventions:
   copy of the second check (`.github/workflows/tier-policy.yml`) is gated to the
   upstream repository by its job-level `if:` (the header comment there says why), so on
   the fork it evaluates nothing and posts no Tier policy verdict; a fork PR is judged by
-  the label check alone. The author picks the tier at filing time; upstream's tier workflow
-  also reads a `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who
-  cannot label and applies the label (a label already present wins; maintainers re-tier by
-  relabeling):
+  the label check alone, and runs no `ci.yml` (the publish step above says what gates
+  it). The fork's label check also runs on fewer events than upstream's: when a PR opens
+  or reopens and when its labels change, not on a push or an edit, so a push leaves the
+  new head without it until the next label event (the second divergence in its header).
+  The author picks the tier at filing time; upstream's tier workflow also reads a
+  `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who cannot label
+  and applies the label (a label already present wins; maintainers re-tier by relabeling):
   - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
     still accept the old spelling): documentation. On the fork that is tests, docs and
     repo plumbing, landing through a batch like every PR. Upstream, to the check it is
@@ -277,6 +500,25 @@ Every bug fix or feature change must land with a test that covers it (user rule,
 surfaces. Reproduce the bug in a failing test first when practical; fixtures
 live in `tests/fixtures/`.
 
+### Any `kernel/kernel.py` change runs the webview tests (2026-09-20)
+A change to `kernel/kernel.py` owes the webview leg (`npm test` in `vscode-extension/`),
+whatever the hunk's language. The leg pins kernel.py by SOURCE TEXT: well over a hundred of
+its `.test.ts` files read the file and assert on its inline JavaScript AND on its Python
+(`ui/webview/user-todos-switch.test.ts` reads kernel.py and asserts that the User-todos
+switch's 409 literal appears at least twice, once per request route), so a pure-Python
+refactor that touches no `ui/` file and no JavaScript line can still turn it red. Precedent:
+our PR 994 to the project (2026-09-20) lifted the route bodies into functions and turned the
+project's `vscode-extension` CI job red on that one test of 5224. The leg runs for every change:
+the three webview legs (typecheck, `npm test`, build) also read files outside `kernel/kernel.py`,
+`ui/` and `vscode-extension/` (other kernel modules, tests, docs, the CI workflow), and no derived
+set of the files they read is kept, so no rule over the changed paths can say they may be skipped
+(PR 926's review measured the old rule, "skip when those three are untouched": of the 581 PRs
+merged since 2026-08-28 that it let skip, 191 touched a file those legs read or probe). `scripts/sweep.py` owes the three webview legs (typecheck, `npm test`, build) at
+every head it sweeps, a member PR's included. Corollary for the pins themselves: a pin keyed on
+WHERE code lives says in its message what it guards (the route still reaches the function) and
+points to the executed test that proves the behaviour, so a reader never mistakes the weaker
+guarantee for the stronger one.
+
 ### A test that mints its own state root pins `session-hosts` off (2026-09-11)
 Per-session hosts are ON by default (T348): a backend over a state directory with no
 `session-hosts` file starts a real `bin/romp-session-host` for any session it connects. The
@@ -310,6 +552,49 @@ when none does, so an earlier module's store for the shared placeholder sid at t
 unrebound GOALDIR was what the walk read (no goal due, no fire, a deferral never
 cleared, a KeyError). Precedent: `tests/test_nudge_injected_turn_arm.py`,
 `test_nudge_fresh_guard.py`, `test_nudge_memo_deadlock.py`, `test_nudge_bundle.py`.
+
+## The documentation front pages are written for a person (user rule, 2026-09-20)
+`docs/index.md`, `docs/install.md` and `docs/guide.md` (and `README.md`, which mirrors
+the home page) are read by someone who knows nothing about romp yet. The scarce thing
+is that person's attention, and an agent installing romp for them can find any detail
+elsewhere, so these pages buy a first reader's understanding and spend nothing else.
+- **Short paragraphs.** About 70 words is the cap, and shorter is better: one idea per
+  paragraph, its point in the first sentence.
+- **No implementation detail, no repo-internal vocabulary.** Judges by name, state
+  files, environment variables, pick orders, failure modes and design history belong in
+  `docs/reference.md`.
+- **The install command inside the first screen** of the install page, above everything
+  optional. A visitor came for that line; the interpreter rules and the service's
+  environment are reference material.
+- **One short paragraph per feature, no trailing link.** A new capability gets a
+  paragraph in the guide stating what it does, and its detail goes into
+  `docs/reference.md` under a heading that matches the feature's name. The guide points
+  at the reference once, in its opening line; a paragraph never ends by sending the
+  reader somewhere else, a link to a section of the same page included, except a
+  paragraph that is only a link, directly under a heading (README's License line); and
+  no page tells a reader that the details are elsewhere or that an agent can find them.
+  Moving text OFF these pages is always welcome; adding to them is what needs a reason.
+- **State what a thing does; do not sell it.** No benefit claims the reader can judge
+  for themselves, no "more than a text box", no "opens where you are reading": name the
+  behaviour ("the message box also supports attachments, session names and recall"). And
+  write each page as it stands, never as a response to how it used to read.
+- **A link carries the reason a reader would want it**, in the same clause, and then
+  goes: "On a machine with several Pythons, [which one runs the kernel](...) matters".
+- **Call each part of the interface what the interface calls it.** The pane labelled
+  Sessions holds the timeline; write "the Sessions pane", not "the timeline", for the
+  pane.
+- **Process documents stay out of the site's navigation.** `docs/pr-tiers.md` and the
+  plans are contributor process, reachable by path and by URL (`not_in_nav` in
+  `mkdocs.yml`); the site's top-level sections are for people using romp.
+- `tests/test_docs_front_pages.py` pins the word budget per page, the paragraph cap, the
+  install command's position, the nav rule, the guide's single pointer to the reference
+  and no paragraph ending on a link. A session adding to these pages keeps it
+  green; when a page genuinely needs more room, raise the cap in the same change that
+  spends it, so the budget stays a decision someone made.
+
+The July 2026 pages are the shape to hold: by September the guide had grown to 11,000
+words and the install page opened with a screen on which interpreter runs the kernel,
+which is how the rule came to be written down.
 
 ## Authoritative sources — fail loudly, don't degrade silently (user rule, 2026-07-03)
 Read state from its AUTHORITATIVE source — a designed API, or the live store that

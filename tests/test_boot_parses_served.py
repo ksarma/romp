@@ -9,7 +9,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -20,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -32,10 +32,6 @@ WEB = "aaaaaaaa-1111-2222-3333-444444444444"     # will be blocked in the store 
 API = "bbbbbbbb-1111-2222-3333-444444444444"
 TESTS = "cccccccc-1111-2222-3333-444444444444"
 ALL = (WEB, API, TESTS)
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def iso(t):
@@ -85,6 +81,7 @@ class ServedBootParses(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.lab = tempfile.mkdtemp(prefix="romp-t323s1-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
@@ -129,20 +126,15 @@ class ServedBootParses(unittest.TestCase):
         Path(state, "tick-seen.json").write_text(json.dumps(memo))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
         # every file predates the boot by construction (written before the kernel starts): "unchanged since boot"
-        cls.port, cls.token = _free_port(), "testtok-t323"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-t323"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"),
                                       stderr=subprocess.STDOUT, env=env)
-        for _ in range(200):   # a bounded wait for the serve loop, half a second at a time
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env, tries=200)   # a bounded wait for the serve loop, half a second at a time
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -151,6 +143,7 @@ class ServedBootParses(unittest.TestCase):
             cls.kernel.wait(timeout=15)
         except Exception:
             cls.kernel.kill()
+        lab_ports.release(cls.lab)
         shutil.rmtree(cls.lab, ignore_errors=True)
 
     def _get(self, path):
@@ -209,6 +202,8 @@ class ServedBootParses(unittest.TestCase):
         after = self._parses()
         asked = after["kernel"] + after["hits"]     # stage 2: the judges may have parsed a tab first, then the kernel's ask is a hit
         self.assertGreaterEqual(asked, 1, "a connected chat client's own tabs are parsed or served on demand: %r" % after)
+        # the feed's warm-to-stale re-read (2026-09-18) would count here only if a key file moved after a feed build that
+        # held the session warm; the lab writes none of them after boot, so the bound stands as the tabs' own parses
         self.assertLessEqual(after["kernel"] - before, len(ALL), "and nothing beyond the shown tabs (every living session is a tab here): %r" % after)
         self.assertLessEqual(after["perSession"]["sessions"], len(ALL), after["perSession"])   # a count, never the sids (2026-09-18)
         self.assertNotIn("bySid", after)

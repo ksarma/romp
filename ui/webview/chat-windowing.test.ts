@@ -11,6 +11,7 @@ import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
+const ESTIMATE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "turn-estimate.ts"), "utf8");   // the measures' rules since PR E
 
 test("windowing constants are sane: a tail, a render radius and a re-window margin, a switch cap", () => {
   // (the trailing re-check window, TAIL_RECHECK, is gone: the tail path re-renders exactly from the kernel's
@@ -32,22 +33,28 @@ test("units unify both modes: one per event (normal) or the folded compactDispla
 
 test("every rendered row is tagged data-unit, so the scroll↔unit map can locate it", () => {
   assert.match(RENDER, /node\.dataset\.unit = String\(u\);/);          // appendItem (window build)
-  assert.match(RENDER, /node\.dataset\.unit = String\(i\);\s*\/\/ unit === event/); // normal incremental append
+  assert.match(RENDER, /node\.dataset\.unit = String\(u\);\s*\/\/ the event's UNIT, its index in the list/); // normal incremental append: the list's unit, not the event index (the maintainer's round 5 ruling, regression-1)
 });
 
 test("renderWindowItems renders [unitStart, unitEnd) with a TOP and a BOTTOM spacer", () => {
-  assert.match(RENDER, /function renderWindowItems\(v: View, s: Session, items: DisplayItem\[\], unitStart: number, unitEnd: number, working: boolean\): void/);
+  assert.match(RENDER, /function renderWindowItems\(v: View, s: Session, items: DisplayItem\[\], unitStart: number, unitEnd: number, working: boolean, anchored = false\): void/);   // anchored: the caller lands the reader over the result, so the build may take a parked figure (PR E, the maintainer's round 1 addendum; spacer-measure.test.ts)
   assert.match(RENDER, /if \(unitStart > 0\) v\.el\.appendChild\(el\("div", "tx-spacer tx-spacer-top"\)\);/);
   assert.match(RENDER, /if \(unitEnd < total\) v\.el\.appendChild\(el\("div", "tx-spacer tx-spacer-bot"\)\);/);
   assert.match(RENDER, /v\.winStart = unitStart; v\.winEnd = unitEnd;/);
   assert.match(RENDER, /v\.spacerCount = unitStart; v\.spacerCountBot = total - unitEnd;/);
 });
 
-test("sizeSpacers sizes BOTH spacers by hidden-unit count × avg, caching only a visible measurement", () => {
+test("sizeSpacers sizes BOTH spacers by hidden-unit count × avg and measures nothing itself; the average is taken once, off the observer's heights", () => {
   assert.match(RENDER, /function sizeSpacers\(v: View\): void/);
   assert.match(RENDER, /const topAfter = top \? hiddenHeight\(v, 0, v\.spacerCount \?\? 0, avg\) : 0, botAfter = bot \? hiddenHeight\(v, total - \(v\.spacerCountBot \?\? 0\), total, avg\) : 0;/, "both spacers by the hidden units' own heights: a gap's estimate, else the average (T386 stage 2)");
   assert.match(RENDER, /if \(top\) top\.style\.height = topAfter \+ "px";\s*\n\s*if \(bot\) bot\.style\.height = botAfter \+ "px";/);
-  assert.match(RENDER, /if \(h > 0 && n > 0\) v\.avgTurnH = h \/ n;/);   // don't cache a display:none 0
+  // PR E: the measure moved out of the render task into the unit observer's callback (measureUnits), and the figures wait for the next
+  // paint (applyMeasure); the average is still taken once per view (the resets that clear it re-arm it), and a population with no height
+  // (a display:none view's rows are never reported) yields no figure, so a 0 is never cached (spacer-measure.test.ts drives it)
+  const size = RENDER.slice(RENDER.indexOf("function sizeSpacers(v: View): void {"), RENDER.indexOf("// The spacer rows of one task"));
+  assert.doesNotMatch(size, /offsetHeight|avgTurnH = |pxPerTurn = /, "no measure in the spacer write");
+  assert.match(RENDER, /if \(v\.avgTurnH == null && v\.measured\?\.avg == null\) \{ const h = meanRowHeight\(rows\); if \(h != null\) v\.measured = \{ \.\.\.v\.measured, avg: h \}; \}/, "the average, once, from the rows' reported heights");
+  assert.match(RENDER, /if \(m\.avg != null && v\.avgTurnH == null\) \{ v\.avgTurnH = m\.avg; changed = true; \}/, "…taken by the paint");
 });
 
 test("unitAtScroll maps a spacer by avg height and a rendered row by its data-unit", () => {
@@ -64,9 +71,12 @@ test("scroll re-windows around the viewport (steady scroll OR jump) when near a 
   assert.match(RENDER, /const nearBotEdge = \(v\.winEnd \?\? total\) < total && st \+ vh > renderedBottom - edgePx;/);
   assert.match(RENDER, /if \(!nearTopEdge && !nearBotEdge\) return;/);
   assert.match(RENDER, /const idx = unitAtScroll\(v, content\);/);
-  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, c - WINDOW_RADIUS\), Math\.min\(items\.length, c \+ WINDOW_RADIUS\), working\);/);
+  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, c - WINDOW_RADIUS\), Math\.min\(items\.length, c \+ WINDOW_RADIUS\), working, true\);/);   // anchored: the focus unit's offset or the bottom is written after it
   // it re-anchors the focus unit so it doesn't jump, coalesced to one frame; a re-window of resident content shows no cue (T402, T386 stage 2)
   assert.match(RENDER, /writeScroll\(content, yNow - beforeY, "rewindow"\);/);   // (T262: every #content write rides writeScroll)
+  // a follow-mode reader whose re-window reaches the tail lands at the bottom (PR E): placing the focus unit's top under the viewport left
+  // them above the bottom by the spacer estimate's error, and only a view that came out shorter (the tail-shrink follow) brought them back
+  assert.match(RENDER, /if \(v\.stick && \(v\.winEnd \?\? 0\) >= items\.length\) \{ writeScroll\(content, content\.scrollHeight, "rewindow", true\); v\.followRebuilt = true; \}[^\n]*\n\s*else if \(anchor\) \{/, "…and arms the view observer's follow of the rebuilt rows' settling (tail-shrink.test.ts)");
   assert.doesNotMatch(RENDER, /showLoadingPill\(\)|hideLoadingPill\(\)/, "the per-fetch pill is retired: the ONE landing notice and the gaps' glyphs replace it (T386 stage 2)");
   assert.match(RENDER, /c\.addEventListener\("scroll", virtualizeToViewport, \{ passive: true \}\);/);
 });
@@ -99,18 +109,21 @@ test("the ONE landing notice shows while a navigation's window is on the wire, p
 test("syncView: a fresh build / rewind renders the TAIL window, clamped to the last compaction boundary", () => {
   // the default window opens AT (never below) the newest compaction — pre-compaction history is scrubbed
   // from the default view (the user 2026-07-07); lastCompactUnit floors the window start.
-  assert.match(RENDER, /if \(firstBuild \|\| rewind\) \{\s*\n\s*const start = Math\.max\(0, total - WINDOW_TAIL, lastCompactUnit\(s, items\)\);\s*\n\s*renderWindowItems\(v, s, items, start, total, working\);/);
+  assert.match(RENDER, /if \(firstBuild \|\| rewind\) \{\s*\n\s*const start = Math\.max\(0, total - WINDOW_TAIL, lastCompactUnit\(s, items\)\);\s*\n\s*renderWindowItems\(v, s, items, start, total, working, anchored\);/);
 });
 
 test("syncView: a pure tab switch is a NO-OP render (reveal the cached DOM)", () => {
   assert.match(RENDER, /if \(v\.rendered === len && !v\.stale && v\.el\.childNodes\.length > 0\) return v;/);
 });
 
-test("syncView: compact / an in-place change re-renders the CURRENT window; a browse append just grows the bottom spacer", () => {
-  // compact mode and any stale (tool-group toggle, off-screen update) re-render where the user is
-  assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working\);/);
+test("syncView: compact paints its tail by unit, else compact / an in-place change re-renders the CURRENT window; a browse append just grows the bottom spacer", () => {
+  // compact mode's tail path by unit comes first (PR E, chat-compact-tail.test.ts): the plan, then an append by trim or a spacer growth
+  assert.match(RENDER, /if \(settings\.compact\) \{\s*\n\s*const plan = compactTailPlan\(\{ prev: v\.units, items, from: v\.rendered,/);
+  assert.match(RENDER, /if \(plan\.kind === "append"\) \{[\s\S]*?trimUnitsFrom\(v\.el, u0\);[\s\S]*?&& evictCompactTop\(v, Math\.max\(0, total - span\)\)\) reseedWindowHead\(v, s, items\);/);   // …and an eviction re-seeds the promoted head unit (the maintainer's round 1 ruling)
+  // …and any stale (tool-group toggle, off-screen update) or a plan the trim cannot serve re-renders where the user is
+  assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working, anchored\);/);
   // browsing history away from the tail: appended events land below the window → grow the bottom spacer only
-  assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);
+  assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*patchWorkedFooters\(v, s, v\.rendered, working, items\);\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);   // the browse branch patches the window's footers first (the maintainer's round 3 ruling B; compact-seam-exec.test.ts and the differential's normal-mode leg execute it)
 });
 
 test("a new message while scrolled UP keeps the viewport put (no backwards jump)", () => {
@@ -121,8 +134,8 @@ test("a new message while scrolled UP keeps the viewport put (no backwards jump)
   // instead of evicting the top — which (with the compact full-rebuild that resets scrollTop) was jumping
   // the view "backwards" when messages arrived (the user 2026-06-25).
   assert.match(RENDER, /const before = content\.scrollTop;/);
-  assert.match(RENDER, /syncView\(activeId, stick\);/);
-  assert.match(RENDER, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) writeScroll\(content, before, "append-raw", false, before\);/);
+  assert.match(RENDER, /syncView\(activeId, stick, stick \|\| !!anchor\);/);   // the flag: the follow, or the anchor the restore below holds (the maintainer's round 1 addendum)
+  assert.match(RENDER, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) \{ if \(v && figures\) untakeMeasure\(v, figures\); writeScroll\(content, before, "append-raw", false, before\); \}/);   // the raw road gives the sync's take back first (the maintainer's round 3 ruling B; append-active-keep.test.ts executes it)
   // the compact branch keeps winStart on a scrolled-up append
   assert.match(RENDER, /const keepTop = wasAtTail && atBottom === false;/);
   assert.match(RENDER, /const ws = keepTop \? \(v\.winStart \?\? 0\)/);
@@ -131,12 +144,12 @@ test("a new message while scrolled UP keeps the viewport put (no backwards jump)
 test("an oversized view (window grew past the cap) re-collapses to the tail on switch", () => {
   // `!reshow &&` leads since T249: the re-collapse is a SWITCH rule, never applied to a re-show of the view on screen
   assert.match(RENDER, /if \(!reshow && !pendingAnchor && pendingAnchorT == null\s*\n?\s*&& v\.el\.querySelectorAll\("\.turn"\)\.length > WINDOW_CAP\) \{/);
-  assert.match(RENDER, /v\.rendered = 0; v\.winStart = 0; v\.avgTurnH = undefined; v\.stick = true;/);
+  assert.match(RENDER, /v\.rendered = 0; v\.winStart = 0; forgetAverage\(v\); v\.stick = true;/, "…and clears the average with any figure parked since the last paint (forgetAverage; spacer-measure.test.ts drives it)");
 });
 
 test("a deep-link off the current window renders a fresh window AROUND the target unit, then lands", () => {
   assert.match(RENDER, /let u = items\.findIndex\(\(it\) => it\.kind === "toolgroup" \|\| it\.kind === "noticegroup" \? it\.indices\.includes\(idx\) : it\.kind === "event" && it\.index === idx\);/, "a gap item indexes no event (T386 stage 2)");
-  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, u - WINDOW_RADIUS\), Math\.min\(items\.length, u \+ WINDOW_RADIUS\), working\);/);
+  assert.match(RENDER, /renderWindowItems\(v, s, items, Math\.max\(0, u - WINDOW_RADIUS\), Math\.min\(items\.length, u \+ WINDOW_RADIUS\), working, true\);/);   // anchored: the land puts the target under the reader
 });
 
 test("round two/three code fixes each carry a pin (T386 stage 2, low 1)", () => {
@@ -145,11 +158,12 @@ test("round two/three code fixes each carry a pin (T386 stage 2, low 1)", () => 
   const cTurns = RENDER.slice(RENDER.indexOf("function chatTurns(msg: any)"), RENDER.indexOf("function chatHead(msg: any)") >= 0 ? RENDER.indexOf("function chatHead(msg: any)") : winStart);
   // the socket death clears every in-flight ask's state, not the glyph alone (medium 1)
   assert.match(RENDER, /function onWireDown\(\): void \{[\s\S]*?if \(hostOf\(parseGapKey\(k\)\.sid\) === ""\) gapLoading\.delete\(k\);[\s\S]*?windowAsks\.clear\(\); loadingOlder\.clear\(\);[\s\S]*?hideLandingNotice\(\);/, "the wire's down edge (the socket's or the pane's) clears the page asks, every ask record, the older-ask set and the notice");
-  // sizeSpacers does not average the gap element (medium 3, round one)
-  const pxBlock = RENDER.slice(RENDER.indexOf("if (v.pxPerTurn == null) {"), RENDER.indexOf("if (h > 0 && turns > 0) v.pxPerTurn = h / turns;"));
-  assert.match(pxBlock, /if \(c\.classList\.contains\("tx-spacer"\) \|\| c\.classList\.contains\("tx-gap"\) \|\| !c\.classList\.contains\("turn"\)\) continue;/, "the px-per-turn measure skips the gap element and every non-turn child (pinned inside its own block; round four low 3, round five)");
-  const unitBlock = RENDER.slice(RENDER.indexOf("if (v.avgTurnH == null) {"), RENDER.indexOf("if (h > 0 && n > 0) v.avgTurnH = h / n;"));
-  assert.match(unitBlock, /c\.classList\.contains\("tx-gap"\)\) continue;/, "…and so does the per-unit measure");
+  // the measures do not average the gap element (medium 3, round one): since PR E both rules live in turn-estimate.ts and run in
+  // turn-estimate.test.ts; render.ts hands the rows over with their class lists (measureUnits), and the module skips spacers and gaps
+  assert.match(RENDER, /const rows = rowsFor\(\(Array\.from\(v\.el\.children\) as HTMLElement\[\]\)\.filter\(\(c\) => unitOfNode\(c\) >= 0\), \(c\) => c\.className, \(c\) => c\.style\.display === "none", \(c\) => uh\.get\(c\)\);/, "the rows (the children that carry a unit, the maintainer's round 1 ruling), their hidden state and their reported heights");
+  assert.match(ESTIMATE, /export const isSpacerRow = \(r: EstRow\): boolean => has\(r\.cls, "tx-spacer"\) \|\| has\(r\.cls, "tx-gap"\);/);
+  assert.match(ESTIMATE, /export const isTurnRow = \(r: EstRow\): boolean => has\(r\.cls, "turn"\) && !isSpacerRow\(r\);/, "the px-per-turn measure counts turn rows only, never the gap element or a divider");
+  assert.match(ESTIMATE, /if \(isSpacerRow\(r\)\) continue;\s*\/\/ the gap's own estimate must not feed the average/, "…and so does the per-unit measure");
   // the region-fill view resets (chatTurns, chatWindow) keep the measured averages across fills (low 1); chatHead's prepend reset may still clear them
   assert.ok(cTurns.includes("v.rendered = 0; v.winStart = 0; v.winEnd = 0; v.spacerCount = undefined;"), "chatTurns resets the window");
   assert.doesNotMatch(cTurns, /v\.winEnd = 0; v\.avgTurnH = undefined;/, "…without clearing the measured average (the fill keeps it, low 1)");
@@ -168,7 +182,7 @@ test("round four and five fixes each carry a pin (T386 stage 2, round five low 1
   assert.doesNotMatch(fill, /keep\.y >= -1/, "…no lower bound on the row's top");
   assert.match(fill, /const turnsNow = turnOfEvents\(s\);\s*\n\s*const pointBefore = turnUnderTop\(v, s, items, turnsNow, content, topBefore\);/, "the point under the viewport top is named as a turn before the rebuild (medium B)");
   assert.match(fill, /if \(pointBefore != null\) u = unitOfTurn\(items, turnsNow, Math\.floor\(pointBefore\)\);/, "…and the window renders around the unit holding that turn in the NEW items, never a stale unit index (round six: unitOfTurn)");
-  assert.match(fill, /const mapped = pointBefore != null \? yOfTurn\(v, s, items, turnsNow, content, pointBefore\) : null;\s*\n\s*y = mapped != null \? mapped : topBefore;/, "…and put back by its turn after it, scrollTop kept only when the point cannot be named (medium A: the anchor row gone falls to the turn, never a doubled write)");
+  assert.match(fill, /const mapped = pointBefore != null \? yOfTurn\(v, s, items, turnsNow, content, pointBefore\) : null;\s*\n\s*if \(mapped != null\) y = mapped;\s*\n\s*else \{ untakeMeasure\(v, figures\); y = topBefore; \}/, "…and put back by its turn after it, scrollTop kept only when the point cannot be named (medium A: the anchor row gone falls to the turn, never a doubled write), with the take given back first on that road (the maintainer's round 3 ruling B)");
   assert.doesNotMatch(fill, /heightAbove/, "the view-coordinate tautology is gone");
   assert.match(RENDER, /function turnUnderTop\(v: View, s: Session, items: DisplayItem\[\], turns: number\[\], content: HTMLElement, top: number\): number \| null \{/, "the turn-under-top helper");
   assert.match(RENDER, /function yOfTurn\(v: View, s: Session, items: DisplayItem\[\], turns: number\[\], content: HTMLElement, t: number\): number \| null \{/, "the turn-to-scroll helper");
@@ -176,8 +190,9 @@ test("round four and five fixes each carry a pin (T386 stage 2, round five low 1
   assert.match(RENDER, /const liveLanding = !!landingNoticeSid \|\| Array\.from\(windowAsks\.values\(\)\)\.some\(\(a\) => a\.some\(\(r\) => !r\.cancelled && !!r\.gap\)\);/, "the wsdown toast fires only for a landing the reader had not cancelled (low 1)");
   assert.match(RENDER, /const nospan = !msg\.missing && Array\.isArray\(msg\.events\) && msg\.events\.length > 0 && !Array\.isArray\(msg\.span\);/, "missing is tested first; only a reply with events and no span is an older host (medium 3; round five low 3)");
   assert.match(RENDER, /const preJumpOrigin = rec\.origin;/, "the pre-jump origin is consumed by every window reply (low 2)");
-  const px = RENDER.slice(RENDER.indexOf("if (v.pxPerTurn == null) {"), RENDER.indexOf("if (h > 0 && turns > 0) v.pxPerTurn = h / turns;"));
-  assert.match(px, /\|\| !c\.classList\.contains\("turn"\)\) continue;/, "px-per-turn counts turn rows only, never cards or dividers (round five)");
+  // px-per-turn counts turn rows only, never cards or dividers (round five): the rule is turn-estimate.ts completeTurnHeights since PR E
+  const turns = ESTIMATE.slice(ESTIMATE.indexOf("export function completeTurnHeights("), ESTIMATE.indexOf("export function median("));
+  assert.match(turns, /if \(!isTurnRow\(r\)\) continue;/, "px-per-turn counts turn rows only, never cards or dividers (round five)");
 });
 
 test("round six fixes each carry a pin (T386 stage 2): rows name their turn, the fill reads it, a fill that shows nothing re-windows", () => {
@@ -197,7 +212,7 @@ test("round six fixes each carry a pin (T386 stage 2): rows name their turn, the
   assert.match(RENDER, /function unitOfTurn\(items: DisplayItem\[\], turns: number\[\], t: number\): number \{[\s\S]*?if \(turns\[f\] <= t\) u = i; else break;/, "unitOfTurn: the last unit at or below the turn");
   assert.match(fill, /if \(u < 0\) \{ const rowEl = v\.el\.querySelector\(`\.turn\[data-uuid="\$\{cssEscape\(keep\.uuid\)\}"\]`\) as HTMLElement \| null; const tr = rowEl\?\.dataset\.turn; if \(tr\) u = unitOfTurn\(items, turnsNow, Number\(tr\)\); \}/, "an anchor row no event uuid names still centres the window by its turn");
   // a fill that leaves no row on screen re-windows once around the named point and puts it back
-  assert.match(fill, /if \(pointBefore != null && !rowOnScreen\(v, content\)\) \{\s*\n\s*const u2 = unitOfTurn\(items, turnsNow, Math\.floor\(pointBefore\)\);[\s\S]*?const y2 = yOfTurn\(v, s, items, turnsNow, content, pointBefore\);\s*\n\s*writeScroll\(content, y2 != null \? y2 : topBefore, "gap-fill", false, topBefore\);/, "the zero-row post-check re-windows around the point");
+  assert.match(fill, /if \(pointBefore != null && !rowOnScreen\(v, content\)\) \{\s*\n\s*const u2 = unitOfTurn\(items, turnsNow, Math\.floor\(pointBefore\)\);[\s\S]*?const y2 = yOfTurn\(v, s, items, turnsNow, content, pointBefore\);\s*\n\s*if \(y2 == null\) untakeMeasure\(v, figures\);[^\n]*\n\s*writeScroll\(content, y2 != null \? y2 : topBefore, "gap-fill", false, topBefore\);/, "the zero-row post-check re-windows around the point; a point that maps to no y gives the take back before the raw top (fill-in-place.test.ts executes the roads)");
   assert.match(RENDER, /function rowOnScreen\(v: View, content: HTMLElement\): boolean \{/, "the on-screen row check");
   // low: a run opening mid-turn starts AT its lo, so its first user row begins lo + 1 (the tail slice that opens with an assistant)
   const turnsFn = RENDER.slice(RENDER.indexOf("function turnOfEvents(s: Session): number[] {"), RENDER.indexOf("\nfunction ", RENDER.indexOf("function turnOfEvents(s: Session): number[] {") + 1));
@@ -205,9 +220,12 @@ test("round six fixes each carry a pin (T386 stage 2): rows name their turn, the
   assert.doesNotMatch(turnsFn, /let t = r\.lo - 1;/, "…the unconditional lo - 1 is gone");
   // the px-per-turn measure takes the WHOLE row, action strip included: a gap stands for rows as they will render, and every user row
   // (history rows too) carries the strip; subtracting it drew the gap 16 percent short in the regions lab's sizing road
-  const px = RENDER.slice(RENDER.indexOf("if (v.pxPerTurn == null) {"), RENDER.indexOf("if (h > 0 && turns > 0) v.pxPerTurn = h / turns;"));
-  assert.match(px, /h \+= c\.offsetHeight;/, "px-per-turn sums whole rows");
-  assert.doesNotMatch(px, /msg-acts/, "…and subtracts no action strip");
+  // since PR E the rows' heights are the unit observer's BORDER boxes (entryBoxHeight: what offsetHeight reports, padding included), so
+  // a turn's height is its whole rows, action strip included, and nothing subtracts the strip
+  assert.match(RENDER, /function entryBoxHeight\(e: ResizeObserverEntry\): number \{[\s\S]*?if \(s && typeof s\.blockSize === "number"\) return s\.blockSize;/, "px-per-turn sums whole rows (border boxes)");
+  assert.doesNotMatch(ESTIMATE, /msg-acts/, "…and subtracts no action strip");
+  const measure = RENDER.slice(RENDER.indexOf("function measureUnits(v: View): void {"), RENDER.indexOf("function entryBoxHeight("));
+  assert.doesNotMatch(measure, /msg-acts/);
 });
 
 test("round seven fixes each carry a pin (T386 stage 2): a fault has its own word, a cancelled landing is not busy, the dead evidence writers are gone", () => {
@@ -250,7 +268,7 @@ test("round seven fixes each carry a pin (T386 stage 2): a fault has its own wor
 
 test("round nine fixes each carry a pin (T386 stage 2): an older fetch in flight re-points, only a live ask is busy; the pipe's down edge clears like the socket's", () => {
   const sca = RENDER.slice(RENDER.indexOf("function scrollToAnchor("), RENDER.indexOf("\nfunction ", RENDER.indexOf("function scrollToAnchor(") + 1));
-  assert.match(sca, /if \(live\) \{ landTrail\.push\("pointer-fetch-busy"\); landToast\("still going to the earlier message"\); return false; \}\s*\n(\s*\/\/[^\n]*\n)*\s*if \(loadingOlder\.has\(activeId\)\) \{ pendingOlderAnchor\.set\(activeId, uuid\); pendingOlderKeepY\.delete\(activeId\); pendingAnchor = uuid; anchorPendingOlder = true; landTrail\.push\("pointer-fetch-older"\); return false; \}/, "only a live window ask is busy; an older fetch in flight is re-pointed onto the anchor and arms the landing for chatHead's arrival");
+  assert.match(sca, /if \(live\) \{ landTrail\.push\("pointer-fetch-busy"\); landToast\("still going to the earlier message"\); return false; \}\s*\n(\s*\/\/[^\n]*\n)*\s*if \(loadingOlder\.has\(activeId\)\) \{ pendingOlderAnchor\.set\(activeId, uuid\); pendingOlderKeepY\.delete\(activeId\); return waitOnOlderWire\(activeId, uuid\); \}/, "only a live window ask is busy; an older fetch in flight is re-pointed onto the anchor and arms the landing for chatHead's arrival (waitOnOlderWire, the older wire's one arm since 2026-09-19)");
   assert.doesNotMatch(sca, /loadingOlder\.has\(activeId\) \|\| liveWindowAsk\(activeId\)/, "the unconditional refusal is gone");
   assert.match(RENDER, /if \(landedNow \|\| !anchorPendingOlder\) \{ pendingAnchor = null; pendingAnchorKeepY = null; \}/, "the reload restore's caller keeps its arm while an older fetch is pointed at the anchor");
   assert.match(RENDER, /^window\.addEventListener\("romp:wsdown", \(\) => onWireDown\(\)\);$/m, "the socket's down edge runs the one clear");
@@ -261,7 +279,7 @@ test("round nine fixes each carry a pin (T386 stage 2): an older fetch in flight
 test("round ten fixes each carry a pin (T386 stage 2): a re-attempt waits on its own live ask; the not-rendered path names the state it saw", () => {
   const sca = RENDER.slice(RENDER.indexOf("function scrollToAnchor("), RENDER.indexOf("\nfunction ", RENDER.indexOf("function scrollToAnchor(") + 1));
   assert.match(sca, /const live = liveWindowAsk\(activeId\);\s*\n\s*if \(live && live\.anchor === uuid\) \{ anchorPendingOlder = true; landTrail\.push\("pointer-fetch-waiting"\); if \(pendingAnchorClick\) pulseLandingNotice\(\); return false; \}[^\n]*\n\s*if \(live\) \{ landTrail\.push\("pointer-fetch-busy"\); landToast\("still going to the earlier message"\); return false; \}/, "the same landing's re-attempt waits without a cue (a real second click pulses the notice, round eleven); a different anchor while one is live is refused with the cue");
-  assert.match(sca, /scrollDiagRow\("landmiss", \{ sid: activeId, anchor: uuid\.slice\(-12\), proto:[^\n]*noframe: !sm \|\| sm\.proto == null, trail: landTrail\.slice\(-4\) \}\);\s*\n\s*pendingAnchor = uuid; landTrail\.push\("pointer-not-rendered"\); return false;/, "the not-rendered path files the branch state it saw (proto, events, regions, the head, the older wire, whether a frame existed) before it stands the attempt down");
+  assert.match(sca, /scrollDiagRow\("landmiss", \{ sid: activeId, anchor: uuid\.slice\(-12\), proto:[^\n]*noframe: !sm \|\| sm\.proto == null, trail: landTrail\.slice\(-4\) \}\);\s*\n\s*if \(figures && v\) untakeMeasure\(v, figures\);[^\n]*\n\s*pendingAnchor = uuid; landTrail\.push\("pointer-not-rendered"\); return false;/, "the not-rendered path files the branch state it saw (proto, events, regions, the head, the older wire, whether a frame existed), gives a build's take back (the maintainer's round 3 ruling B), and stands the attempt down");
   assert.doesNotMatch(RENDER, /awaitingFrameAnchor|pointer-no-frame|frame-rearm/, "no arm-keeping for a shape that did not reproduce: the reload restore runs only once a frame is on the tab");
   assert.match(RENDER, /\| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/, "the row kind is budgeted with the other scroll rows");
 });
@@ -316,4 +334,46 @@ test("the skeleton prefetch never builds a tab the strip does not show (the user
   assert.match(RENDER, /captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs,/, "the kernel's tabOrder frame adopts the blob, then repaints through applyTabOrder…");
   const ato = RENDER.slice(RENDER.indexOf("\nfunction applyTabOrder("), RENDER.indexOf("\nfunction syncTabKeysWithStrip("));
   assert.match(ato, /\n  renderTabs\(\);\s*\n\s*syncTabKeysWithStrip\(\);\s*\n\}/, "…whose bare renderTabs() is the reveal's repaint for a peer's view or lens change");
+});
+
+test("the client merge guard (2026-09-19): no run is minted with a lo the kernel did not name, a refused page or window rebuilds nothing, and a regions-less landing takes the older wire, never a window", () => {
+  const irr = RENDER.slice(RENDER.indexOf("function insertRegionRun("), RENDER.indexOf("\nconst gapLoading"));
+  assert.match(irr, /function insertRegionRun\(s: Session, lo: number, hi: number, events: ChatEvent\[\]\): boolean \{/, "the insert answers whether it placed the run");
+  assert.doesNotMatch(irr, /s\.tailLo \?\? 0/, "the fallback tail run at turn 0 is gone: it put an older window after the newest events");
+  assert.match(irr, /if \(!s\.regions\) return false;/, "a session with no regions inserts no window and no page");
+  const turns = RENDER.slice(RENDER.indexOf("function chatTurns(msg: any): void {"), RENDER.indexOf("\n/** A fill moves nothing"));
+  assert.match(turns, /const placed = insertRegionRun\(s, span\[0\], span\[1\], \(msg\.events \|\| \[\]\) as ChatEvent\[\]\);/);
+  assert.match(turns, /if \(!placed\) \{ landTrail\.push\("turns-unplaced"\); vscodeApi\?\.postMessage\(\{ type: "locateDiag", id: msg\.id, ok: false, trail: landTrail\.slice\(\), kind: "unplaced" \}\); return; \}/, "a refused page frees its ask and rebuilds nothing");
+  const win = RENDER.slice(RENDER.indexOf("function chatWindow(msg: any) {"), RENDER.indexOf("\n// ── (the detached client's way back"));
+  const stray = win.slice(0, win.indexOf("const cancelled = rec.cancelled;"));
+  assert.match(stray, /const placed = insertRegionRun\(s, Math\.max\(0, msg\.span\[0\]\), msg\.span\[1\], \(msg\.events \|\| \[\]\) as ChatEvent\[\]\); reconcileOptimistic\(s\);\s*\n\s*if \(placed\) \{/, "a stray window's refusal pushes window-stray and nothing else");
+  const at = win.indexOf('landTrail.push("window-unplaced")');
+  assert.ok(at > 0, "the trail names the refusal");
+  const refusal = win.slice(win.lastIndexOf("if (!placed)", at), at + 400);
+  assert.match(refusal, /writeScroll\(cRestore, preJumpOrigin, "land-cancel", false, cRestore\.scrollTop\)/, "the pre-jump origin is put back");
+  assert.match(refusal, /kind: "unplaced"/);
+  assert.doesNotMatch(refusal, /landToast|clearSeek/, "a refusal neither toasts nor ends the seek: the seek is armed and the next attempt takes the older wire");
+  const sca = RENDER.slice(RENDER.indexOf("function scrollToAnchor("), RENDER.indexOf("\nfunction ", RENDER.indexOf("function scrollToAnchor(") + 1));
+  assert.match(sca, /if \(loadingOlder\.has\(activeId\)\) \{[^\n]*\}\s*\n(\s*\/\/[^\n]*\n)*\s*if \(!s\.regions && fetchOlderForAnchor\(activeId, uuid\)\) return waitOnOlderWire\(activeId, uuid\);\s*\n(\s*\/\/[^\n]*\n)*\s*if \(requestAround\(activeId, uuid\)\) \{/,
+               "after the in-flight re-point and before the window ask: a session with no regions asks the older wire, which lands by key");
+  // the older wire's wait (the follow-up of 2026-09-19): both arms end in waitOnOlderWire, which arms the landing, marks the click's time and
+  // kind for chatHead's re-arm and shows the window road's notice for a navigation (never for the keep-offset re-land)
+  assert.match(RENDER, /function waitOnOlderWire\(sid: string, uuid: string\): false \{[\s\S]*?pendingOlderMark\.set\(sid, mark\);\s*\n\s*pendingAnchor = uuid; anchorPendingOlder = true; landTrail\.push\("pointer-fetch-older"\);\s*\n\s*if \(!relandAsk\) showLandingNotice\(sid, mark\.t\);\s*\n\s*return false;/,
+               "the older wire's arm: the landing, the trail's word, the mark, the notice for a navigation");
+  // the review of 2026-09-19, round two: the notice comes down only where the wait ENDS, never at the reply itself (the pass re-arms the wire
+  // and re-shows it in place; a hide at the reply, with compact mode's deferred build pass between the two, opened a frame in which onWireDown
+  // counted no landing), and every release of the older wire's claim brings it down
+  const head = RENDER.slice(RENDER.indexOf("function chatHead(msg: any) {"), RENDER.indexOf("\n// Fetch the next older history chunk"));
+  assert.match(head, /const endWait = \(\) => \{ if \(landingNoticeSid === msg\.id && !liveWindowAsk\(msg\.id\)\) hideLandingNotice\(\); \};/, "chatHead brings the older wire's notice down where its wait ends; a window landing's notice is its live ask's record's and stands");
+  assert.doesNotMatch(head, /if \(deepLink && landingNoticeSid === msg\.id\) hideLandingNotice\(\);/, "…and never at the reply itself");
+  assert.match(head, /if \(msg\.fault\) \{\s*\n(\s*\/\/[^\n]*\n)*\s*forget\(msg\.id\); endWait\(\);/, "a fault ends it");
+  assert.match(head, /if \(msg\.missing\) \{ forget\(msg\.id\); dropLanding\("head-missing"\); requestFullSession\(msg\.id, "gap"\); return; \}/, "a missing anchor ends it with its word");
+  assert.match(head, /if \(!next\) \{ forget\(msg\.id\); dropLanding\("head-stale"\); return; \}/, "a stale reply ends it with its word");
+  assert.match(head, /landTrail\.push\(word\); if \(!\(seek && seek\.sid === msg\.id\)\) landToast\("the history could not be loaded just now"\);/, "…and the reader is told unless a seek stands behind the landing, whose backstop speaks for it");
+  assert.match(RENDER, /let scrolled = pendingAnchor \? scrollToAnchor\(pendingAnchor\) : false;\s*\n(\s*\/\/[^\n]*\n)*\s*if \(att\.anchor && activeId && landingNoticeSid === activeId && !liveWindowAsk\(activeId\) && !\(loadingOlder\.has\(activeId\) && pendingOlderAnchor\.has\(activeId\) && !pendingOlderKeepY\.has\(activeId\)\)\) hideLandingNotice\(\);/,
+               "the landed (or honest-failed) attempt brings the notice down inside the pass; an attempt that re-arms the wire, or another anchor's while the wire's landing is in flight, leaves it up");
+  assert.match(RENDER, /function releaseSeekFetch\(sid: string\): void \{\s*\n\s*anchorPendingOlder = false;\s*\n\s*pendingOlderMark\.delete\(sid\);[^\n]*\n(\s*\/\/[^\n]*\n)*\s*if \(landingNoticeSid === sid && !liveWindowAsk\(sid\)\) hideLandingNotice\(\);/,
+               "the seek's release paths (the backstop, the seek note's cancel, a time-only navigation) end the older wire's wait with its notice");
+  assert.match(RENDER, /function cancelLanding\(\): void \{[\s\S]*?const mark = rec \? null : pendingOlderMark\.get\(sid\);[\s\S]*?if \(!rec\) releaseSeekFetch\(sid\);[\s\S]*?anchor: target \?\? mark\?\.uuid \?\? pendingAnchor \?\? undefined, anchorT: mark\?\.t \?\? pendingAnchorT \?\? undefined, kind: mark\?\.kind \?\? pendingAnchorKind \?\? undefined/,
+               "the notice's click on the older wire's landing releases the fetch's claim, and its row names the landing from the fetch's mark, read before the release deletes it");
 });

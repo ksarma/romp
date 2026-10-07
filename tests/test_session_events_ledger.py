@@ -107,6 +107,27 @@ class ProblemRowShape(unittest.TestCase):
         self.assertIsNone(sb.parse_problem_row("x" + sb.PROBLEM_ROW_MARK + "not json"))
         self.assertIsNone(sb.parse_problem_row("x" + sb.PROBLEM_ROW_MARK + "[1, 2]"))
 
+    def test_a_keyed_row_counts_on_one_ring_entry_while_the_ledger_and_the_log_get_every_row(self):
+        # `key` rides through to _log (round 1 of the review of fork PR #819: the spawn's unseeded-pick row recurs while the
+        # file remembers the pick, so the ring holds one entry with the count while the ledger keeps every row)
+        d = tempfile.mkdtemp()
+        lines = []
+        be = _backend(d, log=lambda m: lines.append(m))
+        sb.problem_row(be.state_dir, "prose one", "test.keyed", log=be._log, key="test.keyed:x", sid=SID)
+        sb.problem_row(be.state_dir, "prose one", "test.keyed", log=be._log, key="test.keyed:x", sid=SID)
+        sb.problem_row(be.state_dir, "prose two", "test.keyed", log=be._log, key="test.keyed:y", sid=SID)
+        ring = _ring(be)
+        self.assertEqual(len(ring), 2, ring)
+        self.assertTrue(ring[0]["text"].startswith("prose one (1 repeat this kernel life"), ring[0]["text"])
+        self.assertEqual(ring[0]["first"], "prose one")
+        self.assertEqual(ring[1]["text"], "prose two")
+        self.assertEqual([r["kind"] for r in _events(d)], ["test.keyed"] * 3, "every row reaches the ledger")
+        self.assertEqual(len([m for m in lines if sb.PROBLEM_ROW_MARK in m]), 3, "and the kernel log")
+        # an unkeyed row is as before: every repeat is its own ring entry
+        sb.problem_row(be.state_dir, "prose three", "test.plain", log=be._log)
+        sb.problem_row(be.state_dir, "prose three", "test.plain", log=be._log)
+        self.assertEqual([r["text"] for r in _ring(be)][2:], ["prose three", "prose three"])
+
     def test_a_plain_log_callable_gets_the_line(self):
         d = tempfile.mkdtemp()
         got = []

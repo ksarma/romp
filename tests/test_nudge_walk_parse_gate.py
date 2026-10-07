@@ -482,7 +482,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             "_downtime",                            # the host-suspension list, refilled from STATE/kernel-downtime.jsonl (keyed)
             "_intr_marks_memo",                     # a memo keyed on the parse identity plus the state log's machineCut pair
             "_intr_marks_memo_stats", "_INTR_MARKS_STATS_LOCK",   # that memo's hit/miss counters and their lock (no input)
-            "_nudge_gate_memo", "_NUDGE_GATE_STATS",   # the placement gate's memo (the parse identity, the store view, the episode log's stat) and its counters
+            "_nudge_gate_memo", "_NUDGE_GATE_STATS",   # the placement gate's memo (the parse identity, the store view, the episode log's
+            #                                         stat, the clears log's stat) and its counters
             "_nudge_deleg_memo",                    # the delegated check's memo, keyed on the shared view object's identity (one object per store
             #                                         version: the store, its journal and archive, keyed files 3 to 5) and holding a pure function of it
             "_last_state_cache", "_machine_cut_cache",   # _fold_records cursors over the state log (a keyed file), keyed by its path and stat

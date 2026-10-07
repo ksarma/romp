@@ -645,7 +645,12 @@ class AppTable(unittest.TestCase):
                             "%s: a card field feed.ts reads off a card today" % f)
         self.assertEqual(set(km.FEED_PHONE_FACE_ACTIVE), {"working", "needs_input"},
                          "active is the Working and Blocked columns; Completed is not")
-        self.assertIn('column: "working" | "needs_input" | "completed"', feed_src, "the card's column values, as feed.ts types them")
+        # since upstream 1837 (cards carry board and category) feed.ts types the card's column as the board definition's
+        # category, whose union in board-def.ts is the kernel's raw vocabulary that FEED_PHONE_FACE_ACTIVE names; feed.ts's own
+        # `type Column` (asks, needsInput, completed) is the pane's column ids, which askColumn maps the category to
+        self.assertIn("column: FeedCategory;", feed_src, "the card's column, typed as the board definition's category")
+        self.assertIn('export type FeedCategory = "working" | "needs_input" | "completed";', self._src("board-def.ts"),
+                      "the card's column values, as the board definition feed.ts imports types them")
         # federation.js loads on every feed-slot page ahead of the pane's bundle and hands it the merged frame. Most
         # fields it merges through, and the pane's own read counts them; the fields it CONSUMES on the pane's behalf
         # are the local frame's fields mergeHostFeeds reads by name (clearedForeign: applyViewerClears drops the remote
@@ -780,6 +785,8 @@ def _populated():
                  judgeLimit={"loginSessions": [{"name": "web", "host": "TESTHOST", "sid": SID, "color": None}],
                              "billingUnknown": []},
                  bgServices={"web": ["dev server on :3000"]}, clearedForeign=[SID_B + ":g1"],
+                 boards={"reviews": {"id": "reviews", "title": "Reviews",
+                                     "categories": [{"id": "notes", "title": "Notes", "chip": "neutral"}]}},
                  clearNotices=[{"sig": "c1", "text": "cleared the boundary"}],
                  sdkNotices=[{"sig": "k1", "text": "backend restarted"}],
                  userTodoRows=[{"sid": SID, "name": "web", "color": None,
@@ -1412,6 +1419,7 @@ class PublishedTable(unittest.TestCase):
         step("bgServices", "a service chip's session name", lambda f: f.update(bgServices={"webx": f["bgServices"]["web"]}))
         step("bgServices", "a service description", lambda f: f.update(bgServices={"web": ["dev server on :3000x"]}))
         step("clearedForeign", "a foreign clear's id", lambda f: f.update(clearedForeign=[SID_B + ":g10"]))
+        step("boards", "a data board's title", lambda f: f["boards"]["reviews"].update(title="Reviewsx"))
         step("clearNotices", "a clear notice's text", lambda f: f["clearNotices"][0].update(text="cleared the boundaryx"))
         step("sdkNotices", "an SDK notice's text", lambda f: f["sdkNotices"][0].update(text="backend restartedx"))
         step("syncNotices", "a sync notice's text", lambda f: f["syncNotices"][0].update(text="pulled 3 commitsx"))
@@ -1911,12 +1919,14 @@ class PublishedTable(unittest.TestCase):
         session order), plus the views fault marker that rides in place of the views blob. Pinned: on a board that
         meets the whole condition, two boards differing in the hostname's length and the digit width of views.seq
         differ in `other` by exactly those; and each named condition, violated alone, moves `other` (so the sentence
-        needs every clause it has; fails before on the wording: the old sentence named four of the eight)."""
+        needs every clause it has; fails before on the wording: the old sentence named four of the eight). The fold
+        that took in upstream PR 1845's data-defined boards (the frame's `boards` field, folded into `other`) added a
+        ninth: one board definition moves `other` on an otherwise empty board, so the condition names it."""
         def board(**over):
             f = _feed(n=0, asks=[], ledgers=[], order=[], working=[], awaiting=[], stateUnknown=[], bgServices={},
                       sessions=[], userTodos={}, userTodoRows=[], views={"seq": 3, "tags": {}}, dismissedCount=0,
                       canUndoClear=False, syncNotices=[], clearNotices=[], sdkNotices=[], clearedForeign=[],
-                      judgeLimit=None, selfHost="TESTHOST")
+                      judgeLimit=None, selfHost="TESTHOST", boards={})
             f.update(over)
             return f
         base = board()
@@ -1934,12 +1944,13 @@ class PublishedTable(unittest.TestCase):
             "an open todo": board(userTodos={SID: 1}),
             "a tag": board(views={"seq": 3, "tags": {"backend": []}}),
             "a notice": board(syncNotices=[{"sig": "s1", "text": "pulled 3 commits"}]),
+            "a data-defined board": board(boards={"reviews": {"id": "reviews", "title": "Reviews", "categories": []}}),
         }
         for what, frame in violations.items():
             moved = _report(_fresh_pass(frame))["last"]["by"]["other"]
             self.assertNotEqual(moved, other, "%s moves `other` on an otherwise empty board, so the condition names it" % what)
         for clause in ("no session", "no open todo", "no tag", "no notice", "no cleared id", "no judge-limit latch",
-                       "an empty stored session order", "a clean tags read"):
+                       "no data-defined board", "an empty stored session order", "a clean tags read"):
             self.assertIn(clause, km.FEED_COMPOSITION_RESIDUALS[0], clause)
 
     def test_the_second_residuals_figures_hold_by_execution(self):

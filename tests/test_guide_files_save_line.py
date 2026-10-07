@@ -26,6 +26,24 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
+def _files_section():
+    """The guide's Files section as docs/reference.md holds it since fold 4 moved the fork's paragraphs out of docs/guide.md
+    (the front pages are the project's, CLAUDE.md "The documentation front pages"): the body of "## The Files pane", then the
+    paragraphs of the three viewer sections the reference keeps with the chat pane ("Links inside a file", "Text size and
+    width", "A file's own HTML"), which sat in the guide's Files section on this fork."""
+    ref = _read("docs", "reference.md")
+    parts = [_ref_section(ref, "The Files pane").strip("\n")]
+    parts += [_ref_section(ref, h).strip("\n") for h in ("Links inside a file", "Text size and width", "A file's own HTML")]
+    return "\n\n".join(parts) + "\n"
+
+
 def _section(md, heading):
     """The body of one `### heading` up to the next heading of any level."""
     m = re.search(r"^### " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} )", md, re.S | re.M)
@@ -64,7 +82,7 @@ WORD_FOR_EVENT = {
 
 class TheSaveSentencesNameEveryGestureThatEndsTheLine(unittest.TestCase):
     def setUp(self):
-        self.sentence = _save_sentences(_flat(_section(_read("docs", "guide.md"), "Files")))
+        self.sentence = _save_sentences(_flat(_files_section()))
         self.panel = _read("ui", "webview", "file-comments.ts")
         self.model = _read("ui", "webview", "file-comments-model.ts")
 
@@ -105,7 +123,9 @@ class TheSaveSentencesNameEveryGestureThatEndsTheLine(unittest.TestCase):
         land = self.panel[self.panel.index("private landSaved("):self.panel.index("private cardWhere(")]
         for call in ("scrollCard", "scrollBoth", "scrollIntoView", "centerOn", "showLoose", "scrollTop"):
             self.assertNotIn(call, land, "the landing of a save must not scroll (decision 43): %s" % call)
-        self.assertIn("if (this.margin) this.focusOn(key);", land, "the card is the focus for the layout all the same")
+        self.assertIn("if (this.margin && (!this.composer || this.composer === c)) this.focusOn(key);", land,
+                      "the card is the focus for the layout all the same, while no composer is open or the saving one is (a pin on "
+                      "where the code lives; the focus's condition is executed by file-comments-margin-fixes.test.ts \"a reply open on its card while another comment's reply lands…\", red when any landing takes the focus, and \"a reply's save out, its box cancelled, then the landing…\", red when a landing takes it only for the saving composer still open)")
 
     def test_the_line_says_above_or_below_in_the_models_words(self):
         self.assertIn('return "Saved · the card is " + side;', self.model)

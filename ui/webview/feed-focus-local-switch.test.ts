@@ -31,8 +31,8 @@ test("every jump this pane posts is noted in ONE place, the host api's postMessa
   assert.match(fn, /if \(!m \|\| \(m\.type !== "openSession" && m\.type !== "showOnTimeline"\)\) return;/, "the two posts that jump into a session");
   assert.match(fn, /if \(inRender \|\| inModalRender \|\| !\(inInputEvent\(\) \|\| frameGesture\)\) return;/,
     "only a post made inside the reader's input event (or a frame carrying their gesture: a bell click, a notification tap) and outside a render is a jump (rounds two and three)");
-  assert.match(FEED, /\} else if \(m\.sid\) \{\s*\n\s*frameGesture = !!m\.gesture;[^\n]*\n\s*try \{ vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\); \} finally \{ frameGesture = false; \}/,
-    "the revealCard fallback honours the gesture the shell marked on the frame, for that post alone");
+  assert.match(FEED, /\} else if \(decision === "open"\) \{\s*\n\s*frameGesture = !!m\.gesture;[^\n]*\n\s*try \{ vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\); \} finally \{ frameGesture = false; \}/,
+    "the revealCard fallback (paint-gate.ts revealDecision `open`, a sid named) honours the gesture the shell marked on the frame, for that post alone");
   assert.match(fn, /if \(!sid \|\| !focusedIdentity\(sid\)\.live\) return;/, "a closed session's jump changes no tab (the chat's confirmRevive), so it moves nothing here");
   assert.match(fn, /applyLocalFocus\(sid, m\.type === "showOnTimeline", true, null\);/,
     "this pane's own jump: a Summary or card jump (showOnTimeline) switches and scrolls, a session name or peer chip (openSession) only switches (round two)");
@@ -95,9 +95,14 @@ test("the chat tells the shell its tab on every switch with its announcement num
 });
 
 test("the shell hands the chat's tab to the feed pane, from a child frame of this page only", () => {
-  assert.match(KERNEL, /if\(!m\|\|m\.romp!=='activeTab'\|\|!e\.source\|\|e\.source===window\|\|e\.origin!==location\.origin\)return;/, "a chat column of this page, same origin");
-  assert.match(KERNEL, /var ff=document\.getElementById\('f-feed'\);try\{ff&&ff\.contentWindow&&ff\.contentWindow\.postMessage\(\{romp:'activeChat',id:\(typeof m\.id==='string'\?m\.id:null\),nonce:\(typeof m\.nonce==='number'\?m\.nonce:null\),gesture:!!m\.gesture\},'\*'\);\}catch\(x\)\{\}\}\);/,
+  assert.match(KERNEL, /if\(!window\.__rompPaneSourceOk\|\|!window\.__rompPaneSourceOk\(e\)\)return;var m=e&&e\.data;if\(!m\|\|m\.romp!=='activeTab'\)return;/,
+    "a chat column of this page, same origin, in the pane protocol: the shell's one source check, fail-closed (plans/panes-as-data.md section 5)");
+  // the relay reaches every protocol pane since the Artifacts pane's second pass (plans/artifacts-pane.md 9.5): the frame is built once,
+  // handed to the collapse script's poster when it exists, else to the feed alone as before; the nonce rides it either way (T416)
+  assert.match(KERNEL, /var ac=\{romp:'activeChat',id:\(typeof m\.id==='string'\?m\.id:null\),nonce:\(typeof m\.nonce==='number'\?m\.nonce:null\),gesture:!!m\.gesture\};/,
     "the feed pane gets {romp:'activeChat', id, nonce, gesture}");
+  assert.match(KERNEL, /if\(window\.__rompTellPanes\)\{window\.__rompTellPanes\(ac\);\}/, "…through the poster that reaches every protocol pane");
+  assert.match(KERNEL, /else\{var ff=document\.getElementById\('f-feed'\);try\{ff&&ff\.contentWindow&&ff\.contentWindow\.postMessage\(ac,'\*'\);\}catch\(x\)\{\}\}/, "…the feed alone where the poster is absent");
   assert.equal((KERNEL.match(/\{romp:'revealCard',itemId:[^}]*,gesture:true\}/g) || []).length, 2, "both revealCard posts (the bell click, the notification tap) carry the reader's gesture (round three)");
 });
 

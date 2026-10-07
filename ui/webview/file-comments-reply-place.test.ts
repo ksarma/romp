@@ -24,7 +24,10 @@ const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui
 const SRC = web("file-comments.ts");
 const CHAT_CSS = web("styles.css");
 const FEED_CSS = web("feed.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files section lives in docs/reference.md ("## The Files pane", up to the Artifacts pane) since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved every fork paragraph there).
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const REF_FILES = ((at: number) => REF.slice(at, REF.indexOf("\n## The Artifacts pane", at)))(REF.indexOf("\n## The Files pane\n"));
 const PLAN = fs.readFileSync(path.resolve(process.cwd(), "..", "plans", "file-review.md"), "utf8");
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
@@ -298,8 +301,8 @@ const ACCEPTED: Partial<Status> = { store: { v: 3, path: "docs/report.md", sugge
 
 // ── the harness: a mounted panel inside the viewer's body row ──────────────────────────────────────
 type Posted = Record<string, any>;
-const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];   // the panel's sections with the box in its slot
-const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];              // …and with the box away in a card
+const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];   // the panel's sections with the box in its slot, and its live region
+const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];              // …and with the box away in a card
 async function harness(over: Partial<FileViewActionCtx> = {}) {
   const fc = await import("./file-comments");
   const main = doc.createElement("div"); main.className = "fileview-main";
@@ -361,7 +364,7 @@ function draft(box: E, text: string, caret: number, scrollHeight: number): void 
 test("Reply moves the box into the comment's card, below its replies and above its buttons; the card opens; the slot stands empty until Cancel", async () => {
   const h = await harness();
   await h.open();
-  assert.deepEqual(h.sections(), SLOT, "the panel's five sections, the box in its slot");
+  assert.deepEqual(h.sections(), SLOT, "the panel's five sections, the box in its slot, and its live region");
   assert.equal(h.composer().hidden, true);
   assert.ok(!h.card(passage.id)!.classList.contains("open"), "the card starts collapsed");
   doc.scrolled.length = 0;
@@ -601,7 +604,7 @@ test("Escape, Cancel and a save hand the keyboard back to the card's Reply; a ke
 // ── pinned at source: the placement, the render order, the guards ─────────────────────────────────
 
 test("source: render builds the cards before the composer and puts the typing box's keyboard back; placeComposer finds the card by comment id and moves the box only when it is out of place; the sections' slot order stands", () => {
-  assert.match(SRC, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/, "the slot's place: head, the box, cards, send, log");
+  assert.match(SRC, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log, this\.live\);/, "the slot's place: head, the box, cards, send, log, then the live region");
   // the reads come first — the composer's box and the Send confirm's note box (the send follow-on), both rebuilt around —
   // then the reply's latch and the arrivals' bookkeeping (the seen and new sets, the dots on the body's marks: the arrivals
   // follow-on), which build nothing; the rebuild after them: the head, the cards around the box, the composer. Between the
@@ -644,7 +647,7 @@ test("the sheets: .fc-composer-in is the reply-of-yours dress — the wash and t
 
 test("docs: the guide says Reply opens the box inside the card; the plan's follow-on note says where the box stands, where it returns, and who gets the keyboard", () => {
   const flat = (t: string) => t.replace(/\s+/g, " ");
-  const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
+  const files = flat(REF_FILES);
   assert.ok(files.includes("**Reply** opens the reply box inside the card, under the comment and its replies"), "the guide");
   assert.ok(!files.includes("reply into it"), "the old phrase is gone");
   const note = flat(PLAN.slice(PLAN.indexOf("The composer follow-on (2026-09-07)"), PLAN.indexOf("### Slice 3: region comments on images")));

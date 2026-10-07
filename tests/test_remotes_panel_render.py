@@ -17,6 +17,7 @@ import json
 import time
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -28,10 +29,12 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 km = load_source("romp_kernel_rpanel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  a served text with its comments blanked (loads no romp code)
 
 TUNNELS = {
     "tunnels": [{
-        "host": "TESTHOST", "kernelPort": 29855, "localPort": 51000, "busPort": 51001,
+        "host": "TESTHOST", "kernelPort": 29855, "localPort": 1, "busPort": 2,
         "checkin": False, "checkinPeer": False, "hasToken": True, "status": "up", "detail": "",
         "sids": ["11111111-2222-3333-4444-555555555555"], "trust": "directed",
         "kernelSha": "abc1234", "localSha": "abc1234", "outOfDate": False,
@@ -112,6 +115,7 @@ function alert(m){ ALERTS.push(String(m)); }
 const setTimeout_ = setTimeout;
 // listeners are RECORDED so a test can deliver a pane's postMessage (the hostsPending row copy)
 const window = { _l:{}, addEventListener(k,f){ (this._l[k]=this._l[k]||[]).push(f); }, location:{reload(){}} };
+window.__rompPaneSourceOk = () => true;   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
 const console_err = [];
 const console = { error(...a){ console_err.push(a.map(String).join(' ')); }, log(){}, warn(){} };
 
@@ -471,7 +475,7 @@ class RemotesPanelRender(_PanelHarness, unittest.TestCase):
         self.assertIn("reading how your machines hold each other", out.get("html", ""))
 
     def test_pair_binding_posts_the_trust_remote_route(self):
-        js = km._LANDING_REMOTES_JS
+        js = served_css.js_code(km._LANDING_REMOTES_JS)   # the code, comments blanked: a served comment spells the token too (tests/test_served_pins_read_elements.py)
         self.assertIn("select[data-pt-on]", js)
         self.assertIn("/tunnels/trust-remote", js)
         self.assertIn("/tunnels/pairs", js)

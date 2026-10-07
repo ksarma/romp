@@ -49,7 +49,7 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
     chat: ["rs-compact", "rs-dense", "rs-chatscheme", "rs-striprows", "rs-cmtmodel", "rs-cmteffort", "rs-cmtfast", "rs-thinksum", "rs-wholechat", "rs-widgets", "rs-rings", "rs-swidgets"],   // rs-rings: the ring widgets' rows (2026-09-14), under the title widgets' rows in the same section
     feed: ["rs-feedcollapsed"],
     sessions: ["rs-defaultdir", "rs-backend"],
-    automation: ["rs-autonudge", "rs-suggestcompact"],
+    automation: ["rs-autonudge", "rs-suggestcompact", "rs-alwaysfast", "rs-retryupgrade"],   // the two model switches: kernel policies applied to sessions on the kernel's own initiative (2026-09-17)
     tasks: ["rs-tasktrack", "rs-judgemodel", "rs-judgefast", "rs-judgeeffort", "rs-distillmodel", "rs-distillfast", "rs-distilleffort", "rs-indexmodel", "rs-indexfast", "rs-indexeffort", "rs-judgeconc"],
     debug: ["rs-judges-index", "rs-judges-triage", "rs-perfshare", "rs-perfmute", "ra-open", "rs-log-open", "rsver"],   // rs-perfshare, rs-perfmute: the beacon extension's switches under Diagnostics (2026-09-18)
   };
@@ -66,13 +66,13 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
   // T404: General opens with the account, then the panes (the Files control among them), Appearance, Permissions, This machine, the
   // shortcuts; Debug opens with the judges' debug views, then the diagnostics (Updates went to General)
   const G = ps.general;
-  assert.ok(G.indexOf(">Account<") < G.indexOf("id=rs-panes-sec") && G.indexOf("id=rs-panes-sec") < G.indexOf("id=rs-filesctl") && G.indexOf("id=rs-filesctl") < G.indexOf("data-section=appearance>Appearance<")
+  assert.ok(G.indexOf(">Account<") < G.indexOf("id=rs-panes-sec") && G.indexOf("id=rs-panes-sec") < G.indexOf("id=rs-filesctl") && G.indexOf("id=rs-filesctl") < G.indexOf("id=rs-panes-data") && G.indexOf("id=rs-panes-data") < G.indexOf("id=rs-panedock") && G.indexOf("id=rs-panedock") < G.indexOf("data-section=appearance>Appearance<")
             && G.indexOf("data-section=appearance>Appearance<") < G.indexOf(">Permissions<") && G.indexOf(">Permissions<") < G.indexOf("id=rs-fileedit") && G.indexOf("id=rs-fileedit") < G.indexOf(">This machine<")
             && G.indexOf(">This machine<") < G.indexOf("id=rs-conserve") && G.indexOf("id=rs-conserve") < G.indexOf("id=rs-updates") && G.indexOf("id=rs-updates") < G.indexOf(">Keyboard shortcuts<"),
-            "General: Account, Panes (with the Files control), Appearance, Permissions, This machine, Keyboard shortcuts");
+            "General: Account, Panes (with the Files control, then the registry rows, then the Pane docking switch), Appearance, Permissions, This machine, Keyboard shortcuts");
   assert.match(G, /<b>Allow file editing<\/b>/, "the permission row's name (T404)");
   assert.match(G, /<label class="rs-row rs-panes-row"><input type=checkbox id=rs-filesctl>' \+[^\n]*\n\s*'<span><b>Files<\/b>'/, "the Files row reads Files, like Sessions, Outline and Feed above it (T407), and is a Panes row like them, so the off-dashboard hide takes it (T404's tidy)");
-  assert.match(GEAR, /delete o\.filesControl; delete o\.fileLinkPane;/, "load() drops both dead keys, so neither survives a gear save (T404's tidy)");
+  assert.match(GEAR, /delete o\.filesControl; delete o\.fileLinkPane; delete o\.showArtifactsControl;/, "load() drops the three dead keys, so none survives a gear save (T404's tidy; the Artifacts control's key since the registry fix: save() writes the whole object, so a kept key was re-persisted forever)");
   assert.match(ps.chat, /The summaries are output tokens the session pays for, which is why this row sits under Chat and not Display\./, "the Thinking row says why it is Chat's (T404's tidy)");
   // the popover stays inside the card (the T408 read): a row whose popover would run past the card's bottom opens it above
   const CSS2 = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.css"), "utf8");
@@ -82,8 +82,8 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
     "the room above is measured from the popover's containing block, the row (round three, low 3)");
   assert.match(GEAR, /if \(above >= sr\.height \+ 2\) host\.classList\.add\('rs-up'\);/, "up only when it fits above; neither side fitting, it stays below, where the card's scroll reaches the clip (round three, the ruling)");
   assert.doesNotMatch(GEAR, /above > below/, "no roomier-side clause");
-  assert.match(GEAR, /pcard\.addEventListener\('mouseover', function \(e\) \{ var host = hostOf\(e\.target\); if \(host\) placeSub\(host\); \}\);/);
-  assert.match(GEAR, /pcard\.addEventListener\('mouseout', function \(e\) \{ var host = hostOf\(e\.target\); if \(host && !\(e\.relatedTarget && host\.contains\(e\.relatedTarget\)\)\) host\.classList\.remove\('rs-up'\); \}\);/, "the class goes with the pointer, so the next hover measures afresh");
+  assert.match(GEAR, /pcard\.addEventListener\('mouseover', function \(e\) \{ var host = hostOf\(e\.target\); if \(host\) placeRowHosts\(host\); \}\);/, "every host of the row re-placed on the enter too: a pointer moving from the row's label into its box never leaves the row, and the row's class, decided for the row's popover, would place the box's (2026-09-20, gear-sub-focus-browser.test.ts)");
+  assert.match(GEAR, /pcard\.addEventListener\('mouseout', function \(e\) \{ var host = hostOf\(e\.target\); if \(host && !\(e\.relatedTarget && host\.contains\(e\.relatedTarget\)\)\) placeRowHosts\(host\); \}\);/, "the pointer's exit re-places the row's hosts: the class goes with the pointer when nothing else shows the popover, and stays for a keyboard focus that still does (2026-09-20, gear-sub-focus-browser.test.ts)");
   assert.match(CSS2, /#rsettings \.rs-row:hover \.rs-fastin\.rs-up \.rs-sub \{ top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; \}/, "the box's own up rule, (1,5,0): above the hover rule and the row's up rule whatever the order");
   assert.match(CSS2, /#rsettings \.rs-row\.rs-up:hover \.rs-sub, #rsettings \.rs-widget\.rs-up:hover \.rs-sub \{ top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; \}/, "the up rule outranks the hover rule by one class");
   assert.doesNotMatch(GEAR, /Files control in the dashboard bar/, "the old words are gone from the gear");
@@ -102,7 +102,9 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
   assert.doesNotMatch(C, /id=rs-badge|id=rs-branch/, "the badge and branch checkboxes left the Display section: the Status line section's rows are the controls (T409)");
   assert.doesNotMatch(C, />Transcript<|>Text and comments<|>Files<|>Strip</, "the old Chat heads are gone");
   // Automation: the nudges; Task tracking: the judges alone; Debug: the judges' views then the diagnostics
-  assert.ok(ps.automation.indexOf(">Nudges<") < ps.automation.indexOf("id=rs-autonudge") && ps.automation.indexOf("id=rs-autonudge") < ps.automation.indexOf("id=rs-suggestcompact"), "Automation: Nudges, Auto Nudge, Suggest /compact");
+  assert.ok(ps.automation.indexOf(">Nudges<") < ps.automation.indexOf("id=rs-autonudge") && ps.automation.indexOf("id=rs-autonudge") < ps.automation.indexOf("id=rs-suggestcompact")
+            && ps.automation.indexOf("id=rs-suggestcompact") < ps.automation.indexOf("<div class='rs-sec'>Model</div>") && ps.automation.indexOf(">Model<") < ps.automation.indexOf("id=rs-alwaysfast")
+            && ps.automation.indexOf("id=rs-alwaysfast") < ps.automation.indexOf("id=rs-retryupgrade"), "Automation: Nudges, Auto Nudge, Suggest /compact; then Model, Always fast, Retry upgrades after downgrades (2026-09-17)");
   assert.ok(ps.tasks.indexOf("<div class='rs-sec rs-sec-first'>Task tracking</div>") === ps.tasks.indexOf("<div class='rs-sec") && ps.tasks.indexOf("id=rs-tasktrack") < ps.tasks.indexOf(">Judges<") && ps.tasks.indexOf(">Judges<") < ps.tasks.indexOf("id=rs-judgemodel"), "Task tracking opens with the master switch, then the Judges (T404 PR 2)");
   // T408: the two Automation rows carry a permanent one-sentence line in place of a hover tooltip, and no title attribute
   assert.match(ps.automation, /<span class=rs-line id=rs-autonudge-sub>' \+ AUTONUDGE_SUB \+ '<\/span>'/, "Auto Nudge's line, the var fillAutoNudge appends the mixed hosts to");
@@ -123,7 +125,7 @@ test("every existing control keeps its id and sits in exactly one pane, by the a
   // the old Context gauge row is gone: its WHEN is the Context bar widget's option in the Tab widgets section
   assert.doesNotMatch(GEAR, /id=rs-tabctx\b/);
   assert.doesNotMatch(GEAR, /Context gauge in tabs/);
-  // section sub-heads: the first of each pane wears rs-sec-first (no rule above it), and every pane has one
+  // section sub-heads: the first of each pane wears rs-sec-first (a tighter top margin; since 2026-09-19 it wears the titled rule like the rest), and every pane has one
   for (const t of TABS) assert.match(ps[t], /<div class='rs-sec rs-sec-first'>/, t + " opens with a first section head");
 });
 
@@ -260,7 +262,8 @@ test("the Tab widgets section's rows come from the strip's own module: built onc
   assert.match(GEAR, /d\.className = 'rs-sub'; d\.textContent = w\.description;/, "the description is the row's hover popover, the panel's idiom (round one, LOW 2)");
   assert.match(GEAR_CSS, /#rsettings \.rs-switch\.on::after \{ left: 18px;/, "the knob slides");
   assert.match(GEAR_CSS, /#rsettings \.rs-widgets \{ display: grid; grid-template-columns: 18px 168px 1fr auto auto; column-gap: 10px; \}[^\n]*\n#rsettings \.rs-widget \{ display: grid; grid-template-columns: subgrid; grid-column: 1 \/ -1;/, "one grid across the rows (the grip's column leads since the reorder, T409), each row a subgrid of it (round one, LOW 2)");
-  assert.match(GEAR_CSS, /#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute;/, "the widget rows share the panel's hover popover rule");
+  assert.match(GEAR_CSS, /#rsettings \.rs-row:hover \.rs-sub, #rsettings \.rs-widget:hover \.rs-sub \{ display: block; position: absolute;/, "the widget rows share the panel's popover rule on hover");
+  assert.match(GEAR_CSS, /#rsettings \.rs-row:has\(:focus-visible\) \.rs-sub, #rsettings \.rs-widget:has\(:focus-visible\) \.rs-sub \{ display: block; position: absolute;/, "and on a keyboard focus, a rule of its own with the same declarations (2026-09-20: the :has(:focus-visible) twins; split from the hover rule in the maintainer's round 5 so an engine without :has() keeps the pointer road; gear-sub-focus-browser.test.ts parses both)");
   assert.doesNotMatch(GEAR_CSS, /#rsettings \.rs-widget-name span \{/, "no always-painted description rule");
   // round two, LOW 3: grid-template-columns: subgrid needs Chromium 117 and the stylesheet's oklch(from) 119; the extension's declared
   // VS Code floor is 1.88 (Electron 28, Chromium 120), the first release that ships both
@@ -293,4 +296,24 @@ test("the Token usage panel's every close returns to the settings card (the T409
   // stands, so the answer takes the layer down first, one level; every open and close of the settings resets the layer the same way
   assert.match(GEAR, /window\.__rompSettingsClose = function \(\) \{ if \(raBack && !raBack\.hidden\) \{ raHide\(\); return true; \}/, "a press with the keyboard in the shell document reaches the panel");
   assert.match(GEAR, /function openSettings\(tab, section\) \{\s*\n\s*if \(raBack && !raBack\.hidden\) raHide\(\);/, "an open while the panel is up lands on the card, never under the layer");
+});
+
+// The hand rows' handler rewrites the stored pane set through panesOf (the 1919 read, still standing at 1922: three keys alone, so a
+// flip of Sessions, the Outline or the Feed dropped every registry key: the Artifacts control hid and its column closed while its row
+// read checked, and a data pane's stored false came back on). Executed: the function as gear.js defines it.
+test("panesOf keeps every stored boolean member beside the three hand keys, and nothing that is not a boolean", () => {
+  const at = GEAR.indexOf("function panesOf(s) {");
+  assert.ok(at >= 0, "panesOf as written");
+  let depth = 0, end = -1;
+  for (let k = GEAR.indexOf("{", at); k < GEAR.length; k++) { if (GEAR[k] === "{") depth++; else if (GEAR[k] === "}") { depth--; if (depth === 0) { end = k + 1; break; } } }   // to the function's closing brace, whatever its line shape
+  assert.ok(end > at, "panesOf's closing brace");
+  const panesOf = new Function(GEAR.slice(at, end) + "; return panesOf;")() as (s: unknown) => Record<string, boolean>;
+  assert.deepEqual(panesOf({ panes: { timeline: true, fleet: true, feed: true, lab: true, notes: false, junk: "x", n: 1 } }),
+    { timeline: true, fleet: true, feed: true, lab: true, notes: false }, "the registry keys survive; a stray stored value does not ride along");
+  assert.deepEqual(panesOf({ panes: { fleet: false } }), { timeline: true, fleet: false, feed: true }, "a missing hand key reads as shown");
+  assert.deepEqual(panesOf({}), { timeline: true, fleet: true, feed: true }); assert.deepEqual(panesOf(null), { timeline: true, fleet: true, feed: true });
+  // the handler's write: one hand key flipped keeps the rest of the set
+  const s = { panes: panesOf({ panes: { timeline: true, fleet: true, feed: true, artifacts: true, notes: false } }) };
+  s.panes.fleet = false;
+  assert.deepEqual(s.panes, { timeline: true, fleet: false, feed: true, artifacts: true, notes: false }, "an Outline uncheck leaves the Artifacts control and the hidden data pane as they were");
 });

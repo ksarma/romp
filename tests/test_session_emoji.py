@@ -557,8 +557,14 @@ class Frames(unittest.TestCase):
 
     def test_tab_meta_and_the_session_frame_carry_it(self):
         ksrc = Path(BIN, "romp-kernel").read_text()
-        self.assertEqual(ksrc.count('"emoji": _name_emoji(s["sid"])'), 3,
-                         "all three tab_meta builders (the pusher, the per-session push, the tabOrder frame)")
+        # 2026-09-22: the three strip senders' rows come from ONE builder, _tab_meta (tests/test_kernel_tabs_first.py
+        # holds that census; tests/test_user_todos_roster.py proves each sender's row, emoji included, by execution),
+        # so the emoji line of the tabs rows is ONE, in the helper, and no sender reads an emoji of its own
+        self.assertEqual(inspect.getsource(km._tab_meta).count('"emoji": _name_emoji('), 1,
+                         "the one emoji line of the tabs rows lives in _tab_meta")
+        for fn in (km._push, km._push_session_now, km._confirm_close_now):
+            self.assertNotIn("_name_emoji(", inspect.getsource(fn),
+                             "%s reads no emoji of its own: its rows come from _tab_meta" % fn.__name__)
         self.assertIn('"emoji": _name_emoji(sid),', inspect.getsource(km.build_session))
         row_src = inspect.getsource(km._session_listing_row)    # the GET /sessions row since upstream #1752
         self.assertIn('"emoji": _name_emoji(sid),', row_src,       # (_session_rows is a one-liner over it)
@@ -583,7 +589,11 @@ class Frames(unittest.TestCase):
                       "the VS Code pipe holds it across a reconnect like setSessionColor")
         self.assertIn("setSessionEmoji", (root / "docs" / "reference.md").read_text())
         self.assertIn("set_emoji", (root / "docs" / "reference.md").read_text())
-        self.assertIn("romp emoji", (root / "docs" / "guide.md").read_text())
+        # the user-level account (the guide's emoji paragraph, which leads docs/reference.md's "### A session's tab emoji" since
+        # fold 4 moved it out of docs/guide.md; CLAUDE.md "The documentation front pages") names the command too
+        ref = (root / "docs" / "reference.md").read_text()
+        lead = ref[ref.index("\n### A session's tab emoji\n"):ref.index("It can be set from three places")]
+        self.assertIn("romp emoji", lead)
 
 class EmojiRoute(unittest.TestCase):
     """POST /emoji: the door `romp emoji` and the postal set_emoji tool share."""

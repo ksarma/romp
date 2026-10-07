@@ -164,14 +164,48 @@ _TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eigh
 
 def _number_word(n):
     """The English word for a count under one hundred, spelled as the docs spell one ("nineteen"): the docs' count of the
-    pass jobs' rows is derived from len(_PerfStats.PASS_JOBS) through this, never typed a second time (2026-09-19 review),
-    so a job added to the list turns the sentence that counts them red."""
+    pass jobs' rows is derived from _PerfStats.PASS_JOBS through this (_kept_pass_jobs below), never typed a second time
+    (2026-09-19 review), so a job added to the list turns the sentence that counts them red."""
     if not 0 <= n < 100:
         raise ValueError("no word for %r" % (n,))
     if n < 20:
         return _ONES[n]
     tens, ones = divmod(n, 10)
     return _TENS[tens] + ("-" + _ONES[ones] if ones else "")
+
+
+# The pass jobs that joined _jobs_pass after the 2026-09-18 stage attribution, which the docs' discontinuity sentence
+# dates. The sentence counts the `jobs.<job>` container rows that KEEP their names and values across that change
+# (docs/reference.md's stages_ms entry, upstream/2026-09-18-stage-attribution.md), and a job whose row did not exist
+# before the change keeps nothing across it, so the count is the pass jobs less these. Both came with the upstream fold of
+# 2026-10-02: retryUpgrade (upstream PR 1827) and heldWorking (upstream PR 1876). Each must still be a pass job: a rename
+# or a retirement reds in _kept_pass_jobs instead of leaving a stale exclusion, and any job added after these, absent
+# from this tuple, still turns the counting sentence red.
+_PASS_JOBS_AFTER_ATTRIBUTION = ("retryUpgrade", "heldWorking")
+
+# The cycle jobs that joined _pusher_cycle_jobs after the same change: the docs' stages_ms entry names the nine cycle jobs whose rows
+# MOVED to pusher.cycleJobsMs on 2026-09-18, and a job born on the pusher after it moved nothing. One so far, with the upstream fold of
+# 2026-10-03: artifactsSignal (upstream PR 1951; its _artifacts_signal from PR 1925). Each must still be a cycle job (_moved_cycle_jobs
+# reds otherwise), and a cycle job added later and absent here still turns the naming check red.
+_CYCLE_JOBS_AFTER_ATTRIBUTION = ("artifactsSignal",)
+
+
+def _kept_pass_jobs():
+    """The pass jobs whose container rows the docs count as keeping their values across the 2026-09-18 change."""
+    later = set(_PASS_JOBS_AFTER_ATTRIBUTION)
+    gone = sorted(later - set(km._PerfStats.PASS_JOBS))
+    if gone:
+        raise AssertionError("_PASS_JOBS_AFTER_ATTRIBUTION names %r, no longer a pass job: drop or rename it there" % gone)
+    return [j for j in km._PerfStats.PASS_JOBS if j not in later]
+
+
+def _moved_cycle_jobs():
+    """The cycle jobs whose rows the docs name as moved to pusher.cycleJobsMs by the 2026-09-18 change."""
+    later = set(_CYCLE_JOBS_AFTER_ATTRIBUTION)
+    gone = sorted(later - set(km._PerfStats.CYCLE_JOBS))
+    if gone:
+        raise AssertionError("_CYCLE_JOBS_AFTER_ATTRIBUTION names %r, no longer a cycle job: drop or rename it there" % gone)
+    return [j for j in km._PerfStats.CYCLE_JOBS if j not in later]
 
 
 # Wordings about the stage routing that a review round retired, assembled from parts so this file does not carry them as
@@ -324,7 +358,7 @@ class Collector(unittest.TestCase):
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
         # the pusher's nine cycle jobs left stages_ms on 2026-09-18 (stage attribution): a `jobs.<job>` row there is the jobs
-        # thread's own, the cycle jobs' rows are pusher.cycleJobsMs, seeded with the nine names, and a fresh snapshot has
+        # thread's own, the cycle jobs' rows are pusher.cycleJobsMs, seeded with the cycle jobs' names, and a fresh snapshot has
         # no foreign write (a `jobs.` stage from a thread owning neither loop)
         self.assertFalse({"jobs." + j for j in km._PerfStats.CYCLE_JOBS} & set(snap["stages_ms"]), "no cycle job's row in stages_ms")
         self.assertTrue({"jobs." + j for j in km._PerfStats.PASS_JOBS} <= set(snap["stages_ms"]), "every pass job's row, at zero")
@@ -337,13 +371,15 @@ class Collector(unittest.TestCase):
         for k in ("push.chat.sig.static", "push.chat.sig.deps"):   # the signature seam's sub-seams (the chat-signature design, stage 1)
             self.assertIn(k, km._PerfStats.STAGES, "%s is listed at zero from the start" % k)
         self.assertEqual(km._PerfStats.CONTAINERS.get("push.chat.sig"), "push.chat.sig.", "the signature seam contains its two sub-seams")
+        self.assertEqual(p["chatFullWhy"], {}, "the proto-2 full frames' reason map (2026-09-19) starts empty")
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
-                                                       "coldSkipped", "bySession"},
+                                                       "coldSkipped", "baselineRaced", "baselineRepaired", "bySession"},
                          "the chat builder carries the active/background split, the miss attribution (round-4 P3), "
                          "the builds left uncached because their signature moved (P4), the skeleton-held tabs the cold-tab "
-                         "gate skipped (coldSkipped, upstream #1659) and the per-session timer (bySession)")
+                         "gate skipped (coldSkipped, upstream #1659), the delta baseline's detector and its repair "
+                         "(baselineRaced, baselineRepaired, upstream #1954) and the per-session timer (bySession)")
         self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
         self.assertEqual(km._PerfStats.CHAT_MISS, km._CHAT_SIG_LABELS + ("cold", "nosig"),
                          "one counter per labelled signature component, plus the two no-signature cases")
@@ -378,8 +414,9 @@ class Collector(unittest.TestCase):
         # the three identity memos' readers land here (review find, 2026-09-08: they had no consumer)
         self.assertEqual(set(snap["memos"]), {"pass", "shared", "chain", "nudgeGate", "nudgeWalk", "convergeDeclined", "sessionsListing", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip", "ghostDropped",
                                               "bgTops", "liftGate", "intrMarks", "deadWait", "tickSeen", "statesOverlay", "lanes", "spendTree", "summaryAnchor",
+                                              "parkedHandoffs",   # the feed's parked-handoff fold over the postal log (2026-09-18)
                                               "judgingBand",   # the judging band's per-row memo and horizon cursor (2026-09-16)
-                                              "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
+                                              "subagentTree",   # the subagents directory walk memo (2026-09-16): its counters, the _SUBAGENT_TREE_STATS comment in kernel/kernel.py
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
                                               "chatSig",   # the chat signature pass's counters (stage 1 of the chat-signature design, 2026-09-18)
                                               "outlineProvisional",   # the Outline's provisional-row ledger memo, parse-free (plans/outline-pane-provisional-row.md, 2026-09-15)
@@ -416,6 +453,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["memos"]["intrMarks"], km._intr_marks_memo_report())
         self.assertEqual(set(snap["memos"]["statesOverlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
         self.assertEqual(snap["memos"]["statesOverlay"], km._states_overlay_report())
+        self.assertEqual(set(snap["memos"]["parkedHandoffs"]), {"hit", "append", "refold", "restore", "cold", "fail", "entries"},
+                         "the parked-handoff fold's paths, pre-seeded so the key set is fixed, and its occupancy (2026-09-18)")
+        self.assertEqual(snap["memos"]["parkedHandoffs"], km._parked_fold_report())
         for blk in ("intrMarks", "statesOverlay"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
@@ -958,9 +998,10 @@ class Collector(unittest.TestCase):
         the gauge was documented on /perf but never exposed)."""
         st = km.em.asm_index_stats()
         self.assertEqual(set(st), {"cap", "evictions", "materialized", "materializedBy", "materializedByStage", "resident", "restoredTurns",
-                                   "rowDecodes", "userFacts", "released", "expired"})   # released, expired: the LRU's weak ownership
-        #                                                                                   (measured 2026-09-15: superseded generations
-        #                                                                                   sat resident at the cap)
+                                   "rowDecodes", "userFacts", "released", "expired", "collected"})   # released, expired: the LRU's weak
+        #                                                                                   ownership (measured 2026-09-15: superseded
+        #                                                                                   generations sat resident at the cap); collected:
+        #                                                                                   the collection event's removals (2026-09-24)
         self.assertIsInstance(st["userFacts"], int); self.assertGreaterEqual(st["userFacts"], 0)
 
     def test_the_feed_build_block_carries_the_per_session_card_memo(self):
@@ -972,7 +1013,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty", "memo"})   # dirty: this fork's forced-rebuild counter beside the memo
         memo = snap["builds"]["feed"]["memo"]
         self.assertEqual(set(memo), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by",
-                                     "failed", "failing"})   # failed: derivations that raised, cumulative; failing: sessions whose last one did (2026-09-17)
+                                     "failed", "failing",   # failed: derivations that raised, cumulative; failing: sessions whose last one did (2026-09-17)
+                                     "row_by",            # a row miss by the row position that moved (2026-09-18)
+                                     "coldLive", "coldFlip"})   # coldLive: living sessions whose cache-only parse read missed, per build; coldFlip: those re-read in place because the memo held them warm (2026-09-18)
         # ...and the reference's builds.feed.memo paragraph names every counter the block serves, so a counter cannot
         # ship undocumented (2026-09-18: `failed` and `failing` arrived with the card-build containment and the paragraph
         # named the eight older ones only). The slice: from the paragraph's opening line to the next block's bullet.
@@ -982,6 +1025,7 @@ class Collector(unittest.TestCase):
         for k in memo:
             self.assertIn("`%s`" % k, para, "builds.feed.memo `%s` is not named in the reference's memo paragraph" % k)
         self.assertEqual(set(memo["miss_by"]), set(km._FEED_MEMO_LABELS) | {"cold"})
+        self.assertEqual(set(memo["row_by"]), set(km._FEED_ROW_FIELDS) | {"presence"})
         self.assertEqual(memo["bound"], km.FEED_MEMO_BYTES)
         self.assertEqual(memo, km._feed_memo_report())
         for k, v in memo.items():
@@ -1010,6 +1054,36 @@ class Collector(unittest.TestCase):
         self.assertAlmostEqual(p["cycle_ms_max"], 30.0)
         self.assertAlmostEqual(p["cycle_ms_last"], 20.0)
         self.assertEqual(p["ring_n"], 3)
+
+    def test_the_chat_full_reasons_are_counted_under_the_lock_capped_and_copied(self):
+        """The proto-2 full frames' reason map (2026-09-19): a `pusher` sub-key, not a sends kind and not a top-level key;
+        capped at SLOTS labels the way the sends map is, the rest under "other"; the snapshot hands out a copy (the pusher
+        dict's shallow copy would share it); a reset empties it."""
+        self.st.chat_full_why("noBase"); self.st.chat_full_why("noBase"); self.st.chat_full_why("lastGone:echo")
+        snap = self.st.snapshot()
+        self.assertEqual(snap["pusher"]["chatFullWhy"], {"noBase": 2, "lastGone:echo": 1})
+        self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"}, "not a sends kind")
+        self.assertEqual(set(snap), TOP_KEYS, "not a top-level key")
+        snap["pusher"]["chatFullWhy"]["planted"] = 1
+        self.assertNotIn("planted", self.st.snapshot()["pusher"]["chatFullWhy"], "the snapshot's map is a copy")
+        for i in range(self.st.SLOTS + 5):
+            self.st.chat_full_why("lastGone:k%d" % i)
+        d = self.st.snapshot()["pusher"]["chatFullWhy"]
+        self.assertEqual((len(d), d["other"]), (self.st.SLOTS + 1, 7), "SLOTS labels, the rest under other")
+        self.st.reset()
+        self.assertEqual(self.st.snapshot()["pusher"]["chatFullWhy"], {})
+
+    def test_every_label_the_chat_full_reason_returns_is_in_the_references_gloss(self):
+        """docs/reference.md's `chatFullWhy` parenthetical names every label _chat_full_reason returns (the 2026-09-19 review;
+        the tests/test_perf_heap_block.py Documented precedent), so a renamed or added label reaches the doc or fails here. The
+        gloss runs from the key to the next key of the pusher bullet; the `lastGone:` family is documented as `lastGone:<family>`."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        i = doc.index("`chatFullWhy` (")
+        gloss = doc[i:doc.index("`firstCycle`", i)]
+        labels = re.findall(r'return "([A-Za-z0-9]+:?)"', inspect.getsource(km._chat_full_reason))
+        self.assertEqual(sorted(labels), ["baseGone", "changeAt0", "changeBelowFirst", "empty", "inverted", "lastGone:", "noBase", "other"])
+        for label in labels:
+            self.assertIn("`%s`" % (label + "<family>" if label.endswith(":") else label), gloss, label)
 
     def test_ring_percentiles_and_max_come_from_the_last_256_cycles(self):
         self.st.cycle(5.0)                                   # one slow boot cycle: 5000 ms
@@ -1092,7 +1166,8 @@ class Collector(unittest.TestCase):
         # chat also carries the watched/background split and the per-component attribution (2026-09-09); the
         # plain writer counts the build and attributes nothing
         self.assertEqual(snap["builds"]["chat"], {"cached": 1, "built": 1, "ms": 40.0, "active_built": 0, "bg_built": 0,
-                                                  "moved": 0, "coldSkipped": 0, "bg_miss": {k: 0 for k in km._PerfStats.CHAT_MISS},
+                                                  "moved": 0, "coldSkipped": 0, "baselineRaced": 0, "baselineRepaired": 0,
+                                                  "bg_miss": {k: 0 for k in km._PerfStats.CHAT_MISS},
                                                   "bySession": []})                   # the per-session timer (2026-09-14): no sid handed in, no row
         self.assertEqual(snap["builds"]["feed"]["built"], 1)
         self.assertEqual(snap["builds"]["timeline"], {"cached": 0, "built": 0, "ms": 0.0})
@@ -1107,14 +1182,17 @@ class Collector(unittest.TestCase):
     def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
         """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
         its failures.first is an exception message, which names paths and quotes session text. The served block is the
-        line's length in characters, one of two fixed status tokens, the line's per-pass numbers and its four counter
-        blocks as the child sent them (numbers are not a leak); the failures are a count; the line's text never reaches
-        the snapshot."""
+        line's length in characters, one of two fixed status tokens, the line's per-pass numbers and its five counter
+        blocks as the child sent them (numbers are not a leak; the fifth, tierGate, is the tiers' gate counters per
+        stage and the stamps held, fixed names over integers, served since fold 3 brought it onto the line); the
+        failures are a count; the line's text never reaches the snapshot."""
         home = "/home/tester/.claude/projects/-home-tester-code-notes-api/%s.jsonl" % SID
         first = "OSError: [Errno 2] No such file or directory: '%s'" % home
         blocks = {"recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}}},
                   "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10}},
-                  "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}
+                  "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1},
+                  "tierGate": {"plan": {"ran": 1, "skipped": 2, "stamped": 1, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                               "stamps": 3}}
         done = {"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
                 "failures": {"count": 2, "first": first}, "recovered": True, **blocks}
         self.st.judge_child_done(done, pid=4242)
@@ -1128,7 +1206,7 @@ class Collector(unittest.TestCase):
         compact = len(json.dumps(done, separators=(",", ":")))
         self.assertEqual(child, {"seq": 7, "pid": 4242, "chars": compact, "status": "failed", "failures": 2, "recovered": True,
                                  "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0, **blocks},
-                         "no reader count given: the line re-encoded compactly is its size; the four blocks ride as sent")
+                         "no reader count given: the line re-encoded compactly is its size; the five blocks ride as sent")
         self.st.judge_child_done({"op": "done", "seq": 9, "recordCache": "not a block", "goalIo": {"loads": 2}}, pid=4242)
         child = self.st.snapshot()["judge"]["child"]
         self.assertEqual((child.get("recordCache"), child.get("goalIo"), "asmCheckpoint" in child), (None, {"loads": 2}, False),
@@ -1145,6 +1223,20 @@ class Collector(unittest.TestCase):
         self.assertEqual((child["status"], child["failures"], child["wallMs"], child["tierStarts"]), ("ok", 0, None, None),
                          "a non-number where a number belongs is served as null, never as itself")
 
+    def test_judge_child_serves_every_counter_block_the_done_line_carries(self):
+        """The child's done line carries one counter block per key of judge.py's _serve_counter_blocks (_serve_pass sends
+        a delta for each), and judge.child serves the blocks CHILD_BLOCKS names. Fold 3 brought upstream's fifth block,
+        tierGate, onto the line, and upstream's kernel serves the line whole; a list left at four dropped it here. So the
+        list is the line's block set, read from the function that builds the line: a block added to the line later
+        turns this red, to be served once its keys are read to be fixed names and its values numbers (the 2026-09-18
+        rule), never dropped unseen."""
+        self.assertEqual(sorted(km._PerfStats.CHILD_BLOCKS), sorted(km.jd._serve_counter_blocks()),
+                         "judge.child serves every counter block the child's done line carries")
+        blocks = {k: {"n": 1} for k in km.jd._serve_counter_blocks()}
+        self.st.judge_child_done(dict({"op": "done", "seq": 3}, **blocks), pid=4242)
+        child = self.st.snapshot()["judge"]["child"]
+        self.assertEqual({k: child.get(k) for k in blocks}, blocks, "each block rides judge.child as the child sent it")
+
     def test_sends_classify_by_kind_and_slot_name(self):
         self.st.send(("chat", SID), "full", 1000)            # a tuple dedup key: the slot is its first element
         self.st.send(("chat", SID), "full", 500)
@@ -1154,6 +1246,18 @@ class Collector(unittest.TestCase):
         self.assertEqual(s["full"], {"chat": {"count": 2, "bytes": 1500}})
         self.assertEqual(s["deduped"], {"chat": {"count": 1, "bytes": 1000}})
         self.assertEqual(s["delta"], {"feed": {"count": 1, "bytes": 20}})
+
+    def test_sends_from_the_targeted_push_read_under_their_own_slot(self):
+        # the sender's road (2026-09-19): the one-session push's frames are counted under `<slot>.targeted`, apart from the
+        # pusher's, so a full from that road is attributable in one read of /perf instead of a journal reconstruction
+        self.st.send(("chat", SID), "full", 1000, road="targeted")
+        self.st.send(("chat", SID), "delta", 100, road="targeted")
+        self.st.send(("status", SID), "full", 50, road="targeted")
+        self.st.send(("chat", SID), "full", 1000)                    # the pusher's: no road
+        s = self.st.snapshot()["sends"]
+        self.assertEqual(s["full"], {"chat.targeted": {"count": 1, "bytes": 1000}, "status.targeted": {"count": 1, "bytes": 50},
+                                     "chat": {"count": 1, "bytes": 1000}})
+        self.assertEqual(s["delta"], {"chat.targeted": {"count": 1, "bytes": 100}})
 
     def test_send_slots_are_capped(self):
         for i in range(40):
@@ -1299,6 +1403,12 @@ class Collector(unittest.TestCase):
                 paths.update([m.group(1)] if m.group(1) is not None else re.findall(r'"(/[^"]*)"', m.group(2)))
             n += len(paths)
             derived[meth[3:]] = paths
+        # The page documents no longer dispatch on a literal `p == "/chat"` in do_GET: they are looked up
+        # in the shared route table _PAGE_RENDERERS (which the auth classifier reads too), and served by
+        # `_PAGE_RENDERERS.get(p)`. So the page routes come from that table, not the source regex (the ""
+        # bare-path spelling is the same route as "/", not a distinct register key).
+        derived["GET"] |= set(km._PAGE_RENDERERS) - {""}
+        n = sum(len(v) for v in derived.values())   # per-method count, pages included
         self.assertGreaterEqual(n, 80, "the derivation lost the route table (did the dispatch shape change?)")
         self.assertGreaterEqual(km._PerfStats.HTTP_PATHS, int(n * 1.5),
                                 "%d fixed routes: raise HTTP_PATHS, or routes land in other for the kernel's lifetime" % n)
@@ -1391,7 +1501,7 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["cycles"], 0)
         self.assertEqual(snap["http"], {})
         self.assertGreater(snap["since"], before)
-        # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's the nine at zero
+        # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's cycle jobs at zero
         self.assertEqual(snap["stagesForeign"], {})
         self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "the connect table too")
@@ -1399,7 +1509,7 @@ class Collector(unittest.TestCase):
     def test_writers_are_thread_safe(self):
         def hammer():
             for _ in range(2000):
-                self.st.wake(); self.st.send(("chat", SID), "full", 1); self.st.http_request("GET /p", 0.0)
+                self.st.wake(); self.st.send(("chat", SID), "full", 1); self.st.http_request("GET /p", 0.0); self.st.chat_full_why("noBase")
         ts = [threading.Thread(target=hammer) for _ in range(8)]
         for t in ts:
             t.start()
@@ -1408,7 +1518,31 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         self.assertEqual(snap["pusher"]["wakes"], 16000)
         self.assertEqual(snap["sends"]["full"]["chat"]["count"], 16000)
+        self.assertEqual(snap["pusher"]["chatFullWhy"], {"noBase": 16000})
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
+
+    def test_every_feed_memo_report_key_is_in_the_references_memo_passage(self):
+        """docs/reference.md's builds.feed.memo passage names every key _feed_memo_report returns (2026-09-21, from the
+        post-merge review of #1820, which found `coldLive`, `coldFlip`, `failed` and `failing` absent, so a standing
+        cold-by-design `coldLive` count read as a fault; the chatFullWhy gloss test above is the precedent), so a renamed or
+        added counter reaches the doc or fails here. The slice runs from the `memo` phrase to the `sends` bullet, not the
+        whole `builds` bullet, so a `failed` mentioned elsewhere cannot satisfy it; the keys are the runtime report's unioned
+        with every counter literal the kernel's source passes to _feed_memo_count and every literal it subscripts the stats
+        dict with directly or seeds through setdefault, each read in either quote style (the failed count's shape, 2026-09-21, from the
+        post-merge reviews of #1938 and #1945: a counter written that way with no seed reaches neither the report nor the
+        helper scan, and a scan keyed on one quote style would miss the other), so a counter minted at a site this process never
+        exercises still has to reach the doc, which is what makes that claim hold by mechanism; the floor keeps a shrunken
+        report from passing vacuously."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        i = doc.index("`memo`, the per-session card memo inside `build_feed`")
+        para = doc[i:doc.index("\n- `sends`:", i)]
+        src = inspect.getsource(km)
+        keys = (set(km._feed_memo_report()) | set(re.findall(r'''_feed_memo_count\(\s*["'](\w+)["']''', src))
+                | set(re.findall(r'''_FEED_MEMO_STATS(?:\[|\.setdefault\()\s*["'](\w+)["']''', src)))
+        self.assertGreaterEqual(len(keys), 13, sorted(keys))
+        self.assertEqual(sorted(k for k in keys if "`%s`" % k not in para), [],
+                         "memo counters the reference's passage never backticks (the review found coldFlip, coldLive, "
+                         "failed and failing missing)")
 
 
 class ContainerKidsCache(unittest.TestCase):
@@ -1464,12 +1598,14 @@ class ContainerKidsCache(unittest.TestCase):
 
 
 class JobRowsByOwner(unittest.TestCase):
-    """A `jobs.<job>` stage is written from two threads under one prefix: nine jobs in _pusher_cycle_jobs on the pusher and
-    nineteen in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
+    """A `jobs.<job>` stage is written from two threads under one prefix: ten jobs in _pusher_cycle_jobs on the pusher (nine at
+    the change, ten since artifactsSignal joined: _CYCLE_JOBS_AFTER_ATTRIBUTION) and
+    the rest in _jobs_pass on the jobs thread (nineteen at the change, twenty-one since retryUpgrade and heldWorking joined:
+    _PASS_JOBS_AFTER_ATTRIBUTION), plus a job's parts from _sub_stage. Until 2026-09-18 stage() added every
     writer's wall to the one flat row, so a row said which thread's time it held only by the lists in the source, and a
     job that changed lists, or a test driving both loops on one thread, merged the two silently. Now stage() routes a
     dotted `jobs.` write by the WRITER'S OWNER: the jobs thread's to the flat row (stages_ms), the pusher's to
-    pusher.cycleJobsMs under the job's name (the nine seeded at zero), and a thread owning neither loop's to stagesForeign
+    pusher.cycleJobsMs under the job's name (the cycle jobs seeded at zero), and a thread owning neither loop's to stagesForeign
     under the stage name, counted rather than dropped. No stage name, mark, split row or boot row changes; three call
     sites did: the nudge walk's looks computation, a per-thread parse tally since the flat parse row moves for the jobs
     owner alone, and the two loop bodies' owner guards, which open the loop's own cycle on a thread that owns the other
@@ -1527,7 +1663,7 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertAlmostEqual(snap["stages_ms"]["jobs"], 2.0, msg="the containers are not dotted: the flat row as before")
         self.assertAlmostEqual(snap["stages_ms"]["jobsPass"], 3.0)
         for j in km._PerfStats.CYCLE_JOBS:
-            self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the nine are always present: %s" % j)
+            self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the cycle jobs are always present: %s" % j)
         self.assertIn(self.NAME[len("jobs."):], km._PerfStats.CYCLE_JOBS, "premise: the name is a cycle job's")
 
     # The two roll-up sums take the JOB rows alone, by a dot-free key, whoever wrote them (2026-09-18 review). The documented
@@ -1627,7 +1763,7 @@ class JobRowsByOwner(unittest.TestCase):
 
     def test_a_pusher_write_under_a_name_outside_the_nine_still_lands_in_its_block(self):
         """A job's part (jobs.autoNudge.snapshot, _sub_stage) or a job that moved lists, written by the pusher's owner: the
-        block takes the name as it comes, so nothing is dropped and the seeded nine are not a filter."""
+        block takes the name as it comes, so nothing is dropped and the seeded cycle jobs are not a filter."""
         st = km._PerfStats()
         st.cycle_begin()
         st.stage("jobs.autoNudge.snapshot", 0.001); st.stage("jobs.autoNudge", 0.004)
@@ -1643,7 +1779,8 @@ class JobRowsByOwner(unittest.TestCase):
     def test_the_census_is_the_two_lists_and_the_flat_seed_is_the_pass_list(self):
         P = km._PerfStats
         self.assertEqual(P.JOBS, P.CYCLE_JOBS + P.PASS_JOBS, "JOBS stays the census")
-        self.assertEqual(len(P.CYCLE_JOBS), 9)
+        # artifactsSignal joined the pusher's cycle (upstream PR 1951; its _artifacts_signal from PR 1925)
+        self.assertEqual(len(P.CYCLE_JOBS), 10)
         self.assertFalse(set(P.CYCLE_JOBS) & set(P.PASS_JOBS), "no job on both lists")
         self.assertEqual(len(P.JOBS), len(set(P.JOBS)), "no name twice")
         self.assertTrue({"jobs." + j for j in P.PASS_JOBS} <= set(P.STAGES), "the flat seed lists every pass job")
@@ -1712,13 +1849,16 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertRegex(para, r"moved.{0,120}`pusher\.connectPush\.stagesMs", "the connect pushes' part of the push rows moved to the connect table")
         self.assertRegex(para, r"not compar(e|able)", "the discontinuity: the moved rows are not comparable across the change")
         self.assertNotIn("count every push", para, "the fold sentence is gone")
-        for j in km._PerfStats.CYCLE_JOBS:
+        moved = _moved_cycle_jobs()   # the cycle jobs less those born on the pusher after the change (_CYCLE_JOBS_AFTER_ATTRIBUTION)
+        self.assertEqual(len(moved), 9, "nine cycle jobs moved on 2026-09-18")
+        for j in moved:
             self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
-        # The rows that keep their values are the pass jobs' container rows, counted from PASS_JOBS, with the reason (the
-        # act-now pass closes no `jobs.<job>` container) and the clause that a job's part rows narrow under stagesForeign
-        # (2026-09-19 review: round one corrected the sentence and nothing held the correction; the unscoped wording,
-        # every remaining `jobs.<job>` row keeping its value, is false of the part rows and is refused here by shape).
-        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        # The rows that keep their values are the pass jobs' container rows, counted from PASS_JOBS less the jobs that joined
+        # after the change (_kept_pass_jobs), with the reason (the act-now pass closes no `jobs.<job>` container) and the
+        # clause that a job's part rows narrow under stagesForeign (2026-09-19 review: round one corrected the sentence and
+        # nothing held the correction; the unscoped wording, every remaining `jobs.<job>` row keeping its value, is false of
+        # the part rows and is refused here by shape).
+        n_pass = _number_word(len(_kept_pass_jobs()))
         self.assertRegex(para, r"%s remaining `jobs\.<job>` container rows \(the pass jobs\) keep their names and their values" % n_pass,
                          "the rows that keep their values are the pass jobs' %s container rows" % n_pass)
         self.assertRegex(para, r"closes no `jobs\.<job>` container", "the reason: the act-now pass closes no job container")
@@ -1739,12 +1879,13 @@ class JobRowsByOwner(unittest.TestCase):
 
     def test_the_ledger_entry_gives_the_measured_reason_for_the_rows_that_keep_their_values(self):
         """upstream/2026-09-18-stage-attribution.md states the jobs rows' meaning change with the same load-bearing words as the
-        reference: the pass jobs' container rows, counted from PASS_JOBS, keep their values because the act-now path closes no
-        `jobs.<job>` container, and a job's part rows shed that pass's share under stagesForeign. Round one replaced the
-        entry's reason (that the housekeeping was the jobs thread's alone from the start, which the act-now test in
-        tests/test_jobs_thread_split.py falsifies) and nothing held the replacement (2026-09-19 review)."""
+        reference: the pass jobs' container rows, counted from PASS_JOBS less the jobs that joined after the change
+        (_kept_pass_jobs), keep their values because the act-now path closes no `jobs.<job>` container, and a job's part rows
+        shed that pass's share under stagesForeign. Round one replaced the entry's reason (that the housekeeping was the jobs
+        thread's alone from the start, which the act-now test in tests/test_jobs_thread_split.py falsifies) and nothing held
+        the replacement (2026-09-19 review)."""
         entry = " ".join(Path(HERE).parent.joinpath("upstream", "2026-09-18-stage-attribution.md").read_text().split())
-        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        n_pass = _number_word(len(_kept_pass_jobs()))
         self.assertRegex(entry, r"the %s `jobs\.<job>` container rows keep their names and their values because" % n_pass,
                          "the rows that keep their values are the pass jobs' %s container rows, with a reason" % n_pass)
         self.assertRegex(entry, r"closes no `jobs\.<job>` container", "the reason: the act-now path closes no job container")
@@ -3213,7 +3354,7 @@ class ProcessStatsFallback(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "darwin", "the real Mach reader answers on a Mac only")
     def test_on_a_real_mac_the_task_info_reader_answers_with_a_plausible_current_size(self):
-        # the one case that meets the REAL reader, with no patches (the weekly macOS cell, or a dispatch); setUp
+        # the one case that meets the REAL reader, with no patches (a macOS cell, on a dispatch with its macos input on); setUp
         # cleared the cached handle so the setup runs here too. Every other assertion in this module accepts ps or
         # unavailable and rss_kb >= 0, so a ctypes path failing silently, or a wrong struct layout answering a
         # garbage figure, passed the Mac cell before this (review round 1). The peak is read AFTER the call, so a
@@ -3474,6 +3615,10 @@ class GoalIoCounters(unittest.TestCase):
             self.assertIn(k, doc)
         self.assertIn("`memos.shared`", doc)
         self.assertIn("- `heap`:", doc, "the heap block is a documented top-level block (tests/test_perf_heap_block.py pins its keys)")
+        # the proto-2 full frames' meter and the row it files (the 2026-09-19 review: no test read the doc for either, and the
+        # merge base's copy passed every doc-reading test)
+        self.assertIn("`chatFullWhy` (every whole session frame", doc, "the reason map is documented under pusher")
+        self.assertIn("- The kernel files one `chatFull` row", doc, "the client-diag row a full to a base holder files")
 
     def test_the_reference_doc_names_the_chat_signature_stage_1_keys(self):
         # stage 1 of the chat-signature design (2026-09-18): the CPU block, the signature seam's sub-seams and the
@@ -4950,7 +5095,10 @@ class PerfRoutes(unittest.TestCase):
         convention's separator with a prefix in _THREAD_KIND_PREFIXES, held equal to the census the same way, so _thread_kind
         keeps the prefix and drops the payload. A Thread renamed after construction (`<thread>.name = "..."`, the Codex handshake
         clock) is a site too when the name is a constant; a dynamic rename cannot be told from a session object's name field
-        statically and is left to the fold, which reads it `other`. A name built any other way fails, and so does a name the
+        statically and is left to the fold, which reads it `other`. A constant `name` set on a module-level threading.local()
+        (the kernel's _SEND_ROAD, whose `name` is the targeted push's send-road word, upstream PR 1870) is a data
+        attribute of a per-thread namespace, never a Thread, and is skipped by its binding, not its spelling; the skipped
+        labels are listed in the failure message. A name built any other way fails, and so does a name the
         census cannot see: a Thread's positional name (its third positional argument), a Timer with a positional beyond its
         interval and function, keywords passed through **kwargs, or an aliased constructor (an assignment whose value is one of
         the constructors; ctor_of resolves Name and Attribute spellings only, so an alias would hide every site built through
@@ -4978,10 +5126,30 @@ class PerfRoutes(unittest.TestCase):
             if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "format" and isinstance(v.func.value, ast.Constant):
                 return v.func.value.value.split("{")[0], True
             return None, None
-        sites, named, bad, dyn_kinds, consts, per_file = 0, [], [], set(), set(), {}
+        def is_thread_local(v):
+            """A `threading.local()` (or a bare `local()`) call: a per-thread namespace, never a Thread."""
+            return isinstance(v, ast.Call) and not v.args and not v.keywords and (
+                (isinstance(v.func, ast.Attribute) and v.func.attr == "local" and isinstance(v.func.value, ast.Name)
+                 and v.func.value.id == "threading") or (isinstance(v.func, ast.Name) and v.func.id == "local"))
+        sites, named, bad, dyn_kinds, consts, per_file, tl_skipped = 0, [], [], set(), set(), {}, []
         for f in files:
             src = open(f, encoding="utf-8").read()
             tree = ast.parse(src)
+            # module-level names bound to a threading.local() and bound nowhere else in the file: a `.name = "..."` on one of
+            # these is a data attribute, not a thread rename. Resolved by binding: a name also stored anywhere else (another
+            # module-level value, a local or a parameter of the same spelling, a `global` rebind) is not excused
+            bound = {}
+            for top in tree.body:
+                if isinstance(top, ast.Assign):
+                    for tg in top.targets:
+                        if isinstance(tg, ast.Name):
+                            bound.setdefault(tg.id, []).append(is_thread_local(top.value))
+            stores = {}
+            for nd in ast.walk(tree):
+                nm = nd.id if isinstance(nd, ast.Name) and isinstance(nd.ctx, ast.Store) else (nd.arg if isinstance(nd, ast.arg) else None)
+                if nm is not None:
+                    stores[nm] = stores.get(nm, 0) + 1
+            thread_locals = {n for n, kinds in bound.items() if kinds and all(kinds) and stores.get(n, 0) == len(kinds)}
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module == "threading" and any(a.name in CTORS and a.asname for a in node.names):
                     bad.append(("%s:%d" % (os.path.basename(f), node.lineno), "a constructor imported under an alias the census cannot follow", ""))
@@ -4991,6 +5159,10 @@ class PerfRoutes(unittest.TestCase):
                         and not all(isinstance(tg, ast.Name) and tg.id in CTORS for tg in node.targets):   # judge.py rebinds ThreadPoolExecutor
                     bad.append(("%s:%d" % (os.path.basename(f), node.lineno), "a constructor aliased into a name the census cannot follow", ast.dump(node.value)[:60]))   # to its timed subclass: both names are constructors, so every site stays visible
                 if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute) \
+                        and node.targets[0].attr == "name" and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) \
+                        and isinstance(node.targets[0].value, ast.Name) and node.targets[0].value.id in thread_locals:
+                    tl_skipped.append("%s:%d %s" % (os.path.basename(f), node.lineno, node.targets[0].value.id))   # a thread-local's field
+                elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute) \
                         and node.targets[0].attr == "name" and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                     label = "%s:%d" % (os.path.basename(f), node.lineno)    # a Thread renamed after construction with a constant
                     named.append(label); consts.add(node.value.value)        #  (the Codex handshake clock): a register word too
@@ -5032,7 +5204,8 @@ class PerfRoutes(unittest.TestCase):
         self.assertTrue(any(l.startswith("codex_backend.py:") for l in named), "the Codex worker's site is walked: %r" % named)
         self.assertGreaterEqual(per_file.get("credentials.py", 0), 1, "the credentials helper's Timer is a construction site the census walked: %r" % per_file)
         self.assertGreaterEqual(per_file.get("judge.py", 0), 7, "the judge tiers' pools are construction sites the census walked: %r" % per_file)
-        self.assertEqual(bad, [], "every named thread maps to a register word with no identity in it")
+        self.assertEqual(bad, [], "every named thread maps to a register word with no identity in it (thread-local fields "
+                                  "skipped: %r)" % tl_skipped)
         self.assertEqual(sorted(km._THREAD_KINDS - consts), [], "every register word is a constant name some site starts: a retired thread leaves no dead word")
         self.assertEqual(sorted(km._THREAD_KIND_PREFIXES - dyn_kinds), [], "every registered prefix is a kind some site spells with a payload")
         self.assertEqual(sorted(dyn_kinds - km._THREAD_KIND_PREFIXES), [], "every kind spelled with a payload is a registered prefix")
@@ -5431,13 +5604,15 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             self.em._count_read(path, n)
         self.addCleanup(self._unplant_reads)
         st = self.st
+        self.tier_gate = km.jd.tier_stats()      # the gate block in the shape its minter builds (every gated tier's counters and
+        #                                          the stamps held), so the walk covers the key set the child's line carries
         st.judge_child_done({"op": "done", "seq": 7, "wallMs": 12.5, "tierStarts": 2, "tierCpuMs": 3.0, "workerCpuMs": 4.0,
                              "failures": {"count": 1, "first": self.first}, "recovered": False,
                              "recordCache": {"entries": 1, "wholeReads": {"leaf<-_parse": {"count": 1, "bytes": 5}},
                                              "wholeReadsByStage": {"push:leaf<-_parse": {"count": 1, "bytes": 5}}},
                              "asmCheckpoint": {"restored": 1, "hydratedBy": {"_unit_text<-build_session": 10},
                                                "hydratedByStage": {"push:_unit_text<-build_session": 10}},
-                             "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}}, pid=4242)
+                             "parses": {"misses": 1, "hits": 0}, "goalIo": {"loads": 1}, "tierGate": self.tier_gate}, pid=4242)
         st.build_chat(False, 0.100, active=True, sid=SID, nbytes=4096)
         st.build_chat(True, sid=SID)
         st.parse(SID, 4096)
@@ -5537,6 +5712,7 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual({k: v["bytes"] - self.reads_before[k]["bytes"] for k, v in ck["readByKind"].items()},
                          {"leaf": 4096, "agent": 512, "states": 256, "postal": 128, "checkpoint": 64, "other": 32})
         self.assertEqual((snap["judge"]["child"]["status"], snap["judge"]["child"]["failures"]), ("failed", 1))
+        self.assertEqual(snap["judge"]["child"].get("tierGate"), self.tier_gate, "the child's gate block rode in the walk, whole")
         self.assertEqual([r["rank"] for r in snap["builds"]["chat"]["bySession"]], [1])
         self.assertEqual(snap["parses"]["perSession"], {"sessions": 1, "max": 1})
         h = snap["http"]

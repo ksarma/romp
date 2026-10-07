@@ -12,6 +12,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { codeOnly } from "../test-code-only";   // the comment stripper mdBlock's order pin reads through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -612,6 +613,37 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   assert.equal(named.getAttribute("class"), null); assert.equal(named.getAttribute("title"), null);
 });
 
+test("linkMarkdownAnchors: the fence pass's re-parse product, an HTML anchor with no href carrying a plain `xlink:href` attribute (an svg anchor split across lines in a raw fence, re-parsed in body), is marked dead with the reason whether or not the author gave it an id or a name: it was a followable section link before the pass moved ahead of the link passes, and the sheet's bare `.fileview-md a` rule paints an href-less anchor in the link ink; the key is the attribute, so an author's HTML anchor spelled with xlink:href in the prose is marked too; an author's anchor target (an id or a name, no xlink attribute) stays unmarked", async () => {
+  // The shape is the POST-RE-PARSE one (the fork PR review's round 2, findings correctness-2, extra7-1 and tests-4, measured in
+  // Chromium, Firefox and WebKit, 2026-09-20): the HTML parser keeps `xlink:href` on an HTML <a> as an attribute of that name in
+  // no namespace, which mdBlock's fold (`a[*|href]`, a namespaced match) does not select, so no `href` is ever written on it and
+  // it reaches this module's href-less arm still carrying the attribute; the author's id arrives under the sanitizer's prefix.
+  // The one-line svg anchor is not this shape: the fold moves its namespaced xlink:href to `href` before this pass runs.
+  const { linkMarkdownAnchors, DEAD_LINK_TITLE } = await import("./file-view-links");
+  const split = (id: string | null, name: string | null) => {
+    const a = el("a", "", "top"); a.setAttribute("xlink:href", "#top");
+    if (id !== null) a.setAttribute("id", id);
+    if (name !== null) a.setAttribute("name", name);
+    return a;
+  };
+  const withId = split("user-content-split-id", null), withName = split(null, "user-content-split-name"), bare = split(null, null);
+  const inProse = split("user-content-prose-x", null);   // the same shape an author writes in prose, no fence and no re-parse: the key is the attribute
+  const target = el("a", "", ""); target.setAttribute("id", "user-content-results");            // an author's anchor target: exempt
+  const namedTarget = el("a", "", ""); namedTarget.setAttribute("name", "user-content-install");
+  const top = el("h2", "", "Top"); top.setAttribute("id", "top");                                // the split anchors' target exists, and still they are dead: they have no href to follow
+  const box = el("div", "fileview-md", top, el("pre", "", el("code", "", withId, withName, bare)), el("p", "", target, namedTarget, inProse));
+  linkMarkdownAnchors(box as unknown as HTMLElement, "/tmp/TESTHOST/notes-api/docs/guide.md");
+  for (const a of [withId, withName, bare, inProse]) {
+    assert.ok(a.classes.includes("fv-dead"), "marked dead, id or name notwithstanding, in a fence or in the prose: " + a.className + " id=" + a.getAttribute("id") + " name=" + a.getAttribute("name"));
+    assert.equal(a.getAttribute("title"), DEAD_LINK_TITLE, "and the title says why");
+    assert.equal(a.getAttribute("href"), null, "no href is minted: the anchor follows nothing"); assert.equal(a.dataset.act, undefined);
+    assert.ok(!a.classes.includes("fv-frag"), "not a section link: the fragment arm reads `href` alone");
+  }
+  assert.equal(withId.getAttribute("id"), "user-content-split-id", "the author's id stays: a `[x](#split-id)` elsewhere still lands here");
+  // the exempt case, pinned: an anchor target with no xlink attribute is neither classed nor titled
+  for (const a of [target, namedTarget]) { assert.equal(a.getAttribute("class"), null, "an author's anchor target is left alone: " + a.getAttribute("id") + a.getAttribute("name")); assert.equal(a.getAttribute("title"), null); }
+});
+
 test("in a rendered body the prose's bare paths link under the viewer's gate, a fenced block's URL links, and inline code's bare filename does not", async () => {
   const { linkifyFileText } = await import("./file-view-links");
   const md = "/tmp/TESTHOST/notes-api/docs/guide.md";
@@ -796,7 +828,7 @@ test("wantsOwnTab reads a Cmd/Ctrl-click or the middle button; openFileTab opens
 });
 
 // ── the viewer's wiring, at source ────────────────────────────────────────────────────────────────
-test("source: codeBlock and mdBlock run the one pass on the DOM they built; the markdown anchors are sorted before the fenced-block highlight and the text after it; marked's parse carries the link-target hook per call; mdBlock has no fallback (the Raw rows a failed render falls back to are codeBlock's, linkified there)", () => {
+test("source: codeBlock and mdBlock run the one pass on the DOM they built; in mdBlock the fenced-block highlight runs over the sanitizer's body, then over the adopted box the markdown anchors are sorted, then the text; marked's parse carries the link-target hook per call; mdBlock has no fallback (the Raw rows a failed render falls back to are codeBlock's, linkified there)", () => {
   assert.match(VIEW, /import \{ linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS \} from "\.\/file-view-links";/);
   const codeFn = VIEW.split("function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement {")[1].split("\n}\n")[0];
   assert.match(codeFn, /code\.innerHTML = wrapNumberedHtml\(hl !== null \? hl : escapeHtml\(text\)\);\n\s*linkifyFileText\(code, path\);/, "the wrap branch: after the rows are in the DOM");
@@ -809,15 +841,29 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   // the viewer always builds the wrap view (each line its own .fv-cl row), which is what scrollToLine reads
   const openFnWrap = VIEW.split("export function openFileView(")[1].split("function offersDownload")[0];
   assert.ok((openFnWrap.match(/codeBlock\([^)]*\)/g) || []).every((c) => /, true\)$/.test(c)), "every codeBlock call in the viewer asks for wrap mode: " + (openFnWrap.match(/codeBlock\([^)]*\)/g) || []).join(" | "));
-  const anchorsAt = mdFn.indexOf("\n    linkMarkdownAnchors(box, doc.path);\n");
-  const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
-  const textAt = mdFn.indexOf('if (doc && doc.kind === "file") linkifyFileText(box, doc.path);');
-  assert.ok(anchorsAt > 0 && hlAt > anchorsAt && textAt > hlAt && mdFn.indexOf("return box;") > textAt, "anchors → highlight → text, then return");
+  // The order of mdBlock's three passes over the rendered document, read off comment-stripped code (codeOnly, ui/test-code-only.ts:
+  // a comment quoting a pinned line cannot satisfy an index compare). The fenced-block highlight (the fence pass: the highlight, the
+  // rows, Copy) runs first, over the sanitizer's body `clean`, before the figure chain and the adoption (2026-09-20: its rows
+  // re-parse markup, so the chain judges what the re-parse creates; where it sits between the sanitize and the chain is
+  // file-view-seam.test.ts's pin). Then, over the adopted `box`, the file kind's anchors, then the text. The text pass MUST follow
+  // the highlight: it writes anchors and spans into the code blocks' text nodes (inPre), which the highlight's innerHTML write would
+  // drop and the rows' re-parse would strip of their handler properties, and its line units in a fence are the `.cl` rows the pass
+  // makes. Until the move the anchors pass ran BEFORE the highlight; nothing depended on that order: the anchors pass writes
+  // attributes and handler properties on <a> elements and reads hrefs, names and ids, and the highlight reads a code element's
+  // className and textContent and creates spans (a fence marked made holds no anchor; an author's raw-HTML anchor inside a fence is
+  // the one the re-parse could reach, and it is stamped AFTER the re-parse now, so the handler properties, which no serialization
+  // carries, stand).
+  const mdCode = codeOnly(mdFn);
+  const hlAt = mdCode.indexOf('clean.querySelectorAll("pre code").forEach');
+  const anchorsAt = mdCode.indexOf("\n    linkMarkdownAnchors(box, doc.path);\n");
+  const textAt = mdCode.indexOf('if (doc && doc.kind === "file") linkifyFileText(box, doc.path);');
+  assert.ok(hlAt > 0 && anchorsAt > hlAt && textAt > anchorsAt && mdCode.indexOf("return box;") > textAt, "the highlight over `clean`, then the anchors, then the text over `box`, then return");
+  assert.equal(mdCode.indexOf('box.querySelectorAll("pre code")'), -1, "no second fence pass over the box");
   // no fallback in mdBlock since Slice 7 of plans/markdown-viewer.md (item 1): a throw propagates to renderBody, whose catch paints
   // the failure line and the text as Raw rows through codeBlock, which linkifies the rows it built (the wrap branch above)
   assert.equal(mdFn.indexOf("box.textContent = text;"), -1, "no bare-text fallback in mdBlock");
   assert.doesNotMatch(mdFn, /\brendered\s*=|if \(rendered/, "no `rendered` flag and no gate on it: both passes run on every render");
-  assert.ok(mdFn.indexOf('if (doc && doc.kind === "file") {') > 0 && mdFn.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
+  assert.ok(mdCode.indexOf('if (doc && doc.kind === "file") {') > 0 && mdCode.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
   assert.equal((mdFn.match(/querySelectorAll\(LINK_SEL\)/g) || []).length, 2, "the two link loops are the URL kind's (resolution against the URL) and the no-file arm's (a tab, or an in-document fv-anchor): neither runs over a file's anchors; both select LINK_SEL, every link element (md-sanitize-viewer-links.test.ts)");
   assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "no a[href] loop is left: it missed an SVG anchor's xlink:href");
 });
@@ -859,12 +905,12 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(SAN, /export function userContentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*const own = USER_CONTENT_PREFIX \+ id;\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => \{ const v = e\.getAttribute\("id"\); return v === own \|\| v === id; \}\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => \{ const v = e\.getAttribute\("name"\); return v === own \|\| v === id; \}\);/,
     "the lookup: an id under the prefix or bare, then an <a name> under either, in document order");
   assert.match(o, /if \(x\.dataset\.act !== "openpath"\) \{[^\n]*\n\s*if \(!own\) return;[^\n]*\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*openUrlTab\(x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/, "a URL anchor: plain is the browser's, modified is one tab from here");
-  assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/,
+  assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openFromViewer\("push", p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/,
     "a path link: a modified click stops before the row (its own tab, the viewer when the popup was blocked); a plain click opens through the host's opener and is NOT stopped");
   assert.equal((o.match(/stopPropagation/g) || []).length, 2, "two stops in openLink, both on the modified gesture: the URL anchor's and the path link's; a plain click goes on to the document's listeners");
   assert.match(RENDER, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.turn-todo, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the chat's body delegate serves the todo card, its Reply modal and the pinned-notes strip alone, with the click's gesture: a viewer link that reaches it opens nothing there (the double open after #346)");
   assert.match(VIEW, /const openUrlTab = \(href: string\) => \{\n\s*if \(!href\) return;\n\s*if \(canPreview\(\)\) window\.open\(href, "_blank", "noopener,noreferrer"\);[^\n]*\n\s*else post\(\{ type: "openLink", href \}\);/, "render.ts's two openers, by host");
-  assert.match(VIEW, /body\.addEventListener\("mousedown", \(ev\) => \{\n\s*const x = ev\.button === 1 \? linkOf\(ev\.target as Element \| null\) : null;\n\s*if \(x && x\.dataset\.act === "openpath"\) ev\.preventDefault\(\);\n\s*\}\);/, "the middle press on a path link starts no autoscroll");
+  assert.match(VIEW, /body\.addEventListener\("mousedown", \(ev\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*const c = figureControlOf\(ev\.target as Element \| null, body\);\n\s*if \(c && c\.classList\.contains\(FIGOPEN_WEB_CLASS\)\) \{ ev\.preventDefault\(\); return; \}\n\s*const x = ev\.button === 1 \? linkOf\(ev\.target as Element \| null\) : null;\n\s*if \(x && x\.dataset\.act === "openpath"\) ev\.preventDefault\(\);\n\s*\}\);/, "a press of any button on a web picture's control is cancelled, so no press focuses it, ahead of the middle press on a path link, which starts no autoscroll (the file review's round 14, ui-1 with extra9-1; a sentence pin on the listener's text, and the executed reads are file-figure-open-browser.test.ts's focus pins (a), (b) and (c) and its other-button pin)");
   assert.match(VIEW, /body\.addEventListener\("auxclick", \(ev\) => \{\n\s*if \(ev\.button !== 1\) return;\n\s*const x = linkOf\(ev\.target as Element \| null\);\n\s*if \(x && \(x\.dataset\.act === "openpath" \|\| x\.classList\.contains\(FRAG_LINK_CLASS\)\)\) openLink\(x, ev\);\n\s*\}\);/,
     "the middle-click on a path link is its own tab; on a section link it is this document's scroll (openLink's frag branch cancels the browser's tab at /files#id); a URL anchor's is the browser's");
   assert.match(VIEW, /import \{ openFileTab, canPreview \} from "\.\/preview";/, "on a line of its own beside upstream's two preview imports (file-view.test.ts pins those)");
@@ -898,7 +944,14 @@ test("source: a close or a replace-open asks about an unsaved comment the way it
   assert.match(VIEW, /!editing \|\| !dirty \|\| askDiscard\("Discard unsaved changes to " \+ path\.slice\(cut \+ 1\) \+ "\?",\n\s*"The editor stays open: " \+ path\.slice\(cut \+ 1\) \+ " has unsaved changes\. Save or undo them, then try again\."\);/, "the editor's ask, whose words the panel's follow");
   assert.equal((VIEW.match(/window\.confirm\(/g) || []).length, 3, "window.confirm in the viewer: the two editing consents and the one discard ask");
   assert.match(FC, /ctx\.guardClose\(\(\) => this\.draftAsk\(\)\);/);
-  assert.match(FC, /draftAsk\(\): CloseAsk \| null \{\n\s*const c = this\.composer;\n\s*if \(!c \|\| c\.kind === "replace" \|\| !this\.input\.value\.trim\(\)\) return null;\n\s*const p = this\.ctx\.path, name = p\.slice\(p\.lastIndexOf\("\/"\) \+ 1\);\n\s*return \{ question: "Discard the unsaved comment on " \+ name \+ "\?", kept: "This file stays open: the comment typed on " \+ name \+ " is not saved\. Save it, or clear the box, then try again\." \};/);
+  assert.match(FC, /draftAsk\(\): CloseAsk \| null \{\n\s*const c = this\.composer;\n\s*const typed = this\.boxHoldsTyped\(\);\n\s*const held = this\.heldRefusals, n = held\.length, saving = this\.savingFor;\n\s*if \(!typed && !saving && !n\) return null;/,
+    "the box's typed words, whatever composer is open (boxHoldsTyped), a comment whose save is out, and each refused comment waiting in its note under the box make the ask (a pin on where the code lives. Executed by file-comments-save-held-composer.test.ts, file-comments-behavior.test.ts and file-comments-send-note.test.ts: the typed words by file-comments-behavior.test.ts \"the panel's draft ask (guardClose) names the unsaved comment…\", file-comments-send-note.test.ts \"the viewer's close guard asks about the note…\" and five save-held tests, among them \"the close names every comment a yes would drop…\", red when the ask ignores the typed words; read from the box whatever composer is open by \"the viewer's close asks about words a Re-place hides…\" and \"with no save out, the viewer's close asks about words a Re-place hides…\", red when they are read only under an open composer that is not a Re-place; the save out by \"while a comment saves, the viewer's close asks…\", red when the early return ignores it; the refused comments by \"a refused comment waiting in its note is asked about…\", \"the close names every comment a yes would drop…\" and \"while a save is out, each ask's kept text says…\", red when the ask ignores the notes)");
+  assert.match(FC, /const also = saving \? " " \+ cap\(savingWords\) \+ " is still saving; if it is not saved, its words are lost too\." : "";/,
+    "the question says a comment or a reply on the file is still saving (a pin on where the code lives. Executed by \"while a save is out, each ask's kept text says…\", \"while a comment saves, the viewer's close asks…\" and \"the viewer's close asks about words a Re-place hides…\", red with the clause dropped; the first two red too when a reply's save is named as a comment's)");
+  assert.match(FC, /kept: "This file stays open: " \+ facts \+ \(saving \? ", and " \+ savingWords \+ " is still saving\. When that save has finished, " \+ lower\(steps\) : "\. " \+ steps\) \+ ", then try again\." \};/,
+    "…and the kept text, which the VS Code webview shows alone, says so and to act once that save has finished (a pin on where the code lives. Executed by the three tests just named, red with the clause dropped from the kept text)");
+  assert.match(FC, /private boxHoldsTyped\(\): boolean \{\n\s*return !!this\.input\.value\.trim\(\) && !\(this\.savingFor !== null && this\.composer === this\.savingFor\);/,
+    "the one predicate reads the box and the save mark, never whether a composer is open (a pin on where the code lives. Executed by file-comments-save-held-composer.test.ts: answering false reds \"a comment refused after the person typed in a reply started under its save…\", both \"a refusal after a Re-place's drag…\" tests and \"a Re-place's drag with a refused comment waiting in its note and words an earlier composer left in the box…\", where the refused words are written over the typed ones; answering true reds \"Cancel during a comment's save, then a refusal…\", \"a refused comment, the box handed on to a pending Re-place…\" and \"a refused comment that comes back at a Re-place's drag…\", where nothing comes back)");
   assert.doesNotMatch(FC, /window\.confirm\(/, "the panel asks nothing itself: window.confirm shows nothing in the VS Code webview");
 });
 
