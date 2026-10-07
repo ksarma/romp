@@ -684,6 +684,20 @@ class TheDoors(unittest.TestCase):
         self.assertTrue((km.jd.STATE / "evil.json").exists(), "the file outside the panes directory is untouched")
         (km.jd.STATE / "evil.json").unlink()
 
+    def test_an_over_long_remove_id_is_a_clean_refusal_not_a_crash(self):
+        # a remove id whose file name would exceed NAME_MAX makes the on-disk probe's stat raise (pathlib does not
+        # swallow ENAMETOOLONG); remove_pane's gate catches it and treats the id as not on disk, so the remove is a
+        # clean 200 refusal, as at the base, not a 500. The probe fires only once STATE/panes exists (else the stat
+        # fails at the parent and pathlib swallows it, green without the fix), so a pane is seeded first. 251 is the
+        # boundary (251 + ".json" = 256 > NAME_MAX 255); 300 is safely over. Red at 720bef49d, where remove_pane raised
+        # out of the gate and POST /pane served a 500.
+        self.w.seed(NOTES)                       # so STATE/panes exists; the probe stats <id>.json under it
+        pid = "a" * 300
+        ok, err = km.remove_pane(pid)
+        self.assertEqual(ok, False, "an over-long id is a refusal, not a raise"); self.assertIn("no pane", err or "")
+        st, r = self._call("/pane", {"remove": pid})
+        self.assertEqual((st, r.get("ok")), (200, False), r); self.assertIn("no pane", r.get("error", ""))
+
     def test_the_state_root_serves_a_panes_page_its_shim_and_the_theme_and_nothing_outside_it(self):
         self.assertEqual(self._req("/pane/notes/")[0], 404, "an undefined pane has no page")
         self.w.seed(NOTES, LAB)
