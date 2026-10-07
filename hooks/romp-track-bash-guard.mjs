@@ -5206,15 +5206,27 @@ export const FUNCTION_SOURCES = new Set(Object.keys(SHELL_WORD_ASSIGNS).filter((
 // command fork main's reading. The census (THE COMMAND TABLES' census) checks the committed list against the special parameters each installed shell has.
 export const NAME_TABLE_PARAMS = new Set(['BASH_ALIASES', 'BASH_CMDS', 'functions', 'aliases', 'galiases', 'saliases', 'commands', 'dis_functions', 'dis_aliases', 'dis_galiases', 'dis_saliases']);
 // Clause (c): the SECOND CENSUS AXIS, may-change-what-a-name-runs, over every builtin and reserved word of bash, dash and zsh (the population of THE
-// ASSIGNING HEAD's census, SHELL_WORD_ASSIGNS). OPTION-INSENSITIVE: a builtin any of whose option forms can define, change, mark for autoload, enable,
-// disable or remove a function, an alias, a builtin or a hash entry is on it, whatever options the command actually carries. It replaces the hand reasoning
-// the function clause rested on for the autoload/typeset -fu/declare -fu/functions -u roads; FUNCTION_SOURCES and the function-clause second walk stay beside
-// it (they close the later-definition and called-body roads this axis does not model, so removing them would reopen those: kept as the safe side).
-const NAME_RUN_HEADS = new Set(['autoload', 'functions', 'typeset', 'declare', 'readonly', 'enable', 'disable', 'zmodload', 'alias', 'unalias', 'hash', 'rehash', 'unhash', 'unfunction']);   // readonly: zsh's `readonly -fu g` marks g for autoload, the same as `typeset -fu` (readonly is typeset -r in zsh), so option-insensitively it may change what a name runs
+// ASSIGNING HEAD's census, SHELL_WORD_ASSIGNS). OPTION-INSENSITIVE: a word any of whose forms can define, change, mark for autoload, enable, disable or
+// remove a function, an alias, a builtin or a hash entry, OR run a text, a command or a function in this shell that can do so, is on it, whatever options
+// the command actually carries. Two families: the DEFINE/CHANGE family, whose own options act on a function, alias, builtin or hash entry (autoload,
+// functions, typeset/declare/readonly with -fu, enable, disable, zmodload, alias, unalias, hash, rehash, unhash, unfunction); and the RUN-TEXT family,
+// which runs a text, a command or a function in this shell that may itself define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched,
+// compgen, jobs, zle, zstyle). The RUN-TEXT family is exactly the set THE ASSIGNING HEAD's function clause carries as FUNCTION_SOURCES, so a LITERAL head of
+// one gives the whole command fork main's reading here (clause (c)), and the autoload/typeset -fu/declare -fu/functions -u roads close too. FUNCTION_SOURCES
+// and the function-clause SECOND WALK STAY BESIDE this axis: the axis classifies LITERAL heads only, while the second walk (anyDefined) also closes a
+// function defined through a head the guard reads as a runtime value -- an opaque or unread head that may be `source`/eval (`c=.; "$c" file` sourcing a
+// definition), or a FUNCTION_SOURCES word the walk resolves from a variable (`x=autoload; $x g`) -- which no static head axis can catch. Removing them
+// reopens those roads (a function defined through such a head, fork main allows it, the second walk closes it: measured, fork PR 975's round 2, R1), so
+// they are the safe side. The behavioural leg of THE NAME-RUN AXIS's census runs every not-a-changer word live and reds one that in fact changes what a
+// name runs. Decision 47 states the premise.
+const NAME_RUN_DEFINE = new Set(['autoload', 'functions', 'typeset', 'declare', 'readonly', 'enable', 'disable', 'zmodload', 'alias', 'unalias', 'hash', 'rehash', 'unhash', 'unfunction']);   // readonly: zsh's `readonly -fu g` marks g for autoload, the same as `typeset -fu` (readonly is typeset -r in zsh), so option-insensitively it may change what a name runs
+const NAME_RUN_TEXT = new Set(['eval', 'source', '.', 'trap', 'emulate', 'fc', 'r', 'sched', 'compgen', 'jobs', 'zle', 'zstyle']);   // runs a text, a command or a function in this shell (the set FUNCTION_SOURCES carries), which may define or redefine what a later name runs
+const NAME_RUN_HEADS = new Set([...NAME_RUN_DEFINE, ...NAME_RUN_TEXT]);
 const RUN_CHANGE_WHY = 'an option form of it can define, change, mark for autoload, enable, disable or remove a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
-const RUN_KEEP_WHY = 'changes no function, alias, builtin or hash entry, so what a later name runs is unchanged by it';
-// derived, over the same population as SHELL_WORD_ASSIGNS, each word classified with a reason (THE NAME-RUN AXIS's census reds on a word it does not classify)
-export const NAME_RUN_AXIS = Object.fromEntries(Object.keys(SHELL_WORD_ASSIGNS).map((n) => [n, [NAME_RUN_HEADS.has(n), NAME_RUN_HEADS.has(n) ? RUN_CHANGE_WHY : RUN_KEEP_WHY]]));
+const RUN_TEXT_WHY = 'runs a text, a command or a function in this shell, which may define or redefine a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
+const RUN_KEEP_WHY = 'changes no function, alias, builtin or hash entry and runs no text or function in this shell, so what a later name runs is unchanged by it';
+// derived, over the same population as SHELL_WORD_ASSIGNS, each word classified with a reason by its family (THE NAME-RUN AXIS's census reds on a word it does not classify)
+export const NAME_RUN_AXIS = Object.fromEntries(Object.keys(SHELL_WORD_ASSIGNS).map((n) => [n, [NAME_RUN_HEADS.has(n), NAME_RUN_DEFINE.has(n) ? RUN_CHANGE_WHY : NAME_RUN_TEXT.has(n) ? RUN_TEXT_WHY : RUN_KEEP_WHY]]));
 export const NAME_RUN_CHANGERS = new Set(Object.keys(NAME_RUN_AXIS).filter((n) => NAME_RUN_AXIS[n][0]));
 // Clause (a): the safe word forms and the safe syntax, recognized positively. A word is safe when every character is literal (unquoted, quoted or the
 // guard's `~` expansion: marks u, q, h) or part of a safe expansion (mark x): a plain or braced parameter `$NAME`/`${NAME}`, a special or positional

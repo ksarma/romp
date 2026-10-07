@@ -5220,16 +5220,26 @@ document stands on its own, each with the reasoning it was given.
     rule, a fresh shell on its own script. Clause (b) THE COMMAND TABLES: no word whose resolved, quote-removed text
     names a command table the guard does not model (bash's BASH_ALIASES and BASH_CMDS; zsh's functions, aliases,
     galiases, saliases, commands and their dis_ twins, NAME_TABLE_PARAMS), nor an assignment whose name the shell fills
-    in; a write to one redefines a head (fresh-1). Clause (c) THE NAME-RUN AXIS: no head a second census axis classifies
-    as may-change-what-a-name-runs, OPTION-INSENSITIVE (a builtin any of whose option forms can define, change, mark for
-    autoload, enable, disable or remove a function, alias, builtin or hash entry: autoload, functions, typeset, declare,
-    enable, disable, alias, unalias, hash, rehash, unhash, unfunction, zmodload; NAME_RUN_AXIS, NAME_RUN_CHANGERS). It
-    closes the autoload, typeset -fu, declare -fu and functions -u roads the function clause's FUNCTION_SOURCES does not
-    carry. THE CENSUS PREMISE: the heads rule S reads are the installed shells' builtins and reserved words and the
-    command's own definitions; a function or an alias from the user's environment is outside the guard's reading at the
-    base and at the head alike (a child session's environment is not the command). THE NAME-RUN AXIS's census asks the
-    same population as THE ASSIGNING HEAD's and reds on a word it does not classify; THE COMMAND TABLES' census checks
-    each committed table is a writable special parameter of an installed shell and reds on a planted name. The rows:
+    in; a write to one redefines a head (fresh-1). The set is DERIVED from the installed shells' special parameters and
+    checked BOTH ways by THE COMMAND TABLES' census (fork PR 975's round 2, R1 as ruled): bash's associative arrays that
+    map names to commands (BASH_ALIASES, BASH_CMDS), and zsh's command-table parameters from zsh/parameter kept to the
+    writable associations (functions, aliases, galiases, saliases, commands and their dis_ twins; reswords and builtins are
+    read-only). Clause (c) THE NAME-RUN AXIS: no head a second census axis classifies as may-change-what-a-name-runs,
+    OPTION-INSENSITIVE, in two families. The DEFINE/CHANGE family, whose own option forms act on a function, alias, builtin
+    or hash entry (autoload, functions, typeset, declare, readonly, enable, disable, alias, unalias, hash, rehash, unhash,
+    unfunction, zmodload; NAME_RUN_DEFINE). And the RUN-TEXT family, which runs a text, a command or a function in this
+    shell that may itself define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle,
+    zstyle; NAME_RUN_TEXT) -- exactly the set THE ASSIGNING HEAD's function clause carries as FUNCTION_SOURCES, so a LITERAL
+    head of one now gives the whole command fork main's reading here (NAME_RUN_AXIS, NAME_RUN_CHANGERS). It closes the
+    autoload, typeset -fu, declare -fu and functions -u roads and the literal eval/source/`.`/trap roads too. THE CENSUS
+    PREMISE: the heads rule S reads are the installed shells' builtins and reserved words and the command's own definitions;
+    a function or an alias from the user's environment is outside the guard's reading at the base and at the head alike (a
+    child session's environment is not the command). THE NAME-RUN AXIS's census asks the same population as THE ASSIGNING
+    HEAD's and reds on a word it does not classify, and its BEHAVIOURAL LEG runs every not-a-changer word live under the
+    autoload/alias/hash option shapes and reds one that in fact changes what a later name runs (alias and autoload are its
+    controls); THE COMMAND TABLES' census checks both ways that each committed table is a writable special parameter of an
+    installed shell and that every writable command-table parameter the shells expose is committed, reddening on a planted
+    extra and a planted missing name. The rows:
     clause (a) AS8-ruleS-bracevar-pwd and its `:`, echo, append, input and prefix twins, AS8-ruleS-bracevar-path (a
     `{PATH}>` before a made name) and the control AS8-ruleS-ctl-noredir; clause (b) AS8-ruleS-table-bash-ba and
     AS8-ruleS-table-bash-split; clause (c) AS8-ruleS-nameRun-typeset-fu and AS8-ruleS-nameRun-declare-fu, each refused
@@ -5237,8 +5247,16 @@ document stands on its own, each with the reasoning it was given.
     AS8-ctl-func-call-unrelated, a function definition, now takes fork main's reading (the bare name after a bound path
     refuses) where ROOT alone allowed it, writing nothing; option-insensitive, a head like `typeset x=1` beside a
     mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it. FUNCTION_SOURCES
-    and the function-clause second walk stay beside rule S: they close the later-definition and called-body roads this
-    axis does not model, so removing them would reopen those. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
+    and the function-clause second walk STAY BESIDE rule S, and the full deletion the orchestrator's reading proposed was
+    DISPROVEN by a real-shell probe (fork PR 975's round 2, R1): the axis classifies LITERAL heads only, while the second
+    walk (anyDefined) also closes a function defined through a head the guard reads as a runtime value -- an opaque or unread
+    head that may be `source` or eval (a command sourcing a definition through a variable whose value a reader filled in), or
+    a FUNCTION_SOURCES word the walk resolves from a variable -- which no static head axis can catch. Removing the second
+    walk reopens that road: fork main allows it, the pre-round-2 head allows it, this axis alone allows it, yet all three
+    shells write (the row that pins it is the unread-head function-definition loop, refused only through anyDefined). So the
+    axis replaces the FUNCTION_SOURCES classification for a LITERAL head (clause (c) refuses it directly) while the hand set
+    and the second walk stay for a head read as a runtime value; retiring them in full needs a ruling or a mechanism the
+    static axis cannot supply. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
     spelled the old way, arithmetic run in this shell, which the guard read as a dollar and text, so a name in it was a
     mention the gate let pass under a program (`ls $[PATH=0]` before a copied cp run by its bare name copied in bash and
     zsh, where fork main refused it). It is read as an arithmetic expansion now, bare, double-quoted and in a

@@ -142,6 +142,39 @@ const assignLeg = (sh, words, root) => {
   }
   return out;
 };
+// THE NAME-RUN AXIS's behavioural leg (fork PR 975's round 2, R1 as ruled: a behavioural leg mirroring THE ASSIGNING HEAD's). THE ASSIGNING HEAD's leg
+// runs every assign-none word and reds one that assigns a name an operand gives it; this leg runs every NOT-A-CHANGER word of THE NAME-RUN AXIS and reds
+// one that in fact changes what a later name runs. Each word a shell present runs as a builtin is run under the option shapes that mark a name for
+// autoload, define an alias, or set a hash entry (RUN_SHAPES: `-fu g`, bare `g`, `g=cp`, `-f g`, `-F g`, `-n g`, `-p g /bin/echo`), each in its own
+// subshell with the standard input closed, and the resolution of the probe name `g` is read after (zsh `whence -w g`, bash `type -t g` plus any alias,
+// dash `command -v g` plus any alias); a word under which `g`'s resolution became non-empty and differs from the baseline (a fresh shell's reading of `g`,
+// which is undefined) changed what a name runs and reds. The may-change words are not run here (running one to see it change would have to define a
+// function or an alias, which is what it is classified for); `alias` and `autoload` are the controls the leg must see change `g`. The leg is live only: a
+// shell absent on the runner is not asked. A sample of shapes, not a proof: a word that changes a name only under some other option is outside what it sees.
+const RUN_SHAPES = [['-fu', 'g'], ['g'], ['g=cp'], ['-f', 'g'], ['-F', 'g'], ['-n', 'g'], ['-p', 'g', '/bin/echo']];
+const runProbeG = (sh) => (sh === 'zsh' ? 'whence -w g 2>/dev/null' : sh === 'bash' ? '{ type -t g; alias g 2>/dev/null; } 2>/dev/null' : '{ command -v g; alias g; } 2>/dev/null');
+const runLeg = (sh, words, root) => {
+  const argvOf = (text) => (sh === 'bash' ? ['--norc', '--noprofile', '-c', text] : sh === 'zsh' ? ['-f', '-c', text] : ['-c', text]);
+  const pre = sh === 'zsh' ? ZSH_LOAD_MODULES + '; ' : '';
+  const kindAsk = sh === 'bash' ? 'type -t -- "$w"' : sh === 'zsh' ? 'whence -w -- "$w"' : 'type "$w"';
+  const kinds = spawnSync(sh, argvOf(`${pre}while IFS= read -r w; do printf '%s\\t%s\\n' "$w" "$(${kindAsk} 2>/dev/null)"; done`), { encoding: 'utf8', env: { PATH: process.env.PATH }, input: words.join('\n') + '\n', cwd: root });
+  const builtins = String(kinds.stdout || '').split('\n').map((l) => l.split('\t')).filter(([w, k]) => w && /builtin/.test(k || '')).map(([w]) => w);
+  const probe = runProbeG(sh);
+  const base = String(spawnSync(sh, argvOf(`${pre}${probe}`), { encoding: 'utf8', env: { PATH: process.env.PATH }, cwd: root, input: '' }).stdout || '').trim();
+  const out = [];
+  for (const w of builtins) {
+    const call = (shape) => (w === '[' ? `[ ${shape.join(' ')} ]` : `${w} ${shape.join(' ')}`);
+    const body = RUN_SHAPES.map((shape, i) => `( { ${call(shape)}; } >/dev/null 2>&1 </dev/null; printf 'S${i}\\t%s\\n' "$(${probe})" >&9 ) </dev/null; `).join('');
+    const cwd = fs.mkdtempSync(path.join(root, 'r-'));
+    const r = spawnSync(sh, argvOf(`${pre}exec 9>&1; ${body}`), { encoding: 'utf8', cwd, env: { PATH: process.env.PATH, HOME: cwd }, timeout: 60000, killSignal: 'SIGKILL', input: '' });
+    assert.ok(!r.error, `the name-run leg ran ${sh}'s ${w} to its end: ${r.error && r.error.code}`);
+    const lines = String(r.stdout || '').split('\n').filter((l) => /^S\d+\t/.test(l));
+    const shapeOf = (l) => RUN_SHAPES[Number(l.match(/^S(\d+)/)[1])].join(' ');
+    const changed = [...new Set(lines.filter((l) => { const v = l.split('\t').slice(1).join('\t').trim(); return v && v !== base; }).map(shapeOf))];
+    out.push([w, changed, new Set(lines.map(shapeOf)).size]);
+  }
+  return out;
+};
 test("fork PR 975's round 1, item 8 as ruled (ROOT), THE ASSIGNING HEAD's census: every builtin and reserved word of bash, zsh (its modules loaded) and dash, asked live where the shell is here and from SHELL_WORDS_DERIVED where it is not, is classified in SHELL_WORD_ASSIGNS as a word that may assign a variable it is given or one that assigns none, with a reason; the taint set the mention rule reads is derived from that table; a word planted unclassified reds it; and every word it calls assign-none that a shell here runs as a builtin, run with operands that assign if it evaluates one or runs a command, assigns nothing", () => {
   const live = shellsFor(['bash', 'zsh', 'dash'], "THE ASSIGNING HEAD's census");
   const pops = {};
@@ -219,22 +252,54 @@ test("fork PR 975's round 2, R1 (RULE S), the second axes: THE NAME-RUN AXIS cla
   assert.deepEqual(rc.unreasoned, [], 'each NAME-RUN entry is a boolean with a reason');
   assert.deepEqual([...guard.NAME_RUN_CHANGERS].sort(), Object.keys(R).filter((n) => R[n][0] === true).sort(), 'NAME_RUN_CHANGERS is the axis\'s may-change side, derived');
   assert.ok(['autoload', 'functions', 'typeset', 'declare', 'readonly', 'enable', 'disable', 'alias', 'unalias', 'hash', 'unhash'].every((n) => guard.NAME_RUN_CHANGERS.has(n)), 'autoload, typeset, declare, readonly (zsh `readonly -fu`) and the table builtins stand on the may-change side (option-insensitive)');
-  assert.deepEqual(['echo', 'true', 'cd', 'read', 'export', 'local', 'pwd', 'printf', 'eval'].filter((n) => Object.hasOwn(R, n) && R[n][0]), [], 'a program-like builtin that assigns or runs but changes no function, alias, builtin or hash entry is not on the may-change side');
+  // the RUN-TEXT family (a text, a command or a function this shell runs that may define or redefine a name) stands on the may-change side, and it is exactly
+  // the set THE ASSIGNING HEAD's function clause carries as FUNCTION_SOURCES, so a LITERAL head of one gives the whole command fork main's reading here (clause c)
+  assert.ok(['eval', 'source', '.', 'trap', 'emulate', 'fc', 'r', 'sched', 'compgen', 'jobs', 'zle', 'zstyle'].every((n) => guard.NAME_RUN_CHANGERS.has(n)), 'the words that run a text, a command or a function in this shell stand on the may-change side (they may define or redefine a name)');
+  assert.deepEqual([...guard.FUNCTION_SOURCES].filter((n) => !guard.NAME_RUN_CHANGERS.has(n)), [], 'the axis subsumes FUNCTION_SOURCES: every word the function clause carries is a may-change head (a literal one gives fork main\'s reading through clause (c); the function clause stays beside the axis only for a head read as a runtime value, which the axis cannot catch)');
+  assert.deepEqual(['echo', 'true', 'cd', 'read', 'export', 'local', 'pwd', 'printf', 'integer', 'float', 'private'].filter((n) => Object.hasOwn(R, n) && R[n][0]), [], 'a program-like builtin that assigns, reads, prints or declares a variable but changes no function, alias, builtin or hash entry and runs no text in this shell is not on the may-change side (export/local/integer/float/private: `-fu` marks no autoload at global scope, verified by the behavioural leg)');
   assert.deepEqual(assigningCensus({ ...pops, bash: [...pops.bash, 'zz_planted'] }, R).unclassified, ['bash zz_planted'], 'the NAME-RUN census reds on a planted unclassified word');
   assert.deepEqual(assigningCensus(pops, { ...R, read: [true, ''] }).unreasoned, ['read'], 'the NAME-RUN census reds on an entry with no reason');
-  // clause (b): THE COMMAND TABLES, each verified as a special parameter of an installed shell (a word that writes one redefines a head)
+  // THE NAME-RUN AXIS's behavioural leg: each not-a-changer word a shell here runs as a builtin changes what no later name runs under the shapes; alias and autoload are the controls it must see change `g`
+  const noneRun = Object.keys(R).filter((n) => R[n][0] === false);
+  const runRoot = outsideDir();
+  try {
+    const ran = [];
+    const changing = [];
+    for (const sh of live) {
+      const ctrl = runLeg(sh, ['alias'], runRoot);
+      assert.ok(ctrl.length && ctrl[0][1].includes('g=cp'), `the name-run leg sees ${sh}'s alias change g (the control): ${ctrl.map(([x, c]) => `${x} ${c.join('/')}`).join(' | ') || 'alias not a builtin here'}`);
+      if (sh === 'zsh') { const au = runLeg('zsh', ['autoload'], runRoot); assert.ok(au.length && au[0][1].length, `the name-run leg sees zsh autoload change g (the control): ${au.map(([x, c]) => `${x} ${c.join('/')}`).join(' | ')}`); }
+      const got = runLeg(sh, noneRun, runRoot);
+      assert.ok(got.length > 10, `the name-run leg ran ${sh}'s not-a-changer builtins (${got.length})`);
+      for (const [x, ch] of got) { ran.push(`${sh} ${x}`); if (ch.length) changing.push(`${sh} ${x}: ${ch.join(' | ')}`); }
+    }
+    assert.deepEqual(changing, [], 'no word the axis calls a not-a-changer changes what a later name runs under the shapes, in any shell here (each one listed belongs on the may-change side)');
+    console.log(`# THE NAME-RUN AXIS's behavioural leg: ${ran.length} (shell, word) pairs run in ${live.join(', ') || 'no shell'} under ${RUN_SHAPES.length} shapes, none changing what a name runs`);
+  } finally { spawnSync('chmod', ['-R', 'u+rwx', runRoot]); fs.rmSync(runRoot, { recursive: true, force: true }); }
+  // clause (b): THE COMMAND TABLES, verified BOTH ways against the installed shells' derived command tables (fork PR 975's round 2, R1 as ruled)
   const T = guard.NAME_TABLE_PARAMS;
   assert.ok(T.size > 0, 'THE COMMAND TABLES set is non-empty');
   const ask = (sh, argv) => String(spawnSync(sh, argv, { encoding: 'utf8', env: { PATH: process.env.PATH } }).stdout || '');
+  // (i) every committed table is a writable command-table special parameter of an installed shell
   const special = new Set();
   if (live.includes('bash')) for (const n of T) if (ask('bash', ['--norc', '--noprofile', '-c', `printf '%s' "\${${n}@a}"`]).includes('A')) special.add(n);
   if (live.includes('zsh')) for (const n of T) if (/association|array/.test(ask('zsh', ['-f', '-c', `print -rn -- "\${(t)${n}}"`]))) special.add(n);
+  // (ii) the derivation: bash's associative arrays that map names to commands (compgen -A variable filtered to the @a=A arrays, BASH_ALIASES and BASH_CMDS);
+  // zsh's command-table parameters from zsh/parameter (functions, aliases, galiases, saliases, commands, reswords, builtins and their dis_ twins,
+  // functions_source) kept to the WRITABLE associations (reswords and builtins are read-only, the dis_ read-only twins too). Every derived table is committed.
+  const derived = new Set();
+  if (live.includes('bash')) for (const v of ask('bash', ['--norc', '--noprofile', '-c', 'compgen -A variable']).split('\n').map((s) => s.trim()).filter(Boolean)) if (ask('bash', ['--norc', '--noprofile', '-c', `printf '%s' "\${${v}@a}"`]).includes('A')) derived.add(v);
+  if (live.includes('zsh')) for (const n of ['functions', 'aliases', 'galiases', 'saliases', 'commands', 'reswords', 'builtins', 'dis_functions', 'dis_aliases', 'dis_galiases', 'dis_saliases', 'dis_reswords', 'dis_builtins', 'functions_source', 'dis_functions_source']) { const t = ask('zsh', ['-f', '-c', `zmodload zsh/parameter 2>/dev/null; print -rn -- "\${(t)${n}}"`]); if (/association/.test(t) && !/readonly/.test(t)) derived.add(n); }
   if (live.includes('bash') || live.includes('zsh')) {
     assert.deepEqual([...T].filter((n) => !special.has(n)), [], 'every committed command table is a writable special parameter of an installed shell');
+    assert.ok(derived.size > 0, 'the derivation found the installed shells\' writable command tables');
+    assert.deepEqual([...derived].filter((n) => !T.has(n)).sort(), [], 'every writable command-table parameter the installed shells expose is committed in THE COMMAND TABLES (the set is derived both ways)');
+    const planted = new Set([...T]); const drop = [...derived][0]; planted.delete(drop);
+    assert.ok([...derived].some((n) => !planted.has(n)), `the completeness check reds on a committed table name removed (${drop})`);
     if (live.includes('bash')) assert.ok(!ask('bash', ['--norc', '--noprofile', '-c', 'printf "%s" "${ZZ_NOT_A_TABLE@a}"']).includes('A'), 'a planted name is no command-table special parameter in bash');
     if (live.includes('zsh')) assert.ok(!/association|array/.test(ask('zsh', ['-f', '-c', 'print -rn -- "${(t)ZZ_NOT_A_TABLE}"'])), 'a planted name is no command-table special parameter in zsh');
   }
-  console.log(`# RULE S: THE NAME-RUN AXIS ${Object.keys(R).length} words (${guard.NAME_RUN_CHANGERS.size} may change a name, ${Object.keys(R).length - guard.NAME_RUN_CHANGERS.size} do not); THE COMMAND TABLES ${T.size}, verified special in ${special.size ? live.filter((s) => s !== 'dash').join(', ') || 'no shell' : 'no shell'}`);
+  console.log(`# RULE S: THE NAME-RUN AXIS ${Object.keys(R).length} words (${guard.NAME_RUN_CHANGERS.size} may change a name, ${Object.keys(R).length - guard.NAME_RUN_CHANGERS.size} do not); THE COMMAND TABLES ${T.size}, verified both ways in ${live.filter((s) => s !== 'dash').join(', ') || 'no shell'} (derived ${[...derived].sort().join(', ') || 'none'})`);
 });
 test("fork PR 975's round 2, R1 (RULE S), clause (a) SAFE SYNTAX at every nesting level: ruleSafeOf recognizes the safe word forms and the safe syntax positively and fails on anything else, at the top level and nested in a subshell, a brace group, a command substitution, a process substitution, a pipeline, a `&&` list and an unquoted here-document body; a quoted here-document body stays literal", () => {
   // the safe word forms (a): literal, quoted, glob, the plain/braced/special/positional parameters and the default/alternative/length/suffix/prefix ${} forms, command and process substitution; and the safe syntax: a subshell, a brace group, a pipeline, a list
