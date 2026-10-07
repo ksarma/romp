@@ -5091,9 +5091,10 @@ const NAME_OPERAND_COMMANDS = new Set(['export', 'declare', 'typeset', 'local', 
 // reads, is derived from it. A name outside the table is no builtin of the three shells, so a program, which assigns nothing here; the gate still
 // taints under a head it does not read, a wrapped head, an alias or a function the command defines, and wherever the command may turn a builtin on (THE
 // SHELL'S GATE). A head may also be a function when it runs though the walk has not seen it defined there (a definition later in the text that a loop's
-// next pass or a function body called after it runs first, a text the guard does not read, zsh's `autoload`), so a command that let a mention pass
-// under a head and may define a function of its name (a definition of that name anywhere in it, or any function: a poison other than a call of a
-// function it defines, or a word of FUNCTION_SOURCES) is walked again with every mention a write, fork main's rule (extractWriteTargets)
+// next pass or a function body called after it runs first, a text the guard does not read, zsh's `autoload`); every command that can define a function
+// that way (a literal definition, a changer head such as `autoload`/`functions -c`/`typeset -fu`, or any head the guard cannot read, an opaque source or
+// eval) fails RULE S clause (c), so mentionMayAssign gives it fork main's reading for every mention (the function-clause second walk this once needed is
+// gone: fork PR 975's round 2, C3)
 const ASSIGNS_DECLARES = 'declares or assigns each NAME or NAME=VALUE operand it is given, or changes its attributes';
 const ASSIGNS_READS = 'reads input into the names it is given';
 const ASSIGNS_RUNS_TEXT = 'runs a text in this shell, which may assign any name';
@@ -5187,9 +5188,6 @@ export const SHELL_WORD_ASSIGNS = {
   zsocket: [false, NONE_FIXED], ztcp: [false, NONE_FIXED], zftp: [false, NONE_FIXED], zgdbmpath: [false, NONE_FIXED],
 };
 export const MENTION_TAINT_HEADS = new Set(Object.keys(SHELL_WORD_ASSIGNS).filter((n) => SHELL_WORD_ASSIGNS[n][0] === true));   // derived: the words that may assign a name they are given
-// derived: the words that define a function or run a text or a function in this shell (their reason says what runs may assign any name), so a later head
-// may be a function the walk did not see defined (THE ASSIGNING HEAD's function clause, extractWriteTargets)
-export const FUNCTION_SOURCES = new Set(Object.keys(SHELL_WORD_ASSIGNS).filter((n) => SHELL_WORD_ASSIGNS[n][1].includes('may assign any name')));
 // RULE S (fork PR 975's round 2, R1, 2026-10-06; enumerate the safe side): ROOT lets a mention of a name pass under a head that assigns none it is given
 // (THE ASSIGNING HEAD, above). That relaxation is sound only where NOTHING in the command can set a name through a channel the guard does not model, so it
 // applies to a command only when all three clauses below hold, judged over the WHOLE command (one failing segment gives the whole command fork main's
@@ -5211,16 +5209,14 @@ export const NAME_TABLE_PARAMS = new Set(['BASH_ALIASES', 'BASH_CMDS', 'function
 // the command actually carries. Two families: the DEFINE/CHANGE family, whose own options act on a function, alias, builtin or hash entry (autoload,
 // functions, typeset/declare/readonly with -fu, enable, disable, zmodload, alias, unalias, hash, rehash, unhash, unfunction); and the RUN-TEXT family,
 // which runs a text, a command or a function in this shell that may itself define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched,
-// compgen, jobs, zle, zstyle). The RUN-TEXT family is exactly the set THE ASSIGNING HEAD's function clause carries as FUNCTION_SOURCES, so a LITERAL head of
-// one gives the whole command fork main's reading here (clause (c)), and the autoload/typeset -fu/declare -fu/functions -u roads close too. FUNCTION_SOURCES
-// and the function-clause SECOND WALK STAY BESIDE this axis: the axis classifies LITERAL heads only, while the second walk (anyDefined) also closes a
-// function defined through a head the guard reads as a runtime value -- an opaque or unread head that may be `source`/eval (`c=.; "$c" file` sourcing a
-// definition), or a FUNCTION_SOURCES word the walk resolves from a variable (`x=autoload; $x g`) -- which no static head axis can catch. Removing them
-// reopens those roads (a function defined through such a head, fork main allows it, the second walk closes it: measured, fork PR 975's round 2, R1), so
-// they are the safe side. The behavioural leg of THE NAME-RUN AXIS's census runs every not-a-changer word live and reds one that in fact changes what a
-// name runs. Decision 47 states the premise.
+// compgen, jobs, zle, zstyle), so a LITERAL head of one gives the whole command fork main's reading here (clause (c)), and the autoload/typeset -fu/declare
+// -fu/functions -u roads close too. CLAUSE (c) IS THE WHOLE CLOSURE for a function definition now (fork PR 975's round 2, C3): ruleHeadUnsafe reads the
+// RESOLVED head commandOf peels and fails on a changer OR on a head the guard cannot read, so a function defined through a runtime-value head (an opaque or
+// unread head that may be `source`/eval, `c=.; "$c" file`, or a changer resolved from a variable, `x=autoload; $x g`) fails clause (c) too; the
+// function-clause second walk this once needed is gone, verdict-neutral over every row and every saved road (three-hook probe). The behavioural leg of THE
+// NAME-RUN AXIS's census runs every not-a-changer word live and reds one that in fact changes what a name runs. Decision 47 states the premise.
 const NAME_RUN_DEFINE = new Set(['autoload', 'functions', 'typeset', 'declare', 'readonly', 'enable', 'disable', 'zmodload', 'alias', 'unalias', 'hash', 'rehash', 'unhash', 'unfunction']);   // readonly: zsh's `readonly -fu g` marks g for autoload, the same as `typeset -fu` (readonly is typeset -r in zsh), so option-insensitively it may change what a name runs
-const NAME_RUN_TEXT = new Set(['eval', 'source', '.', 'trap', 'emulate', 'fc', 'r', 'sched', 'compgen', 'jobs', 'zle', 'zstyle']);   // runs a text, a command or a function in this shell (the set FUNCTION_SOURCES carries), which may define or redefine what a later name runs
+const NAME_RUN_TEXT = new Set(['eval', 'source', '.', 'trap', 'emulate', 'fc', 'r', 'sched', 'compgen', 'jobs', 'zle', 'zstyle']);   // runs a text, a command or a function in this shell, which may define or redefine what a later name runs
 const NAME_RUN_HEADS = new Set([...NAME_RUN_DEFINE, ...NAME_RUN_TEXT]);
 const RUN_CHANGE_WHY = 'an option form of it can define, change, mark for autoload, enable, disable or remove a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
 const RUN_TEXT_WHY = 'runs a text, a command or a function in this shell, which may define or redefine a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
@@ -5723,19 +5719,14 @@ export function extractWriteTargets(command, cwd, shell = null, headPoison = nul
   // `headPoison` (THE TWO WALKS, judge): `off`, walk with THE UNREAD HEAD's poison set aside, every name read as fork main read it; `seen`, set where the walk
   // met a head whose poison it took or set aside, so judge walks with the poison taken only then (THE ORDER: the walk with it set aside comes first)
   const ruleSafe = ruleSafeOf(command, shell);   // RULE S (R1): the whole command is safe for ROOT's mention relaxation, computed once; a fresh shell recomputes it on its own script (recurse)
-  const walk = (headGate) => {
-    const builtinsOff = { seen: mentionsBuiltinGate(command) };   // THE SHELL'S GATE, set before the walk where the text mentions a gate
-    return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0, builtinsOff, ruleSafe, headPoison: headPoison || { off: false, seen: false }, headGate });
-  };
-  // THE ASSIGNING HEAD's function clause (mentionMayAssign): whether a head may be a function when it runs is a property of the WHOLE command, as THE
-  // SHELL'S GATE is, since a definition later in the text may run first (a loop's next pass, a function body called after it). The walk that let a mention
-  // pass under a head (`exempted`, the heads' names) in a command that defines a function of that name anywhere (`defined`), or that may define any
-  // function (`anyDefined`: a poison an eval, a source, xargs or a command named by a variable takes, or a word that defines functions or runs a text in
-  // this shell, FUNCTION_SOURCES), is walked again with every mention a write, fork main's rule (`off`)
-  const headGate = { off: false, exempted: new Set(), defined: new Set(), anyDefined: false };
-  const r = walk(headGate);
-  const again = headGate.anyDefined ? headGate.exempted.size > 0 : [...headGate.exempted].some((n) => headGate.defined.has(n));
-  return again ? walk({ off: true, exempted: new Set(), defined: new Set(), anyDefined: false }) : r;
+  // A command that could define a function (a literal `name()` or `function` definition, a changer head such as `typeset -fu`/`autoload`/`functions -c`,
+  // or any head the guard cannot read, an opaque source or eval) fails RULE S clause (c), so mentionMayAssign gives it fork main's reading for every
+  // mention and no mention is relaxed under a head that may be a function (fork PR 975's round 2, C3 as closed, 2026-10-07). The function-clause SECOND
+  // WALK and the hand set of function-defining heads it once read, which re-walked such a command with the mention relaxation set aside, are therefore dead
+  // and removed; a three-hook probe over the saved roads (the later-definition, called-body, zsh autoload and functions -c, and opaque-head loops) confirmed
+  // every one stays refused with the second walk gone, and the rows test stays verdict-neutral. ONE WALK.
+  const builtinsOff = { seen: mentionsBuiltinGate(command) };   // THE SHELL'S GATE, set before the walk where the text mentions a gate
+  return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0, builtinsOff, ruleSafe, headPoison: headPoison || { off: false, seen: false } });
 }
 // Round 5's fifth addendum (2026-09-20): the further commands dash reads after a `&&` or `||` inside a `[[ ... ]]` (closeTest)
 // take their place in the walk as segments of their own after the test's, joined by the operator dash read before each, so the
@@ -5875,7 +5866,6 @@ function extractIn(command, ctx) {
   const builtinsOff = ctx.builtinsOff || { seen: false };   // THE SHELL'S GATE (gateBuiltins, below): `seen`, the command may run an `enable` (bash) or a `disable` or `zmodload` (zsh), which may turn a builtin on or off, so a builtin may stand under any name (THE ASSIGNING HEAD then taints every mention: mentionMayAssign)
   const ruleSafe = ctx.ruleSafe === undefined ? true : ctx.ruleSafe;   // RULE S (R1): the whole command is safe for ROOT's mention relaxation (ruleSafeOf, extractWriteTargets); inherited by every text this shell runs, recomputed for a fresh shell (recurse)
   const headPoison = ctx.headPoison || { off: false, seen: false };   // THE TWO WALKS (judge): the switch, carried into every text the command hands over
-  const headGate = ctx.headGate || { off: false, exempted: new Set(), defined: new Set(), anyDefined: false };   // THE ASSIGNING HEAD's function clause (extractWriteTargets), shared by every text
   // THE SHELL'S GATE (the seventh verify round's tg-m7-1, 2026-10-05): whether the command may turn a builtin on or off is a property of the WHOLE
   // command, not of the walk's order, since a name read before the gate may run after it (a loop's next pass, a trap action, a function called later).
   // It is set before the walk where the text mentions `enable`, `disable` or `zmodload` as a word anywhere (extractWriteTargets, mentionsBuiltinGate),
@@ -6311,10 +6301,7 @@ function extractIn(command, ctx) {
     if (why && !unreadableWhy.has(name)) unreadableWhy.set(name, why);
   };
   // `fromHead`: THE UNREAD HEAD's poison. A poison inside a subshell is noted on it, so its close knows whether more than the head's poison was taken there (restore)
-  // `defines`: the construct may define any function too (THE ASSIGNING HEAD's function clause); not a call of a function the command defines, whose
-  // body the walk read where it was defined, its definitions recorded there
-  const poison = (why, fromHead = false, defines = true) => {
-    if (defines) headGate.anyDefined = true;
+  const poison = (why, fromHead = false) => {
     const sub = subshellFrame();
     if (!varsPoisoned) { varsPoisoned = true; poisonWhy = why; if (sub && fromHead) sub.headPoison = true; }
     if (sub && !fromHead) sub.otherPoison = true;
@@ -6683,8 +6670,7 @@ function extractIn(command, ctx) {
     if (k !== headIdx && !(/^[-+]/.test(pre.text) && pre.text.length > 1)) {
       for (const t of identifierTokens(pre.text, pre.marks)) {
         if (m && t === m[1]) continue;
-        if (mentions) taint(t, wroteThrough(t, `a word of \`${headName || pre.text}\` that names it`, pre.raw));
-        else headGate.exempted.add(cmd.name);   // a mention let pass under this head: walked again if the command may define a function of its name (extractWriteTargets)
+        if (mentions) taint(t, wroteThrough(t, `a word of \`${headName || pre.text}\` that names it`, pre.raw));   // where the mention is not a write (the head assigns none it is given and RULE S holds), it is let pass, as ROOT allows
       }
     }
     taintAssigningExpansions(pre);
@@ -6695,15 +6681,15 @@ function extractIn(command, ctx) {
   // `rea[d]`, which a file named `read` in the cwd turns into the builtin: either may name any command), a head an alias of the command binds or one it
   // does not read (an alias operand whose name the guard could not read), a global or suffix alias, and a command that may turn a builtin on (THE SHELL'S
   // GATE: a loaded builtin may assign under any name) each keep the mention a write; a head
-  // that may be a function when it runs is the function clause (extractWriteTargets)
+  // that may be a function when it runs fails RULE S clause (c) (a definition, a changer head, or a head the guard cannot read), so this returns true for it
   const mentionMayAssign = (seg, cmd) => {
-    if (headGate.off) return true;   // the second walk: every mention a write (extractWriteTargets)
-    if (!ruleSafe) return true;   // RULE S (R1): the command is not positively safe for the relaxation (unsafe syntax, a command-table word, or a head that may change what a name runs), so fork main's reading: every mention a write
+    if (!ruleSafe) return true;   // RULE S (R1): the command is not positively safe for the relaxation (unsafe syntax, a command-table word, or a head that may change what a name runs, which includes any head that may define a function), so fork main's reading: every mention a write
     if (!cmd || !cmd.name || cmd.wrapped || cmd.unknown || cmd.opaque || 'script' in cmd) return true;
     const hw = seg.words[seg.words.length - cmd.args.length - 1];
     if (!hw || !hw.literal || !hw.text || hw.text.includes('\0')) return true;
-    // a call of a function the command defines poisons before this (recordSegment's (2)) and one defined later is the function clause; an alias whose
-    // name the guard does not read refuses every later command name itself (aliasUnread at the head), so no mention after it needs the taint
+    // a call of a function the command defines poisons before this (recordSegment's (2)); a command that could define a function fails RULE S clause (c)
+    // (checked above); an alias whose name the guard does not read refuses every later command name itself (aliasUnread at the head), so no mention after
+    // it needs the taint
     if (builtinsOff.seen || aliasState.unread || aliases.has(cmd.name) || [...aliases.values()].some((a) => a.global || a.suffix)) return true;
     return MENTION_TAINT_HEADS.has(cmd.name);
   };
@@ -6718,7 +6704,6 @@ function extractIn(command, ctx) {
     // writes nothing (round 6's sixth commit: THE CALLED BODY's replay read the definition's name as a call of the function it defines, which
     // poisoned every name for the body, so `n=x; f() { cp a $n; }; f` refused `$n` as unreadable while the definition's own read had resolved it)
     if (seg.op === '(' && segments[idx + 1] && segments[idx + 1].paren === '(' && segments[idx + 2] && segments[idx + 2].paren === ')' && !(compoundHeadOf(seg.words) != null && Object.hasOwn(BODY_CLOSER, compoundHeadOf(seg.words)))) return;
-    if (cmd && FUNCTION_SOURCES.has(cmd.name)) headGate.anyDefined = true;   // THE ASSIGNING HEAD's function clause: a word that defines a function or runs a text in this shell
     const seq = plainSequence(seg, idx);
     const headAt = peelIndex(seg.words);   // the compound head after the peel (round 5): `! for x in ...` names its variable too
     const head = compoundHeadOf(seg.words);
@@ -6731,7 +6716,7 @@ function extractIn(command, ctx) {
     // (the head as spelled, before a wrapper peel: `env() { x=..; }; env true` runs the function, C6b)
     const rawHead = rawHeadOf(seg.words);
     if (cmd && (VAR_POISONERS.has(cmd.name) || definedFunctions.has(cmd.name) || (rawHead != null && definedFunctions.has(rawHead)))) {
-      poison(VAR_POISONERS.has(cmd.name) ? `an earlier \`${cmd.name}\` may assign any name` : `an earlier call of \`${definedFunctions.has(cmd.name) ? cmd.name : rawHead}\`, a function the command defines, may assign any name`, false, VAR_POISONERS.has(cmd.name));
+      poison(VAR_POISONERS.has(cmd.name) ? `an earlier \`${cmd.name}\` may assign any name` : `an earlier call of \`${definedFunctions.has(cmd.name) ? cmd.name : rawHead}\`, a function the command defines, may assign any name`);
       return;
     }
     // (2b) M1's own detector, per segment: a name operand the shell fills in on a reader or declaration (`read $h`, `printf -v
@@ -7584,7 +7569,7 @@ function extractIn(command, ctx) {
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, heldDir, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, linkTexts, cdFunctions, mutated, keywordMode,
       ifsNamed, candidates, unreadValues, unreadValueWhy, vanishedValues, namerefs, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE and THE NAMEREF with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
-      aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, builtinsOff, headPoison, headGate, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
+      aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, builtinsOff, headPoison, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
       ruleSafe: fresh ? ruleSafeOf(text, sh) : ruleSafe,   // RULE S (R1): a fresh shell is its own command, judged on its own script; a text this shell runs inherits the whole command's verdict
       spliceLine: spliced ? defLineOf(walkIdx >= 0 ? segments[walkIdx] : null) : undefined,   // a definition inside the splice binds at the spliced segment's line (defLineOf)
       functionBodies, functionLines, fnChain: opts.fnChain || fnChain, runFunction: opts.runFunction || null,   // THE CALLED BODY
@@ -8141,7 +8126,7 @@ function extractIn(command, ctx) {
       // assignment the guard adopted and whose cd it followed (40 rows in zsh, F2)
       if (!listOf && next && next.paren === ')' && rest.length) {
         const names = rest.filter((w) => !(plainWord(w) && w.text === 'function')).map((w) => w.text);
-        for (const nm of names) { definedFunctions.add(nm); headGate.defined.add(nm); }   // B2: a call of any of them may assign any name; THE ASSIGNING HEAD's function clause
+        for (const nm of names) definedFunctions.add(nm);   // B2: a call of any of them may assign any name (recordSegment's (2) poisons at the call)
         const fnNames = names.length ? names : [rest[rest.length - 1].text];
         frames.push({ kind: 'function', name: fnNames[fnNames.length - 1], names: fnNames, defFrom: prev.start, running: ctx.runFunction != null && fnNames.includes(ctx.runFunction), bodyMoved: false, dir, unknownDir, unknownWhy, heldDir, depth: 0 });   // name() ... : a definition, not a run; `names`, `defFrom`: the definition's text is kept for a fed call (THE CALLED BODY); `running`: this text is the replay of a fed call, so the body reads the call's standard input
         idx++;
@@ -8391,7 +8376,7 @@ function extractIn(command, ctx) {
         // its close (`dashRuns`, popFunction)
         let q = p + 1;
         const fnNames = [];
-        while (q < seg.words.length && !(plainWord(seg.words[q]) && seg.words[q].text === '{')) { if (fnNameWord(seg.words[q])) { definedFunctions.add(seg.words[q].text); headGate.defined.add(seg.words[q].text); fnNames.push(seg.words[q].text); } q++; }
+        while (q < seg.words.length && !(plainWord(seg.words[q]) && seg.words[q].text === '{')) { if (fnNameWord(seg.words[q])) { definedFunctions.add(seg.words[q].text); fnNames.push(seg.words[q].text); } q++; }
         const body = q < seg.words.length;
         frames.push({ kind: 'function', name: seg.words[p + 1].text, names: fnNames, defFrom: seg.start, running: ctx.runFunction != null && fnNames.includes(ctx.runFunction), bodyMoved: false, dir, unknownDir, unknownWhy, heldDir, depth: body ? 1 : 0, dashRuns: !body });   // `names`, `defFrom`, `running`: THE CALLED BODY, as on the paren path
         seg.words = seg.words.slice(q + (body ? 1 : 0));

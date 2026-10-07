@@ -5156,15 +5156,17 @@ document stands on its own, each with the reasoning it was given.
     and any head once the command may turn a builtin on keep tainting (AS8-root-print-v, AS8-root-getln,
     AS8-root-unread-head, AS8-root-glob-head). A head may also be a function when it runs though the walk has not seen
     it defined there: a definition later in the text that a loop's next pass or a body called after it runs first, zsh's
-    `autoload` and `functions -c`, a `.` through a command named by a variable. So THE ASSIGNING HEAD's function clause:
-    a command that let a mention pass under a head and defines a function of that name anywhere in it, or may define any
-    function (a poison an eval, a source, xargs or a command named by a variable takes, or a word of FUNCTION_SOURCES,
-    derived from the table as the entries whose reason says what they run may assign any name: eval, source, `.`, trap,
-    emulate, fc, r, sched, compgen, zle, zstyle and jobs, and autoload and functions, which define one), is walked
-    again with every mention a write, fork main's rule. Each such command the gate alone allowed while the shells wrote, where fork
-    main refused it (AS8-root-func-later-loop, AS8-root-func-later-keyword, AS8-root-func-later-body,
-    AS8-root-func-later-echo, AS8-root-func-zsh-autoload, AS8-root-func-zsh-functions-c), and the unread head's fork
-    main allowed too, its PATH refusal skipping an unknown directory (AS8-root-func-unread-head-loop); a call of a
+    `autoload` and `functions -c`, a `.` through a command named by a variable. THE FUNCTION-CLAUSE CLOSURE (C3, R1's
+    ruled deletion retried): every such command fails RULE S clause (c), so mentionMayAssign gives it fork main's reading
+    for every mention. A literal `name()` or `function` definition fails clause (a); a changer head (autoload, functions
+    -c, typeset -fu) or a head the guard cannot read (an opaque source or eval head, a define head resolved from a
+    variable) fails clause (c). The function-clause second walk that once re-walked such a command, and the hand set of
+    function-defining heads it read, are therefore removed; a three-hook probe over every road showed each stays refused
+    with the walk gone (no road allowed where fork main refuses), and the rows test is verdict-neutral. Each such command
+    the gate alone allowed while the shells wrote, where fork main refused it (AS8-root-func-later-loop,
+    AS8-root-func-later-keyword, AS8-root-func-later-body, AS8-root-func-later-echo, AS8-root-func-zsh-autoload,
+    AS8-root-func-zsh-functions-c), and the unread head's fork main allowed too, its PATH refusal skipping an unknown
+    directory (AS8-root-func-unread-head-loop); a call of a
     function the command defines after its definition runs a body the walk read, so it counts for nothing
     (AS8-ctl-func-call-unrelated). An alias operand whose `=` an expansion may hold (`alias $n`) binds a name the guard
     does not read, refused at every later command name as an alias whose name it cannot read already was
@@ -5195,8 +5197,8 @@ document stands on its own, each with the reasoning it was given.
     in a try block), or fork main allowed the write too (zsh's repeat count, AS8-residual-assign-zsh-repeat, and a
     logout in a try block closed with no `;`, the AS8-residual-zsh-always-* shape). compset moved to the completion
     group by reasoning alone, and nothing pins it. Each is on the may-assign side now, jobs a
-    word of FUNCTION_SOURCES too, since what it runs may define a function (of the 187 words, 86 may assign a variable
-    they are given and 101 assign none), and the census has a behavioural leg: every word the table calls assign-none
+    may-change head on THE NAME-RUN AXIS too, since what it runs may define a function (of the 187 words, 86 may assign a
+    variable they are given and 101 assign none), and the census has a behavioural leg: every word the table calls assign-none
     that a shell present runs as a builtin is run in that shell under nine operand shapes that assign a name if the word
     evaluates an operand as arithmetic or as a subscript, or runs a command its operands give, and a word under which
     the name changed reds. It runs live only, so CI's Linux runner asks bash and dash (on the macOS cell zsh runs it,
@@ -5234,8 +5236,8 @@ document stands on its own, each with the reasoning it was given.
     families: the DEFINE/CHANGE family, whose own option forms act on a function, alias, builtin or hash entry (autoload,
     functions, typeset, declare, readonly, enable, disable, alias, unalias, hash, rehash, unhash, unfunction, zmodload;
     NAME_RUN_DEFINE); and the RUN-TEXT family, which runs a text, a command or a function in this shell that may itself
-    define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle, zstyle; NAME_RUN_TEXT), a
-    set THE ASSIGNING HEAD's function clause carries within FUNCTION_SOURCES; the changer is caught plain, quoted
+    define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle, zstyle; NAME_RUN_TEXT),
+    which includes every head that could define a function the walk did not see; the changer is caught plain, quoted
     (`'typeset'`), escaped (`\typeset`) and behind an in-shell wrapper (`builtin typeset -fu g`, `\builtin typeset -fu g`,
     `'builtin' typeset -fu g`; NAME_RUN_AXIS, NAME_RUN_CHANGERS). And a head run by a word that runs a FOLLOWING command in
     this shell but is no peelable wrapper, zsh's `repeat <count> cmd`, whose count is peeled and whose inner command is
@@ -5271,16 +5273,20 @@ document stands on its own, each with the reasoning it was given.
     an unquoted wrapper (the bslash and quoted rows). The cost, on the restricted side:
     AS8-ctl-func-call-unrelated, a function definition, now takes fork main's reading (the bare name after a bound path
     refuses) where ROOT alone allowed it, writing nothing; option-insensitive, a head like `typeset x=1` beside a
-    mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it. FUNCTION_SOURCES
-    and the function-clause second walk STILL STAND in the code as of C1. The R1 disproof of the orchestrator's proposed
+    mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it. THE
+    FUNCTION-CLAUSE SECOND WALK IS GONE (C3, R1's ruled deletion retried). The R1 disproof of the orchestrator's proposed
     deletion rested on clause (c) reading LITERAL heads only, so a function defined through a head the guard read as a
-    runtime value (the opaque source or eval head `c=.; "$c" file`, or a FUNCTION_SOURCES word resolved from a variable
-    `x=autoload; $x g`) was caught at the R1 build by the second walk (anyDefined) alone. C1 changes that premise: clause
-    (c), BY CONSTRUCTION, now FAILS on any head the guard cannot read, so those same roads give rule S's refusal before the
-    second walk is consulted (the unread-head function-definition loop, AS8-root-func-unread-head-loop, and the opaque
-    source head `c=.; "$c" file` are both refused at the C1 build through rule S, verified by a three-hook probe). Whether
-    FUNCTION_SOURCES and the second walk can therefore be retired in full, with no road reopened, is retried and settled in
-    C3 (R1's ruled deletion); they are kept here so C1 changes no verdict but the ones clause (c) closes. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
+    runtime value (the opaque source or eval head `c=.; "$c" file`, or a define head resolved from a variable
+    `x=autoload; $x g`) was caught at the R1 build by the second walk alone. C1 changed that premise: clause (c), BY
+    CONSTRUCTION, fails on any head the guard cannot read, so those same roads give rule S's refusal, and every command that
+    could define a function the walk did not see (a literal definition by clause (a), a changer head or an unreadable source
+    head by clause (c)) fails rule S. So C3 removes the function-clause second walk and the hand set of function-defining
+    heads it read: a three-hook probe over every saved road (the later-definition, called-body, zsh autoload and functions
+    -c, and opaque-head loops: AS8-root-func-later-loop, -later-keyword, -later-body, -later-echo, -zsh-autoload,
+    -zsh-functions-c, -unread-head-loop) showed each stays refused with the walk gone, none allowed where fork main refuses,
+    and the rows test stays verdict-neutral (the deletion was run as a mutant over all the rows before it was made). No
+    committed closure row turns allowed, so the STOP rule did not fire. The rows keep their refusals, now through rule S.
+    THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
     spelled the old way, arithmetic run in this shell, which the guard read as a dollar and text, so a name in it was a
     mention the gate let pass under a program (`ls $[PATH=0]` before a copied cp run by its bare name copied in bash and
     zsh, where fork main refused it). It is read as an arithmetic expansion now, bare, double-quoted and in a
@@ -5588,7 +5594,7 @@ document stands on its own, each with the reasoning it was given.
     by-name refusal names the copy without the `$[` body it sits in; and the main file's R5-T5 takes the directory-not-known
     refusal its check already names. The M2 census holds over the new texts. An allowed command still pays every
     walk it needs: two after a command named by a variable, two or three with a `$[`, up to four with both, each a parse
-    of the whole command (twice where THE ASSIGNING HEAD's function clause applies), so its hook time is up to about twice
+    of the whole command, so its hook time is up to about twice
     fork main's after a command named by a variable and up to about four times with a `$[` as well. Measured as a
     process on a development box (medians of three, nice 19, one core, load about 30 on 60 cores), on adjacent-paren
     nesting, where the parse grows fastest (below): allowed after a command named by a variable, 7.95 s against fork
