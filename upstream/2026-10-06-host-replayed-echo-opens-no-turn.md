@@ -3,7 +3,7 @@ title: A row the CLI writes for input it is not running opens no turn: the sessi
 status: candidate
 where: kernel/session_host.py (LOCAL_COMMAND_TAGS, _cli_echo, SessionHost._track), kernel/sdk_backend.py (LOCAL_COMMAND_TAGS, _is_local_command_echo, SdkSession._turn_frame), tests/fixtures/fake_claude.py (a set_model that changes the model is echoed before its answer), tests/test_session_host.py (ECHO_ROWS, TURN_ROWS, ReplayedEchoes with test_a_subagent_row_after_a_result_still_reopens_the_count, HostProcess test_a_model_switchs_echo_after_a_result_leaves_no_open_turn_for_the_next_attach, test_an_unattached_cli_whose_last_row_is_a_model_switchs_echo_is_ended_after_the_grace and test_a_relaunched_clis_model_switch_echo_before_any_turn_leaves_no_open_turn), tests/test_queued_sends_not_fused.py (test_a_local_command_echo_counts_no_turn_and_releases_no_hold), tests/test_session_env.py (the functions count of EnvRowsPopulation's committed table, for _is_local_command_echo), upstream/2026-10-06-host-replayed-echo-opens-no-turn.md (this entry)
 added: 2026-10-06
-pr:
+pr: 992
 tier: fix
 offered:
 closed:
