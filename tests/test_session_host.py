@@ -768,15 +768,14 @@ TURN_ROWS = {
 # (sdk_backend._is_local_command_echo, on the parsed message) branches on, generated, so both ends are held to the same
 # verdict on each member. The axes are read off the two readers' branches:
 #   - the content: a string, a list, or anything else (both read a string and a list's text blocks, and nothing else);
-#   - a list item: an object or not (the host skips anything else, the kernel reads an object's text attribute and finds
-#     none);
+#   - a list item: an object or not (the host skips anything else, and the kernel finds no text attribute on it);
 #   - a block's type: text, another type (a tool result, a tool use, an unknown type) or none (both read text blocks only);
 #   - a text block's text: a string, a non-string (a number, true, a list, an object, null) or missing (both keep a string
 #     only);
 #   - where the tag stands in the joined text: at the start (either tag, and after leading whitespace), past it, or
 #     nowhere (both anchor on the start);
-#   - a block's place: alone, or ahead of a text block that opens with the tag (a block kept ahead of it moves the tag off
-#     the start and a skipped one does not, so this is where the two readers' skips show);
+#   - a block's place: alone, or ahead of a text block that opens with the tag (a kept block whose text is not blank
+#     moves the tag off the start, and a blank or skipped one does not, so this is where the two readers' skips show);
 #   - the origin: none, an object with a string kind (the stamp the SDK keeps, an empty kind included), or a shape the
 #     SDK drops (an object whose kind is a number, an object with no kind, a string).
 # No row carries the isReplay key: the SDK drops it, so the key half of the host's test is outside the parity.
