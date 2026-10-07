@@ -68,7 +68,8 @@
   "remote_head = remote_ref_sha(root, \"refs/heads/\" + br)",
   "return \"refs/heads/\" + branch_of(name)",
   "return (text[len(\"refs/heads/\"):] if text.startswith(\"refs/heads/\") else text) == branch_of(name)",
-  "return remote_ref_sha(root, \"refs/heads/\" + MAIN)"
+  "return remote_ref_sha(root, \"refs/heads/\" + MAIN)",
+  "# checkout --force --detach refs/heads/batch/<name> and git symbolic-ref HEAD refs/heads/batch/<name> in the batch"
  ],
  "scripts/pr-orphans.sh": [
   "elif git rev-parse --verify --quiet \"refs/heads/$MAIN\" >/dev/null; then"
@@ -193,7 +194,19 @@
   "self.assertEqual(fx.dev_git(\"rev-parse\", \"--abbrev-ref\", \"HEAD\"), \"main\", \"the tool's own checkout is untouched\")",
   "self.assertEqual(fx.dev_git(\"worktree\", \"list\", \"--porcelain\").count(\"worktree \"), 1, \"the temporary checkout is gone\")",
   "self.assertNotIn(os.path.realpath(rec[\"cwd\"]), fx.dev_git(\"worktree\", \"list\", \"--porcelain\"),",
-  "symbolic-ref's message changed (its -m kept, so no case keyed on the call's words reds instead) and with"
+  "symbolic-ref's message changed (its -m kept, so no case keyed on the call's words reds instead) and with",
+  "\"discard any change git names above, then run %s and `git -C %s symbolic-ref HEAD refs/heads/batch/b1`.\\n\"",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\", \"HEAD is detached\")",
+  "base (the stop at the forced restore of the cleanup after that run, or at its git symbolic-ref); a step's",
+  "or its git symbolic-ref); and the command, a script that removes itself in its run at the tip, is gone at the",
+  "(\"the command exits 1 at the base\", fails_at_the_base, \"symbolic-ref -m\", False, signal.SIGINT),",
+  "(\"a step's command exits 139\", exits_139, \"symbolic-ref -m\", True, signal.SIGTERM),",
+  "never named the signal. Or, with the restore refused and no stop yet, at the git symbolic-ref -q HEAD that reads,",
+  "restore, read = \"read-tree -m -u HEAD refs/heads/batch/b1\", \"symbolic-ref -q HEAD\"",
+  "\"`git -C %s symbolic-ref HEAD refs/heads/batch/b1`.\\n\" % wt",
+  "symbolic-ref HEAD refs/heads/batch/b1, and applying the saved change again, puts the worktree back on batch/b1",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"HEAD\", cwd=wt), \"refs/heads/batch/b1\", \"on the branch\")",
+  "fx._git(\"symbolic-ref\", \"HEAD\", \"refs/heads/batch/b1\", cwd=wt)"
  ],
  "tests/test_chat_build_sig_inputs.py": [
   "--abbrev-ref HEAD` for the branch, `remote get-url origin` for the repository) and the tail's `ls-files`; the warm",
