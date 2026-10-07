@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import unicodedata
 import unittest
 import urllib.error
 import urllib.request
@@ -441,6 +442,10 @@ class TheDoors(unittest.TestCase):
         self.assertEqual(len(panes_lines), 1, "one [panes] line names the skipped file: %r" % panes_lines)
         self.assertIn(repr(str(self.w.pdir / "dnl\n.json")), panes_lines[0],
                       "the path is repr'd, so the newline in the name is \\n inside one quoted token: %r" % panes_lines[0])
+        # the dnl\n stem holds a newline, so it cannot be typed as a bare CLI argument: the skip line names hand deletion
+        # and does NOT offer "romp pane remove" (class B). Red at 720bef49d, where the line carried no remedy at all.
+        self.assertIn("delete the file to clear it", panes_lines[0], panes_lines[0])
+        self.assertNotIn("romp pane remove", panes_lines[0], panes_lines[0])
 
     def test_a_title_or_source_that_is_not_one_line_of_text_is_refused_at_every_install_road(self):
         # a title, an id and a source are each one line of text: _pane_check refuses a control character (Cc, the newline
@@ -448,55 +453,108 @@ class TheDoors(unittest.TestCase):
         # encode to UTF-8), naming the field, the CLASS found, the offending code point and the POSITION (1-based: the
         # first character is position 1). Such a title otherwise rode the shim's LABEL and the landing's title sinks, and
         # an unpaired surrogate there served a 500 for the whole landing (the next test); a newline in a title folded the
-        # bell row. The refused set is DERIVED from the predicate, not sampled: a high and a low surrogate, both
-        # separators, and the control class (the start, DEL and a C1), with the offense at a different INDEX per form so a
-        # constant-index reason is caught; every Cc code point is also driven through _pane_check so a predicate that
-        # hard-codes a few controls still reds. Each form is refused at each install road (_pane_check, define_pane, POST
-        # /pane and the disk re-check), and the allowed side (an accent, an emoji, CJK, a combining mark, a quote, a
-        # backslash) is accepted on each road and joins the pane set when seeded. Red at the base and at the PR's first
-        # head (nothing refused), on the separator form at this head (its cause was misnamed), and under a predicate that
-        # refuses every non-ASCII character (the allowed side).
+        # bell row; a control character or separator in a URL source rode the iframe's data-src the same way. The refused
+        # set is DERIVED from the predicate (every Cc code point from unicodedata, plus U+2028, U+2029 and a lone high and
+        # a lone low surrogate), NOT sampled, and the WHOLE set is driven for a TITLE and for a SOURCE through every
+        # install road (_pane_check, define_pane, POST /pane and the disk re-check), each asserting the FULL reason
+        # string (the cause, the code point and the 1-based position), never a bare ok:false, since a mutant can
+        # substitute a different refusal reason. The title's offense index varies across the set so a constant-position
+        # reason is caught; the source's offense sits at index 16, after "http://TESTHOST/". The allowed side (an accent,
+        # an emoji, CJK, a combining mark, a quote, a backslash) is accepted on each road and joins the pane set when
+        # seeded. A title made ONLY of a whitespace-class offender (a lone tab, newline, U+2028 or U+0085) is driven too:
+        # it is refused with its cause, code point and position, not the length reason, because the one-line loop runs
+        # before the blank and length check. Red at the base and at the PR's first head (nothing refused), at 62bc200bd
+        # on its FIRST form (the reason named no code point, counted from 0, and called a separator a control character or
+        # unpaired surrogate), and under a predicate that refuses every non-ASCII character (the allowed side).
         def reason(field, s, idx, cause):
             return "%s must be one line of text (%s, U+%04X, at position %d)" % (field, cause, ord(s[idx]), idx + 1)
-        # (name, title, 0-based offense index, cause): the index varies (0, 1, 2, 3) to kill a constant-position reason
+
+        def cause_of(cp):
+            c = chr(cp)
+            if c in ("\u2028", "\u2029"):
+                return "a line or paragraph separator"
+            cat = unicodedata.category(c)
+            if cat == "Cs":
+                return "an unpaired surrogate"
+            if cat == "Cc":
+                return "a control character"
+            return None
+
+        self.w.seed(NOTES)
+
+        def drive_title(label, title, idx, cause):
+            # the full reason (field, cause, code point, 1-based position) on every road, never a bare ok:false
+            want = reason("title", title, idx, cause)
+            for road, (defn, err) in (("_pane_check", km._pane_check({"id": "ab", "title": title, "source": "/feed"})),
+                                      ("define_pane", km.define_pane({"id": "ab", "title": title, "source": "/feed"}))):
+                self.assertIsNone(defn, (label, road)); self.assertIn(want, err or "", (label, road, err))
+            st, r = self._call("/pane", {"id": "ab", "title": title, "source": "/feed"})
+            self.assertEqual((st, r.get("ok")), (200, False), (label, "POST", r)); self.assertIn(want, r.get("error", ""), (label, "POST", r))
+            (self.w.pdir / "bad.json").write_text(json.dumps(_full({"id": "bad", "title": title, "source": "/feed", "on": True})) + "\n")
+            self.w.reset_memos()
+            errs = io.StringIO()
+            with contextlib.redirect_stderr(errs):
+                data = km._panes_data()
+            self.assertNotIn("bad", data, (label, "the disk re-check refuses it"))
+            self.assertIn(want, errs.getvalue(), (label, "the skipped-file line names the title cause and position"))
+            # the skip line names its remedy (class B); "bad" is a clean, non-reserved stem, so it is offered the CLI form.
+            # Red at 720bef49d, where the line carried no remedy.
+            self.assertIn("romp pane remove bad, or delete the file, to clear it", errs.getvalue(),
+                          (label, "the skipped-file line names the remedy"))
+            self.assertIn("notes", data, "a valid pane beside it still renders")
+            self.w.unseed("bad")
+
+        def drive_source(label, ch, cause):
+            base = "http://TESTHOST/"            # 16 one-line-clean characters, so the offense sits at index 16
+            src = base + ch
+            want = reason("source", src, len(base), cause)
+            for road, (defn, err) in (("_pane_check", km._pane_check({"id": "ab", "title": "T", "source": src})),
+                                      ("define_pane", km.define_pane({"id": "ab", "title": "T", "source": src}))):
+                self.assertIsNone(defn, (label, road)); self.assertIn(want, err or "", (label, road, err))
+            st, r = self._call("/pane", {"id": "ab", "title": "T", "source": src})
+            self.assertEqual((st, r.get("ok")), (200, False), (label, "POST", r)); self.assertIn(want, r.get("error", ""), (label, "POST", r))
+            (self.w.pdir / "bad.json").write_text(json.dumps(_full({"id": "bad", "title": "T", "source": src, "on": True})) + "\n")
+            self.w.reset_memos()
+            errs = io.StringIO()
+            with contextlib.redirect_stderr(errs):
+                data = km._panes_data()
+            self.assertNotIn("bad", data, (label, "the disk re-check refuses it"))
+            self.assertIn(want, errs.getvalue(), (label, "the skipped-file line names the source cause and position"))
+            self.w.unseed("bad")
+
+        # the representatives, each with a named 0-based offense INDEX (the index varies 0..3 to kill a constant-position
+        # reason); the last four are titles made ONLY of a whitespace-class offender (position 1), which the one-line loop
+        # now refuses with its cause because it runs before the blank and length check (class D)
         forms = [("a control character at the start", "\x01ab", 0, "a control character"),
                  ("a high surrogate", "x\ud800y", 1, "an unpaired surrogate"),
                  ("a low surrogate", "x\udc00y", 1, "an unpaired surrogate"),
                  ("a line separator", "ab\u2028c", 2, "a line or paragraph separator"),
                  ("a paragraph separator", "abc\u2029", 3, "a line or paragraph separator"),
                  ("DEL", "x\x7fy", 1, "a control character"),
-                 ("a C1 control (NEL)", "x\x85y", 1, "a control character")]
-        self.w.seed(NOTES)
+                 ("a C1 control (NEL)", "x\x85y", 1, "a control character"),
+                 ("a lone tab", "\t", 0, "a control character"),
+                 ("a lone newline", "\n", 0, "a control character"),
+                 ("a lone line separator", "\u2028", 0, "a line or paragraph separator"),
+                 ("a lone C1 (NEL)", "\x85", 0, "a control character")]
         for name, title, idx, cause in forms:
-            want = reason("title", title, idx, cause)
-            for road, (defn, err) in (("_pane_check", km._pane_check({"id": "ab", "title": title, "source": "/feed"})),
-                                      ("define_pane", km.define_pane({"id": "ab", "title": title, "source": "/feed"}))):
-                self.assertIsNone(defn, (name, road)); self.assertIn(want, err or "", (name, road))
-            st, r = self._call("/pane", {"id": "ab", "title": title, "source": "/feed"})
-            self.assertEqual((st, r.get("ok")), (200, False), (name, r)); self.assertIn(want, r.get("error", ""), (name, r))
-            # the disk re-check: a file carrying the bad title is read back and re-checked, so it never joins the pane set
-            (self.w.pdir / "bad.json").write_text(json.dumps(_full({"id": "bad", "title": title, "source": "/feed", "on": True})) + "\n")
-            self.w.reset_memos()
-            errs = io.StringIO()
-            with contextlib.redirect_stderr(errs):
-                data = km._panes_data()
-            self.assertNotIn("bad", data, (name, "the disk re-check refuses it"))
-            self.assertIn(want, errs.getvalue(), (name, "the skipped-file line names the cause and position"))
-            self.assertIn("notes", data, "a valid pane beside it still renders")
-            self.w.unseed("bad")
-        # a URL source carrying each form is refused too (it otherwise rode the iframe's data-src attribute), named with
-        # the source field, the cause, the code point and the position (the offense sits at index 16 after "http://TESTHOST/")
-        base = "http://TESTHOST/"
-        for name, _title, _idx, cause in forms:
-            bad = _title[_idx]
-            src = base + bad
-            defn, err = km._pane_check({"id": "ab", "title": "T", "source": src})
-            self.assertIsNone(defn, name); self.assertIn(reason("source", src, len(base), cause), err or "", name)
-        # every Cc code point is refused at _pane_check (cheaply, no road), so a predicate hard-coding a few controls reds
-        for cp in list(range(0x00, 0x20)) + [0x7f] + list(range(0x80, 0xa0)):
-            defn, err = km._pane_check({"id": "ab", "title": "a" + chr(cp) + "b", "source": "/feed"})
-            self.assertIsNone(defn, "Cc U+%04X refused" % cp)
-            self.assertIn("a control character", err or "", "Cc U+%04X named a control character" % cp)
+            drive_title(name, title, idx, cause)
+            drive_source(name, title[idx], cause)
+
+        # THE WHOLE DERIVED SET, not representatives: every Cc code point (unicodedata.category == "Cc", the ranges
+        # DERIVED not hard-coded), plus the two separators and a lone high and a lone low surrogate. Each is driven for a
+        # TITLE (offense index varied i % 4) and for a SOURCE (index 16) through define_pane, POST /pane and the disk
+        # re-check, so a road that lets a non-representative character through on any field reds.
+        cc = [cp for cp in range(0x110000) if unicodedata.category(chr(cp)) == "Cc"]
+        self.assertGreaterEqual(len(cc), 65, "the Cc class is derived from unicodedata (the 65 C0/C1 controls at least): %d" % len(cc))
+        derived = cc + [0x2028, 0x2029, 0xd800, 0xdc00]
+        for i, cp in enumerate(derived):
+            cause = cause_of(cp)
+            self.assertIsNotNone(cause, "U+%04X has a one-line cause" % cp)
+            idx = i % 4
+            title = "a" * idx + chr(cp) + "a"      # the offender is the FIRST offense (the padding is one-line-clean)
+            drive_title("title U+%04X at %d" % (cp, idx), title, idx, cause)
+            drive_source("source U+%04X" % cp, chr(cp), cause)
+
         # the ALLOWED side: an accent, an emoji, CJK, a combining mark, a quote and a backslash are one line of text,
         # accepted on each road and joined to the pane set when seeded (red under a predicate that refuses every
         # non-ASCII character: the accent, emoji, CJK and combining mark would be refused)
@@ -574,21 +632,37 @@ class TheDoors(unittest.TestCase):
     def test_remove_clears_a_record_the_current_schema_skips_by_its_file(self):
         # a record the base accepted but the stricter schema now SKIPS (an id that is an Object.prototype name, a title
         # with a control character, an id ending in a newline) is not in the pane set, so a remove gating on the pane set
-        # alone could never clear it: the file stayed on disk, named on stderr at each listing, gone from the dashboards
-        # but unremovable by any road. remove_pane now finds it by its FILE (a pid with no path separator whose <pid>.json
-        # is a file directly under the panes directory) and unlinks it even when the snapshot skipped it. A pid holding a
-        # path separator (a traversal like "../evil") never names a file here and stays refused. Red at this head, where
-        # remove gates on _panes_data() alone.
+        # alone could never clear it: the file stayed on disk, named on stderr once per file and reason in a kernel
+        # process, gone from the dashboards but unremovable by any road. remove_pane now finds it by its FILE (a pid with
+        # no path separator whose <pid>.json is a file directly under the panes directory) and unlinks it even when the
+        # snapshot skipped it. A pid holding a path separator (a traversal like "../evil") never names a file here and
+        # stays refused. Red at the base 0cfb961f0 (each record is accepted, so none is skipped and the first assertNotIn
+        # reds) and at 62bc200bd, where remove gated on _panes_data() alone.
         self.w.seed(NOTES)
         self.w.pdir.mkdir(parents=True, exist_ok=True)
         (self.w.pdir / "constructor.json").write_text(json.dumps(_full({"id": "constructor", "source": "/feed", "on": True})) + "\n")
         (self.w.pdir / "tabbed.json").write_text(json.dumps(_full({"id": "tabbed", "title": "a\tb", "source": "/feed", "on": True})) + "\n")
         (self.w.pdir / "dnl\n.json").write_text(json.dumps(_full({"id": "dnl\n", "source": "/feed", "on": True})) + "\n")
+        (self.w.pdir / "feed.json").write_text(json.dumps(_full({"id": "feed", "source": "/feed", "on": True})) + "\n")   # a RESERVED stem: skipped, and remove_pane refuses it
         self.w.reset_memos()
-        with contextlib.redirect_stderr(io.StringIO()):
+        errs = io.StringIO()
+        with contextlib.redirect_stderr(errs):
             data = km._panes_data()
-        for skipped in ("constructor", "tabbed", "dnl\n"):
+        for skipped in ("constructor", "tabbed", "dnl\n", "feed"):
             self.assertNotIn(skipped, data, "%r is skipped by the stricter schema" % skipped)
+        # the skip line names how to clear the file (class B): hand deletion always, and "romp pane remove <stem>" only
+        # when the stem is one remove_pane can reach and a user can type (not a reserved shipped id, no path separator,
+        # one line of text). Red at 720bef49d, where the line carried no remedy.
+        c_line = next(ln for ln in errs.getvalue().splitlines() if "constructor.json" in ln)
+        t_line = next(ln for ln in errs.getvalue().splitlines() if "tabbed.json" in ln)
+        d_line = next(ln for ln in errs.getvalue().splitlines() if "[panes] " in ln and "dnl" in ln)
+        f_line = next(ln for ln in errs.getvalue().splitlines() if "feed.json" in ln)
+        self.assertIn("romp pane remove constructor, or delete the file, to clear it", c_line, c_line)   # a clean, non-reserved stem IS offered the CLI form
+        self.assertIn("romp pane remove tabbed, or delete the file, to clear it", t_line, t_line)        # a tab-TITLED file whose STEM is clean IS offered it
+        self.assertIn("delete the file to clear it", d_line, d_line)                                     # a newline STEM cannot be typed as a bare argument
+        self.assertNotIn("romp pane remove", d_line, d_line)
+        self.assertIn("delete the file to clear it", f_line, f_line)                                     # a reserved stem: remove_pane refuses it, hand deletion only
+        self.assertNotIn("romp pane remove", f_line, f_line)
         # the in-process door clears a skipped record by its file
         ok, err = km.remove_pane("constructor")
         self.assertEqual((ok, err), (True, None), "the door removes a skipped record by its file")
@@ -598,7 +672,7 @@ class TheDoors(unittest.TestCase):
         st, r = self._call("/pane", {"remove": "tabbed"})
         self.assertEqual((st, r.get("ok")), (200, True), r)
         self.assertFalse((self.w.pdir / "tabbed.json").exists(), "tabbed.json is gone")
-        # the trailing-newline id's file is removed too (match(), not fullmatch(), would miss it: it is reached by file)
+        # the trailing-newline id's file is removed too (a gate by fullmatch() would miss it; it is reached by its file)
         ok, err = km.remove_pane("dnl\n")
         self.assertEqual((ok, err), (True, None), "the trailing-newline id's file is removed")
         self.assertFalse((self.w.pdir / "dnl\n.json").exists(), "the trailing-newline file is gone")
@@ -1201,14 +1275,17 @@ class ThePaneTitleAndIdSinkCensus(unittest.TestCase):
             self.assertEqual(out.get("app"), pid, "APP equals the id for %r" % title)
             self.w.unseed(pid)
 
-    def test_the_second_layer_escapes_a_non_ascii_title_so_the_served_shim_encodes_to_utf8(self):
-        # the shim's json.dumps(ensure_ascii=True) is a second layer under the schema. The pin reads the KERNEL's own
-        # output, never a literal the test rebuilds: the LABEL literal extracted from the served shim is ASCII (ensure_ascii
-        # rewrote the accent or emoji to a \uXXXX escape), so the served body encodes to UTF-8, and LABEL still evaluates to
-        # the title. An accent and an emoji are ALLOWED titles (so these could be seeded), but the shim is rendered through
-        # _shim directly to isolate the LABEL slot. Red under an ensure_ascii=False kernel, which bakes the raw non-ASCII
-        # character into the LABEL literal (the extracted literal is then not ASCII). (The whole shim is never pure ASCII:
-        # its template carries non-ASCII prose, so the pin reads the LABEL literal, not the whole body.)
+    def test_the_shim_bakes_label_as_an_ascii_literal_so_a_lone_surrogate_title_still_encodes(self):
+        # the shim's json.dumps(ensure_ascii=True) is a second layer under the schema: it bakes LABEL as an ASCII string
+        # literal. The pin reads the KERNEL's own output, never a literal the test rebuilds: the LABEL literal extracted
+        # from the served shim is ASCII (ensure_ascii rewrote the accent or emoji to a \uXXXX escape), and LABEL still
+        # evaluates to the title. What RED's under an ensure_ascii=False kernel is the isascii assertion: that kernel bakes
+        # the raw non-ASCII character into the LABEL literal, so the extracted literal is no longer ASCII. The UTF-8 encode
+        # itself already holds at the base for an accent or an emoji; only a lone surrogate (refused at every door, so it
+        # never happens in service) would fail to encode without ensure_ascii, and the lone-surrogate case below pins that.
+        # An accent and an emoji are ALLOWED titles (so these could be seeded), but the shim is rendered through _shim
+        # directly to isolate the LABEL slot. (The whole shim is never pure ASCII: its template carries non-ASCII prose, so
+        # the pin reads the LABEL literal, not the whole body.)
         def label_literal(shim):
             i = shim.index("var LABEL=")
             return shim[i:shim.index(";", i) + 1]

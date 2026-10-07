@@ -68628,11 +68628,13 @@ def _pane_check(defn, allow_reserved=False):
     if pid in _PANE_PROTO_NAMES and not allow_reserved:
         return None, "id %r is a name present on every JavaScript object through Object.prototype and is refused (it is not inert where a pane id is read as an object key)" % pid
     title = defn.get("title", pid[:1].upper() + pid[1:])
-    if not isinstance(title, str) or not title.strip() or len(title) > _PANE_TITLE_MAX:
-        return None, "title must be 1 to %d characters" % _PANE_TITLE_MAX
     # A title, the id and a source are each one line of text: refuse a control character, a line or paragraph
     # separator (U+2028/U+2029), or an unpaired surrogate, naming the field, the class found, the offending code point
-    # and the position (1-based: the first character is position 1, so a user can count to it). Such a title otherwise
+    # and the position (1-based: the first character is position 1, so a user can count to it). This runs BEFORE the
+    # blank and length check below, so a title made only of a control character or a separator (characters str.strip()
+    # also removes) is refused with its cause, code point and position rather than the length reason; the isinstance
+    # guard keeps a non-string title safe (the loop skips it and the length check below then catches it). An over-length
+    # title that also holds a control character now gets the one-line reason (both are true). Such a title otherwise
     # rode the shim's LABEL and the landing's title sinks, and an unpaired surrogate there broke _send's strict
     # body.encode('utf-8') so the whole landing served a 500; a newline in a title folded the bell row; a control
     # character or surrogate in a URL source rode the iframe's data-src the same way. The id is already confined to
@@ -68643,6 +68645,8 @@ def _pane_check(defn, allow_reserved=False):
             if _off is not None:
                 _bad, _cause = _off
                 return None, "%s must be one line of text (%s, U+%04X, at position %d)" % (_field, _cause, ord(_val[_bad]), _bad + 1)
+    if not isinstance(title, str) or not title.strip() or len(title) > _PANE_TITLE_MAX:
+        return None, "title must be 1 to %d characters" % _PANE_TITLE_MAX
     src = defn.get("source")
     kind = _pane_source_kind(src)
     if kind is None:
@@ -68730,7 +68734,15 @@ def _panes_snapshot():
         if err:
             if (str(fp), err) not in _PANES_BAD:
                 _PANES_BAD.add((str(fp), err))
-                sys.stderr.write("[panes] %s skipped: %s\n" % (repr(str(fp)), err))
+                # name how to clear the file: hand deletion always works; offer "romp pane remove <stem>" only when the
+                # stem (the file name without .json) is one remove_pane can reach and a user can type as a bare argument
+                # (not a reserved shipped id, no path separator, and one line of text). The dedup key stays (str(fp), err).
+                stem = n[:-5]
+                if stem not in _PANE_RESERVED and "/" not in stem and _one_line_offense(stem) is None:
+                    remedy = "romp pane remove %s, or delete the file, to clear it" % stem
+                else:
+                    remedy = "delete the file to clear it"
+                sys.stderr.write("[panes] %s skipped: %s (%s)\n" % (repr(str(fp)), err, remedy))
             continue
         out[defn["id"]] = defn
     # the revision is a digest of the CHECKED records (the 1919 read, still standing at 1922): a re-define of an identical record,
@@ -68794,7 +68806,7 @@ def remove_pane(pid):
     """Remove a data-defined pane -> (ok, error): a shipped pane's id and an unknown id are refused by name. A record
     the current schema SKIPS (a title or source that is not one line of text, an id that is an Object.prototype name or
     ends in a newline) is not in _panes_data(), so a snapshot-only gate could never clear it while its file stayed on
-    disk and was named on stderr at each listing; such a record is removed by its FILE instead: a pid with no path
+    disk and was named on stderr once per file and reason in a kernel process; such a record is removed by its FILE instead: a pid with no path
     separator whose <pid>.json is a file directly under the panes directory is unlinked even when the snapshot skipped
     it. A pid holding a "/" (a traversal like "../x") never names a file here and stays refused as unknown."""
     pid = str(pid or "")
@@ -68802,7 +68814,12 @@ def remove_pane(pid):
         return False, "pane %r is a shipped pane and cannot be removed" % pid
     with _panes_lock:
         fp = _pane_path(pid)
-        on_disk = "/" not in pid and fp.is_file()
+        try:
+            on_disk = "/" not in pid and fp.is_file()
+        except (OSError, ValueError):
+            # a pid whose file name exceeds NAME_MAX makes os.stat raise (pathlib does not swallow ENAMETOOLONG); treat
+            # a stat failure as not on disk, so an over-long id is a clean refusal (as at the base), never a 500
+            on_disk = False
         if pid not in _panes_data() and not on_disk:
             return False, "no pane %r is defined (romp pane list names them)" % pid
         try:
