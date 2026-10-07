@@ -57,8 +57,9 @@ reader on the directory's stat (`_boards()`), and code winning an id collision t
 (an id the shell's derived element names already take, `tl`, `a` to `d`, `ghost`, `col`, or one beginning `chat-`, is refused at
 the door since 2026-09-21; an id that is an `Object.prototype` own-property name matching the id rule, today `constructor`, is
 refused too, since a pane id is read as a plain-object key and the prototype answers for such a name even with no pane stored;
-and a title, id or source that is not one line of text (a control character, a line or paragraph separator (U+2028/U+2029) or
-an unpaired surrogate) is refused, naming the field, the cause and the offending position. A pane file already written under
+and a title or source that is not one line of text (a control character, a line or paragraph separator (U+2028/U+2029) or
+an unpaired surrogate) is refused, naming the field, the cause and the offending position (an id with such a character is refused by
+the id rule, which already excludes it, with no position given). A pane file already written under
 such an id, title or source is skipped at the next listing with one stderr line naming the file and the rule, the fail-loud
 convention, and its page is gone from the dashboards until it is re-defined; `romp pane remove <id>` still clears such a skipped
 file by its name)
