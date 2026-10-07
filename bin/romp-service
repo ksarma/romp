@@ -276,7 +276,18 @@ _node_runs() {   # $1 a node binary: exit 0 when it can run an empty program fro
     # the wrapper runs the node in its background, traps TERM to kill its tree, waits and exits with its status, so the
     # watchdog's kill of the wrapper takes a hung node down too (round three of issue 1600: it leaked before)
     # both traps wait for what they killed before exiting, so nothing of the probe outlives the install (the launcher's rule)
-    ( trap '_kill_tree "$n"; wait "$n" 2>/dev/null; exit 143' TERM; "$1" -e '' </dev/null >/dev/null 2>&1 & n=$!; wait "$n"; exit $? ) 2>/dev/null &
+    # the watchdog's TERM (at the bound) can land anywhere in the wrapper's script, the launcher's rule: a TERM handled
+    # before the fork, or between the fork and n=$! (the fork itself included), finds n empty, so the trap only records it
+    # in halt and the check after the assignment kills the node's tree, waits for it and exits; a TERM handled after the
+    # assignment, the wait included, finds the pid. Before this, the trap expanded an unset n, which under set -u ended the
+    # wrapper with the node still running, and a copy that hung in that window outlived the install. n starts empty, so a
+    # value from the environment is never taken for the pid; the flag is halt, not the watchdog's stop, so the two checks
+    # differ in text, which the tests match to stop each subshell at its own check.
+    ( n=; halt=
+      trap 'halt=1; [[ -z "$n" ]] || { _kill_tree "$n"; wait "$n" 2>/dev/null; exit 143; }' TERM
+      "$1" -e '' </dev/null >/dev/null 2>&1 & n=$!
+      [[ -z "$halt" ]] || { _kill_tree "$n"; wait "$n" 2>/dev/null; exit 143; }
+      wait "$n"; exit $? ) 2>/dev/null &
     local pp=$! wd rc=0
     # the stand-down (the TERM below, once the probe has finished) ends the watchdog's sleep wherever it lands, the
     # launcher's rule: a TERM handled before the fork, or between the fork and s=$!, finds s empty, so the trap only

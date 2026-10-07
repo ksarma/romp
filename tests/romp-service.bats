@@ -38,7 +38,7 @@ setup() {
 
 teardown() {
     # the hang shapes record their pids: whatever a failing case left alive dies here, never in the suite's wake
-    local p; for p in node sleeper wdsleep; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
+    local p; for p in node nodeself sleeper wdsleep; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
     rm -rf "$TEST_DIR"
 }
 
@@ -256,6 +256,12 @@ EOF
     PATH="$bare" BASH_ENV="$TEST_DIR/stand-down.bash" STAND_DOWN_AT="$1" STAND_DOWN_DIR="$TEST_DIR" ROMP_NODE_PROBE_BOUND=30 \
         ROMP_NODE_SRC="$TEST_DIR/sd-node" ROMP_OS_OVERRIDE=Darwin \
         run "$tmo" 60 setsid -w sh -c 'printf "%s\n" "$$" > "$1"; exec "$2" install' _ "$TEST_DIR/pgid" "$SVC"
+    [ -s "$TEST_DIR/fired" ] || { echo "the prelude never saw the watchdog run '$1': the install spells it differently now, so update the case"; return 1; }
+}
+_install_sleep_recorded() {   # the between and after cases: the prelude wrote the sleep's pid when the watchdog ran s=$!
+    [ -s "$TEST_DIR/wdsleep.pid" ] && return 0
+    echo "the prelude records the sleep's pid when the watchdog runs s=\$! and never saw that command: the install spells the assignment differently now, so update the prelude"
+    return 1
 }
 _install_stand_down_asserts() {   # the good copy is kept, nothing of the probe survives, nothing outside the watchdog was signalled
     echo "install output: $output"
@@ -273,7 +279,7 @@ _install_stand_down_asserts() {   # the good copy is kept, nothing of the probe 
 }
 @test "install (macOS), the watchdog path: a stand-down between the fork of the sleep and s=\$! still ends the sleep" {
     _install_stand_down_at 's=$!'
-    [ -s "$TEST_DIR/wdsleep.pid" ]                            # the sleep was forked before the TERM
+    _install_sleep_recorded                                   # the sleep was forked before the TERM
     _install_stand_down_asserts
 }
 @test "install (macOS), the watchdog path: a stand-down before the sleep is forked leaves no sleep and signals nothing outside the watchdog" {
@@ -282,8 +288,84 @@ _install_stand_down_asserts() {   # the good copy is kept, nothing of the probe 
 }
 @test "install (macOS), the watchdog path: a stand-down after s=\$! (before the wait) ends the sleep" {
     _install_stand_down_at 'wait "$s"'
-    [ -s "$TEST_DIR/wdsleep.pid" ]
+    _install_sleep_recorded
     _install_stand_down_asserts
+}
+
+# The install's twin of the launcher's wrapper cases (tests/romp-node-launch.bats says how they work): the probe wrapper in
+# _node_runs had the same race, a TERM handled between the fork of the node and n=$! running the trap with n unset, which
+# under set -u ended the wrapper with the node still running, so a copy that hung there outlived the install. The bound is
+# 30 seconds, so the prelude's TERM is the only one the wrapper gets. The copy's probe run hangs (fifteen seconds, then
+# it answers) and writes its own pid to nodeself.pid; the prelude writes the node's pid to node.pid.
+_install_wrapper_at() {   # $1 the wrapper's command, as the install spells it, that the TERM lands just before
+    command -v setsid >/dev/null 2>&1 || skip "needs setsid to scope the process-group check (Linux)"
+    local tmo; tmo="$(command -v timeout || true)"
+    [ -n "$tmo" ] || skip "needs coreutils timeout to bound the run"
+    local real; real="$(command -v sleep)"
+    local rn="$XDG_STATE_HOME/romp/romp-node"
+    cat > "$TEST_DIR/wr-node" <<EOF
+#!/bin/sh
+case "\$0" in
+  "$rn") if [ "\$1" = -e ]; then
+           echo \$\$ > "$TEST_DIR/nodeself.pid"
+           i=0; while [ \$i -lt 300 ]; do "$real" 0.05; i=\$((i + 1)); done
+         fi
+         exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+    chmod +x "$TEST_DIR/wr-node"
+    cat > "$TEST_DIR/wrapper.bash" <<'EOF'
+set -T
+trap 'if [ "$BASH_COMMAND" = '\''n=$!'\'' ]; then echo "$!" > "$WRAPPER_DIR/node.pid"; fi
+if [ "$BASH_COMMAND" = "$WRAPPER_AT" ] && [ ! -e "$WRAPPER_DIR/fired" ]; then
+    echo "$BASHPID" > "$WRAPPER_DIR/fired"; kill -TERM "$BASHPID"
+fi' DEBUG
+EOF
+    local bare="$TEST_DIR/bare-wrapper"; rm -rf "$bare"; mkdir -p "$bare"
+    local t p
+    for t in bash sh cmp cp chmod mv mkdir rm sleep ps pgrep setsid id date cut head tr printf sed cat grep dirname readlink; do p="$(command -v "$t" 2>/dev/null || true)"; [ -n "$p" ] && ln -s "$p" "$bare/$t"; done
+    rm -f "$TEST_DIR/fired" "$TEST_DIR/node.pid" "$TEST_DIR/nodeself.pid" "$TEST_DIR/pgid"
+    PATH="$bare" BASH_ENV="$TEST_DIR/wrapper.bash" WRAPPER_AT="$1" WRAPPER_DIR="$TEST_DIR" ROMP_NODE_PROBE_BOUND=30 \
+        ROMP_NODE_SRC="$TEST_DIR/wr-node" ROMP_OS_OVERRIDE=Darwin \
+        run "$tmo" 60 setsid -w sh -c 'printf "%s\n" "$$" > "$1"; exec "$2" install' _ "$TEST_DIR/pgid" "$SVC"
+    [ -s "$TEST_DIR/fired" ] || { echo "the prelude never saw the wrapper run '$1': the install spells it differently now, so update the case"; return 1; }
+}
+_install_node_recorded() {   # the cases at and after the fork: the prelude wrote the node's pid when the wrapper ran n=$!
+    [ -s "$TEST_DIR/node.pid" ] && return 0
+    echo "the prelude records the node's pid when the wrapper runs n=\$! and never saw that command: the install spells the assignment differently now, so update the prelude"
+    return 1
+}
+_install_wrapper_asserts() {   # the copy is removed with the reason said, and nothing of the probe survives
+    echo "install output: $output"
+    local p; for p in node nodeself; do [ ! -s "$TEST_DIR/$p.pid" ] || echo "$p: $(ps -o pid=,stat=,args= -p "$(cat "$TEST_DIR/$p.pid")" || echo gone)"; done
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cannot run from"* ]]                    # the probe's wrapper ended on the TERM, so the copy failed its probe
+    [ ! -e "$XDG_STATE_HOME/romp/romp-node" ]                 # and was removed
+    [ ! -s "$TEST_DIR/node.pid" ] || _dead "$(cat "$TEST_DIR/node.pid")"
+    [ ! -s "$TEST_DIR/nodeself.pid" ] || _dead "$(cat "$TEST_DIR/nodeself.pid")"
+    local pgid; pgid="$(cat "$TEST_DIR/pgid")"
+    run bash -c 'ps -eo pgid=,args= | awk -v g="$1" "\$1==g"' _ "$pgid"
+    [ -z "$output" ]
+}
+@test "install (macOS), the watchdog path: the watchdog's TERM between the fork of the node and n=\$! still kills the copy's node" {
+    _install_wrapper_at 'n=$!'
+    _install_node_recorded                                    # the node was forked before the TERM
+    _install_wrapper_asserts
+}
+@test "install (macOS), the watchdog path: the watchdog's TERM before the node is forked leaves no node behind" {
+    _install_wrapper_at "\"\$1\" -e '' < /dev/null > /dev/null 2>&1"
+    _install_wrapper_asserts
+}
+@test "install (macOS), the watchdog path: the watchdog's TERM after n=\$!, at the check of halt, kills the copy's node" {
+    _install_wrapper_at '[[ -z "$halt" ]]'
+    _install_node_recorded
+    _install_wrapper_asserts
+}
+@test "install (macOS), the watchdog path: the watchdog's TERM after n=\$! (before the wait) kills the copy's node" {
+    _install_wrapper_at 'wait "$n"'
+    _install_node_recorded
+    _install_wrapper_asserts
 }
 
 @test "install (macOS): ROMP_NODE_PROBE_BOUND=0 is clamped to one second, so a good copy is kept instead of failed at once" {

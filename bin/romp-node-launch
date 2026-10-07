@@ -160,7 +160,21 @@ _probe_node() {
     # Both traps WAIT for what they killed before exiting: a kill is asynchronous, and a watchdog that exited right after
     # signalling its sleep let the launcher exec the manager while the sleep was still dying, a leftover a check of the
     # launcher's session could see for an instant (CI, 2026-09-14). Waited on, nothing of the probe outlives the launcher.
-    ( trap '_kill_tree "$_n"; wait "$_n" 2>/dev/null; exit 143' TERM; "$1" -e '' </dev/null >/dev/null 2>&1 & _n=$!; wait "$_n"; exit $? ) 2>/dev/null &
+    # The watchdog's TERM (at the bound) can land anywhere in the wrapper's script, so the wrapper keeps the rule the
+    # watchdog below keeps for its stand-down. The trap knows the node's pid only after _n=$! has run, so a TERM handled
+    # before the fork, or between the fork and the assignment (the fork itself included), finds _n empty. The trap then
+    # only records the TERM in _halt and returns, and the check right after the assignment kills the node's tree, waits
+    # for it and exits. A TERM handled after the assignment, the wait included, finds the pid. A TERM before the trap is
+    # set ends the wrapper (TERM's default action) before it forks the node. Before this, the trap expanded an unset _n,
+    # which under set -u ended the wrapper with the node still running: a copy that hung in that window outlived the
+    # launcher, which ran the manager on the system node. _n starts empty, so a value from the environment is never taken
+    # for the pid. The flag is _halt, not the watchdog's _stop, so the two checks differ in text: the tests stop each
+    # subshell at its own check by matching that text.
+    ( _n=; _halt=
+      trap '_halt=1; [ -z "$_n" ] || { _kill_tree "$_n"; wait "$_n" 2>/dev/null; exit 143; }' TERM
+      "$1" -e '' </dev/null >/dev/null 2>&1 & _n=$!
+      [ -z "$_halt" ] || { _kill_tree "$_n"; wait "$_n" 2>/dev/null; exit 143; }
+      wait "$_n"; exit $? ) 2>/dev/null &
     _pp=$!
     # The stand-down (the TERM below, once the probe has finished) ends the watchdog's sleep wherever it lands. The trap
     # knows the sleep's pid only after _s=$! has run, and the shell runs a pending trap between any two commands, so a TERM

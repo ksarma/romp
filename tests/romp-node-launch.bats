@@ -30,7 +30,7 @@ setup() {
 
 teardown() {
     # the hang shapes record their pids: whatever a failing case left alive dies here, never in the suite's wake
-    local p; for p in node sleeper wdsleep; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
+    local p; for p in node nodeself sleeper wdsleep; do [ -s "$TEST_DIR/$p.pid" ] && kill -KILL "$(cat "$TEST_DIR/$p.pid")" 2>/dev/null; done
     rm -rf "$TEST_DIR"
 }
 
@@ -246,6 +246,13 @@ EOF
     rm -f "$TEST_DIR/fired" "$TEST_DIR/wdsleep.pid" "$TEST_DIR/node.term" "$TEST_DIR/wd.gone" "$TEST_DIR/pgid"
     PATH="$bare" BASH_ENV="$TEST_DIR/stand-down.bash" STAND_DOWN_AT="$1" STAND_DOWN_DIR="$TEST_DIR" ROMP_NODE_PROBE_BOUND=30 \
         run "$tmo" 60 setsid -w sh -c 'printf "%s\n" "$$" > "$1"; exec "$2" "$3" "$4" up' _ "$TEST_DIR/pgid" "$BASH" "$LAUNCH" "$MANAGER"
+    # the prelude matches the launcher's spelling: a respelled command sends no TERM, and the case says so rather than fail later
+    [ -s "$TEST_DIR/fired" ] || { echo "the prelude never saw the watchdog run '$1': the launcher spells it differently now, so update the case"; return 1; }
+}
+_sleep_recorded() {   # the between and after cases: the prelude wrote the sleep's pid when the watchdog ran _s=$!
+    [ -s "$TEST_DIR/wdsleep.pid" ] && return 0
+    echo "the prelude records the sleep's pid when the watchdog runs _s=\$! and never saw that command: the launcher spells the assignment differently now, so update the prelude"
+    return 1
 }
 _stand_down_asserts() {   # nothing of the probe survives, and nothing outside the watchdog's own tree was signalled
     # said on failure: what the launcher printed, and the watchdog's sleep if it is still there
@@ -264,7 +271,7 @@ _stand_down_asserts() {   # nothing of the probe survives, and nothing outside t
 }
 @test "the watchdog path: a stand-down between the fork of the sleep and _s=\$! still ends the sleep" {
     _stand_down_at '_s=$!'
-    [ -s "$TEST_DIR/wdsleep.pid" ]                            # the sleep was forked before the TERM
+    _sleep_recorded                                           # the sleep was forked before the TERM
     _stand_down_asserts
 }
 @test "the watchdog path: a stand-down before the sleep is forked leaves no sleep and signals nothing outside the watchdog" {
@@ -275,8 +282,92 @@ _stand_down_asserts() {   # nothing of the probe survives, and nothing outside t
 }
 @test "the watchdog path: a stand-down after _s=\$! (before the wait) ends the sleep" {
     _stand_down_at 'wait "$_s"'
-    [ -s "$TEST_DIR/wdsleep.pid" ]
+    _sleep_recorded
     _stand_down_asserts
+}
+
+# The probe wrapper's TERM (the watchdog's kill at the bound) at each point of the wrapper's own script, sent by a prelude
+# like the one above. The wrapper had the watchdog's race: a TERM handled between the fork of the node and _n=$! ran the
+# trap with _n unset, which under set -u ended the wrapper with the node still running, so a copy that hung outlived the
+# launcher when the TERM landed there. The bound is 30 seconds, so the watchdog never fires and the prelude's TERM is the
+# only one the wrapper gets. The copy's probe run hangs (fifteen seconds, then it answers) and writes its own pid to
+# nodeself.pid. The prelude writes the node's pid (the wrapper's $! as _n=$! is about to run) to node.pid and the
+# wrapper's pid to fired. The system node, which the launcher falls back to, writes to mgr.note whether the copy's node
+# was still alive when the manager started.
+_wrapper_at() {   # $1 the wrapper's command, as the launcher spells it, that the TERM lands just before
+    command -v setsid >/dev/null 2>&1 || skip "needs setsid to scope the process-group check (Linux)"
+    local tmo; tmo="$(command -v timeout || true)"
+    [ -n "$tmo" ] || skip "needs coreutils timeout to bound the run"
+    local real; real="$(command -v sleep)"
+    cat > "$BIN/node" <<EOF
+#!/bin/sh
+case "\$0" in
+  "$RN") if [ "\$1" = -e ]; then                       # the probe run hangs
+           echo \$\$ > "$TEST_DIR/nodeself.pid"
+           i=0; while [ \$i -lt 300 ]; do "$real" 0.05; i=\$((i + 1)); done
+         fi
+         echo "COPY ran: \$*" ;;
+  *) n=none; st=
+     if [ -s "$TEST_DIR/node.pid" ]; then n="\$(cat "$TEST_DIR/node.pid")"; st="\$(ps -o stat= -p "\$n" 2>/dev/null | tr -d ' ')"; fi
+     echo "manager started: copy node \$n state [\$st]" > "$TEST_DIR/mgr.note"
+     echo "NODE_V1 ran: \$*" ;;
+esac
+EOF
+    chmod +x "$BIN/node"
+    cat > "$TEST_DIR/wrapper.bash" <<'EOF'
+set -T
+trap 'if [ "$BASH_COMMAND" = '\''_n=$!'\'' ]; then echo "$!" > "$WRAPPER_DIR/node.pid"; fi
+if [ "$BASH_COMMAND" = "$WRAPPER_AT" ] && [ ! -e "$WRAPPER_DIR/fired" ]; then
+    echo "$BASHPID" > "$WRAPPER_DIR/fired"; kill -TERM "$BASHPID"
+fi' DEBUG
+EOF
+    local bare="$TEST_DIR/bare-wrapper"; mkdir -p "$bare"
+    local t; for t in sh cmp cp chmod mv mkdir rm sleep ps pgrep setsid tr cat; do ln -s "$(command -v "$t")" "$bare/$t"; done
+    ln -s "$BIN/node" "$bare/node"
+    rm -f "$TEST_DIR/fired" "$TEST_DIR/node.pid" "$TEST_DIR/nodeself.pid" "$TEST_DIR/mgr.note" "$TEST_DIR/pgid"
+    PATH="$bare" BASH_ENV="$TEST_DIR/wrapper.bash" WRAPPER_AT="$1" WRAPPER_DIR="$TEST_DIR" ROMP_NODE_PROBE_BOUND=30 \
+        run "$tmo" 60 setsid -w sh -c 'printf "%s\n" "$$" > "$1"; exec "$2" "$3" "$4" up' _ "$TEST_DIR/pgid" "$BASH" "$LAUNCH" "$MANAGER"
+    # the prelude matches the launcher's spelling: a respelled command sends no TERM, and the case says so rather than fail later
+    [ -s "$TEST_DIR/fired" ] || { echo "the prelude never saw the wrapper run '$1': the launcher spells it differently now, so update the case"; return 1; }
+}
+_node_recorded() {   # the cases at and after the fork: the prelude wrote the node's pid when the wrapper ran _n=$!
+    [ -s "$TEST_DIR/node.pid" ] && return 0
+    echo "the prelude records the node's pid when the wrapper runs _n=\$! and never saw that command: the launcher spells the assignment differently now, so update the prelude"
+    return 1
+}
+_wrapper_asserts() {   # the fallback was taken, the copy's node was gone before the manager started, and nothing of the probe survives
+    # said on failure: what the launcher printed, the note from the manager's start, and the copy's node if it is still there
+    echo "launcher output: $output"
+    echo "at the manager's start: $(cat "$TEST_DIR/mgr.note" 2>/dev/null || echo 'no note')"
+    local p; for p in node nodeself; do [ ! -s "$TEST_DIR/$p.pid" ] || echo "$p: $(ps -o pid=,stat=,args= -p "$(cat "$TEST_DIR/$p.pid")" || echo gone)"; done
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NODE_V1 ran: $MANAGER up"* ]]          # the manager came up on the system node
+    [[ "$output" == *"cannot run here"* ]]                    # because the probe's wrapper ended on the TERM
+    [ ! -s "$TEST_DIR/node.pid" ] || grep -q 'state \[\]' "$TEST_DIR/mgr.note"   # the copy's node, if forked, was gone by then
+    [ ! -s "$TEST_DIR/node.pid" ] || _dead "$(cat "$TEST_DIR/node.pid")"
+    [ ! -s "$TEST_DIR/nodeself.pid" ] || _dead "$(cat "$TEST_DIR/nodeself.pid")"
+    local pgid; pgid="$(cat "$TEST_DIR/pgid")"
+    run bash -c 'ps -eo pgid=,args= | awk -v g="$1" "\$1==g"' _ "$pgid"
+    [ -z "$output" ]
+}
+@test "the watchdog path: the watchdog's TERM between the fork of the node and _n=\$! still kills the copy's node" {
+    _wrapper_at '_n=$!'
+    _node_recorded                                            # the node was forked before the TERM
+    _wrapper_asserts
+}
+@test "the watchdog path: the watchdog's TERM before the node is forked leaves no node behind" {
+    _wrapper_at "\"\$1\" -e '' < /dev/null > /dev/null 2>&1"
+    _wrapper_asserts
+}
+@test "the watchdog path: the watchdog's TERM after _n=\$!, at the check of _halt, kills the copy's node" {
+    _wrapper_at '[ -z "$_halt" ]'
+    _node_recorded
+    _wrapper_asserts
+}
+@test "the watchdog path: the watchdog's TERM after _n=\$! (before the wait) kills the copy's node" {
+    _wrapper_at 'wait "$_n"'
+    _node_recorded
+    _wrapper_asserts
 }
 
 @test "the watchdog path: a copy that HANGS is killed at the bound, the manager comes up on the system node, and no node is leaked" {
