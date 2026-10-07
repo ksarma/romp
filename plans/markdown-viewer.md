@@ -7940,15 +7940,15 @@ module those name in an import the compiler parses (an import declaration under 
 specifier, an import-equals, and a require() or import() of a string literal), transitively, under any quote and any
 line break, a type-only import and a path outside ui/webview included, a specifier that is not a string literal
 refused with its line, so file-view.ts itself re-enters through file-comments.ts's type import of the
-viewer's action type and brings every module it imports along: forty-eight modules
+viewer's action type and brings every module it imports along: forty-nine modules
 (../../vendor/track-changents/engine.js, actions.ts, anchor-map.ts, authored-file-caps.ts, backend-names.ts, capped-read.ts,
-card-layout.ts, code-block.ts, commands.ts, comments.ts, ctx-color.ts, docreview.ts, fence-source.ts, figure-gate.ts,
+card-layout.ts, chunk-url.ts, code-block.ts, commands.ts, comments.ts, ctx-color.ts, docreview.ts, fence-source.ts, figure-gate.ts,
 file-cap.ts, file-comments-model.ts, file-comments-regions.ts, file-comments.ts, file-trail.ts, file-view-links.ts, file-view.ts,
 gesture-clock.js, host-prefix.ts, icons.ts, keybindings.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts,
 md-links.ts, md-literal-tags.ts, md-sanitize.ts, media.ts, path-links.ts, pdf-cap.ts, pick-held.ts, pinch.ts,
 preview.ts, reader-place.ts, region-geometry.ts, session-badge.ts, settings.ts, status-widgets.ts, tab-state.ts,
 tab-widgets.ts, url-links.ts, viewer-grammars.ts, widget-prefs.ts). The npm packages those modules import (marked,
-DOMPurify, KaTeX, and highlight.js's core with its grammars) are named there and not read: their code is not the
+DOMPurify, and highlight.js's core with its grammars) are named there and not read: their code is not the
 viewer's, the sanitizer's and the highlighter's parses run before the adoption over `clean`, and a write a package makes
 onto an element handed to it is its caller's site. The grep finds twenty-seven matching lines in seven of those modules,
 each judged in the seam test with its reason and none a re-parse under the Rendered box after the adoption:

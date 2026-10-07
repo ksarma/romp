@@ -1,0 +1,988 @@
+// The viewer's hold for a note with math (iOS item 6, 2026-10-02): KaTeX is an on-demand chunk (math-chunk.ts), and a Rendered
+// paint whose block holds a formula still waiting for it is not swapped in. The body keeps the romp loader on an open, the chunk
+// is fetched once, and the renderer's arrival paints, so the note's first paint is its final one: one paint, the hooks once,
+// KaTeX in place, and the anchor map, the reader's place and the comment paint never meet a waiting formula. A note with no
+// math fetches no chunk and paints at once; a chunk that fails to load paints the note with each formula as its source, and
+// after it the next Rendered paint asks again, paints at once while the retry is out, and the served retry repaints the note
+// once with the reader's place kept (math.ts: a failed load is retried, the review's round 1). A failure met while a press holds the
+// card repaints at the release, each formula as its source, and asks for nothing more: one request, one console line, in both viewers
+// (the check of round 2's pass; math.ts asSettleFill). The
+// real viewer in Chromium through the shared harness (real-viewer-leg.ts), its bundle built WITHOUT KaTeX (bundleViewer(false))
+// and loaded by src as the kernel's pages load theirs, so the chunk's URL derives from that tag as on a page (chunk-url.ts);
+// the chunk is the shipped build of math-chunk.ts (math-chunk-leg.ts chunkBundle), held until the leg lets it go.
+// A Rendered pick held over rows (held open, Raw, then Rendered; or a saved Raw preference, then Rendered with the chunk not yet
+// fetched) puts the romp loader up over the rows, hidden and inert under it, in both viewers, and the arrival paints once with the
+// place kept (file-view.ts holdOverBody; the review's round 1), and while held, with the body's scroll anchoring off, the body's
+// scrollTop and the top hidden row's rect stay what they were before the Rendered click (the review's round 2, tests-3: a loader
+// that took height passed, Chromium's anchoring absorbing it). The URL viewer opened at a #fragment on a math note holds the same
+// way and lands the heading at the arrival's paint (its settle handler's repaint, otherwise run by no CI leg).
+// An open's target waits with the held paint: a math note opened at a heading or at an offset before the chunk lands raises no
+// notice while the loader stands and lands on its target at the arrival's paint (file-view.ts landTarget stands down while a
+// paint is held; the arrival runs it after its paint), and a Raw pick that ends the hold first lands the offset in the rows.
+// Before, the landing spent the target over the loader: the heading raised 'No section named' and both opens sat at the note's
+// top once the chunk was in. Those scenes, the editor's and a note with no formula whose text lands frames after the open also run
+// in Chromium with classic scrollbars (BARS, below): there the paint brings a scrollbar that narrows the body, and the width hook's
+// repaint kept to the place the paint had read at the top, undoing the landing (the check of round 2's pass; file-view.ts landTarget
+// notes the place each landing lands on).
+// A takeover of the body ends the hold (the review's round 2, correctness-1): a reload answered 404 while a paint is held paints its
+// pane, and the renderer's arrival, a success or a failure, leaves the pane standing with the seam's error() keeping its sentence
+// (before, the arrival painted the last text over it); the editor entered while held stays through the arrival, and its Cancel
+// lands the open's offset in the Raw rows, as an exit before the arrival does (before, the arrival spent the offset into the editor),
+// both with the editor's chunk answered at once and with it held past the arrival, so the renderer meets the editor's loader.
+// The arrival's repaint waits out a press on the card through a hold of its own (the review's round 2, ui-1): a press on an Outline
+// row held across a retry's success lands its pick, its row still in the page at the click, and the note is laid out after the
+// release; a reload landing parked under a press survives an arrival in the same press and paints the new text at the release; a
+// viewer closed while its repaint is parked paints nothing at the release (the run re-checks that the viewer is up); and a paint since
+// the settle stands (the run re-checks that too: a reload answered 404 under the same press, its pane parked and painted first at the
+// release, over a held open with the chunk served and over a failed load's sources with the retry served, keeps the pane and error()'s
+// sentence, and the pane is the only root put into the body across the release, so the repaint never ran before it, the order the
+// re-check rests on: the landing's hold is built before mathHold, so its release runs first (the review's round 3, tests-1: the end
+// state alone passed with mathHold built first, the note painted and then covered); in the URL viewer a press on Raw across the
+// retry's success keeps the Raw pick's rows, the one paint after the release, and so does a press on Raw over a held open across
+// the first arrival, the loader standing under the press, the re-check's held half (the review's round 3, tests-2)).
+// The repaint opens the Outline again as a reload's landing does (the review's round 3, ui-1): a press on the Outline button held
+// across a retry's success leaves the popover open after the release, holding the keyboard (before, the click opened it and the
+// parked repaint's paint closed it); with the popover up, the press's click closes it and the repaint leaves it closed; and with no
+// press under way the repaint closes an open popover, as every paint does. The held branch reopens it too: a reload's paint held over
+// a note with no formula keeps that note's Outline button, and a press on it held across the arrival leaves the popover open after
+// the release, listing the laid-out note's headings.
+// Nothing in the body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
+// MATH_REPAINT_ATTR), so a press on a link below two display formulas, held across the retry's success, clicks the link, still in
+// the page, and its fragment lands, in both viewers (before, the in-place re-fill grew the formulas and the release met another
+// element; at f760868a6 the repaint removed the link).
+// `window.__paints` counts the seam's onRendered. Synthetic values only.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import { inBrowser, openViewer, bundleViewer, frames, paintsReach, topBlock, putAtTop, REPORT, PARA, ORIGIN, MT2 } from "./real-viewer-leg";
+import { chunkBundle, gate, type Gate } from "./math-chunk-leg";
+
+const NOTE = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n$$\\sum_{i=0}^{n} i^2$$\n\nAfter the formula.\n";
+const PLAIN = "# Plain\n\nNo formula here, and $HOME stays literal.\n";
+const OTHER = "/repo/notes-api/docs/plain.md";
+
+type Answer = "serve" | "404";
+/** The viewer opened in the Files pane over `docs` with its bundle by src; the chunk's URL answered under `chunk` (one answer, or
+ *  one per request in order, the last repeating), every answer held by `g` and the n-th by `more.gates[n]`; `openOpts` is
+ *  openFileView's third argument (an `at` target). `more` passes openViewer's url, urls, raw, waitFor and before through (the
+ *  URL viewer, a saved Raw preference, a page global installed before the open); `more.editor` holds the editor chunk's 404 until
+ *  it opens, so the editor's own loader stands in the body meanwhile. */
+async function open(browser: any, docs: Record<string, string>, chunk: Answer | Answer[], g: Gate | null, requests: string[], openOpts: Record<string, unknown> | null = null,
+  more: { gates?: (Gate | null)[]; url?: string; urls?: Record<string, string>; raw?: boolean; waitFor?: string; before?: (page: any) => Promise<void>; editor?: Gate } = {}) {
+  return openViewer(browser, "pane", 900, 700, {
+    docs, bundleSrc: "/dist/files.js?v=3", waitFor: more.waitFor || ".fileview-body", openOpts, url: more.url, urls: more.urls, raw: more.raw,
+    // the editor's chunk is answered with a 404, so Edit opens the plain fallback editor (the editor-entry scene) and never runs the page as a script
+    serve: (u) => (u.pathname === "/dist/files.js" ? { status: 200, type: "text/javascript", body: bundleViewer(false) }
+      : u.pathname === "/dist/editor-chunk.js" ? { status: 404, type: "text/plain", body: "not found" } : null),
+    before: async (page) => {
+      await page.route((u: URL) => u.pathname === "/dist/math-chunk.js", async (route: any) => {
+        const n = requests.length;
+        requests.push(new URL(route.request().url()).pathname + new URL(route.request().url()).search);
+        const answer = Array.isArray(chunk) ? chunk[Math.min(n, chunk.length - 1)] : chunk;
+        if (g) await g.promise;
+        const held = more.gates && more.gates[n];
+        if (held) await held.promise;
+        const c = chunkBundle();
+        if (answer === "404" || "error" in c) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
+        return route.fulfill({ status: 200, contentType: "text/javascript", body: c.js });
+      });
+      // registered after openViewer's own route, so it answers the editor's chunk first: the same 404, once the gate opens
+      if (more.editor) {
+        const eg = more.editor;
+        await page.route((u: URL) => u.pathname === "/dist/editor-chunk.js", async (route: any) => { await eg.promise; return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" }); });
+      }
+      if (more.before) await more.before(page);
+    },
+  });
+}
+
+type Body = { loader: boolean; md: boolean; katex: number; waiting: number; src: string[]; paints: number };
+const bodyNow = (page: any): Promise<Body> => page.evaluate(() => {
+  const b = document.querySelector(".fileview-body")!;
+  return { loader: !!b.querySelector(".fileview-load"), md: !!b.querySelector(".fileview-md"), katex: b.querySelectorAll(".katex").length,
+    waiting: document.querySelectorAll(".md-math-inline, .md-math-display").length,
+    src: Array.from(b.querySelectorAll("code.md-math-src")).map((c) => ((c.closest("pre") || c) as HTMLElement).getAttribute("title") || ""),
+    paints: (window as any).__paints - (window as any).__reflows };
+});
+
+// The viewer's body as a reader sees it, for both viewers: whether the romp loader is on screen in it, whether the Raw rows show
+// (and whether they are inert), the pressed buttons, the Rendered root and its KaTeX roots, and how many Rendered roots have been
+// put into the page (countRoots, installed before the open; the URL viewer fires no seam paint, so a root is its paint).
+const URL_PATH = "/notes-api/docs/report.md";
+type Over = { loader: boolean; rowsShown: boolean; inert: boolean; pressed: string[]; md: boolean; katex: number; src: number; roots: number };
+const overNow = (page: any): Promise<Over> => page.evaluate(() => {
+  const b = document.querySelector(".fileview-body") as HTMLElement;
+  const br = b.getBoundingClientRect();
+  const load = b.querySelector(".fileview-load") as HTMLElement | null;
+  const lr = load ? load.getBoundingClientRect() : null;
+  const row = b.querySelector(".fv-cl") as HTMLElement | null;
+  return { loader: !!lr && lr.height > 0 && lr.bottom > br.top && lr.top < br.bottom, rowsShown: !!row && getComputedStyle(row).visibility !== "hidden",
+    inert: !!row && !!row.closest("[inert]"), pressed: Array.from(document.querySelectorAll(".fileview-seg button.on, .fileview-acts button.on")).map((x) => x.textContent || ""),
+    md: !!b.querySelector(".fileview-md"), katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length, roots: (window as any).__mdRoots };
+});
+/** Counts the `.fileview-md` roots put into the page (one per Rendered paint; the URL viewer fires no seam paint): installed before the open. */
+const countRoots = async (page: any): Promise<void> => {
+  await page.evaluate(() => {
+    (window as any).__mdRoots = 0;
+    new MutationObserver((recs) => { for (const r of recs) r.addedNodes.forEach((n) => { if (n instanceof HTMLElement && n.classList.contains("fileview-md")) (window as any).__mdRoots++; }); })
+      .observe(document.body, { childList: true, subtree: true });
+  });
+};
+const button = (page: any, label: string) => page.locator("#romp-fileview button.fileview-btn", { hasText: new RegExp("^" + label + "$") }).click();
+
+test("chromium: a note with math, opened before the math renderer is in, keeps the romp loader until the chunk lands, then paints once with KaTeX in place", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: NOTE }, "serve", g, requests);
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 4);
+    let b = await bodyNow(page);
+    assert.deepEqual(requests, ["/dist/math-chunk.js?v=3"], "one request, beside the bundle and with its ?v= token");
+    assert.deepEqual([b.loader, b.md, b.paints, b.waiting], [true, false, 0, 0], "held: the loader stands, nothing is painted, no waiting formula reaches the page: " + JSON.stringify(b));
+    g.open();
+    await paintsReach(page, 1);
+    await frames(page, 6);
+    b = await bodyNow(page);
+    assert.deepEqual([b.loader, b.md, b.katex, b.waiting, b.src.length], [false, true, 2, 0, 0], "the arrival paints the note, both formulas laid out: " + JSON.stringify(b));
+    assert.equal(b.paints, 1, "exactly one paint: the first paint is the final one");
+    assert.equal(requests.length, 1);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: a note with no math fetches no chunk and paints at once; a note with math opened after it in the same page does fetch it", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: PLAIN, [OTHER]: NOTE }, "serve", null, requests);
+    await paintsReach(page, 1);
+    await page.evaluate(() => fetch("/version").then(() => null));
+    await frames(page, 4);
+    const b = await bodyNow(page);
+    assert.deepEqual([b.md, b.loader, b.paints], [true, false, 1], "painted at once: " + JSON.stringify(b));
+    assert.deepEqual(requests, [], "no chunk for a note with no formula");
+    assert.equal(await page.evaluate(() => document.querySelectorAll('script[src*="math-chunk"]').length), 0);
+    // the instrument, proven in the same page: a note with math asks for the chunk and renders once it lands
+    await page.evaluate((p: string) => { (window as any).FV.openFileView(p, null, null); }, OTHER);
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 2, null, { timeout: 15000 });
+    assert.deepEqual(requests, ["/dist/math-chunk.js?v=3"]);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: a chunk that fails to load paints the note once, each formula as its source with the failure in its title", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: NOTE }, "404", null, requests);
+    await paintsReach(page, 1);
+    await frames(page, 6);
+    const b = await bodyNow(page);
+    assert.deepEqual([b.loader, b.md, b.katex, b.waiting], [false, true, 0, 0], JSON.stringify(b));
+    assert.deepEqual(b.src, ["Not rendered: the math renderer failed to load.", "Not rendered: the math renderer failed to load."]);
+    assert.equal(b.paints, 1, "one paint");
+    assert.equal(requests.length, 1, "the failure's own repaint of the held paint, inside the settle, uses no retry");
+    assert.deepEqual(errors, []);
+  });
+});
+
+// A failure met while a press holds the card (the check of round 2's pass): the failure's repaint of the held paint waits for the
+// release, and runs there as a fill inside the settle (math.ts asSettleFill), so it asks for nothing more: one request and one
+// console line, as with no press (before, the release's fill spent the retry the failure armed: a second request, a second line).
+for (const viewer of ["file", "url"] as const) {
+  test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}: a held open whose chunk fails while a press holds the card paints the note at the release, each formula as its source, and asks for nothing more: one request, one console line`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const g = gate(); const requests: string[] = []; const lines: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: NOTE }, "404", g, requests, null, {
+        ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: NOTE } } : {}),
+        before: async (pg: any) => {
+          pg.on("console", (m: any) => { if (m.type() === "error" && String(m.text()).startsWith("math:")) lines.push(String(m.text())); });
+          // the chunk's script error, heard in the capture phase before math.ts's own onerror runs in the same dispatch: the 404's arrival
+          await pg.evaluate(() => { document.addEventListener("error", (e) => { const s = e.target as HTMLScriptElement; if (s && s.src && s.src.includes("math-chunk.js")) (window as any).__chunkErrs = ((window as any).__chunkErrs || 0) + 1; }, true); });
+        },
+      });
+      await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+      await frames(page, 4);
+      const box = await page.locator(".fileview-body > .fileview-load").boundingBox();
+      assert.ok(box, "the held open's loader to press on");
+      await page.mouse.move(box.x + 10, box.y + box.height / 2);
+      await page.mouse.down();
+      g.open();
+      await page.waitForFunction(() => (window as any).__chunkErrs === 1, null, { timeout: 10000 });
+      await frames(page, 6);
+      const under = await overNow(page);
+      await page.mouse.up();
+      await frames(page, 8);
+      await page.evaluate(() => fetch("/version").then(() => null, () => null));   // a round trip, so a request the release sent has reached the route
+      await frames(page, 8);
+      const after = await overNow(page);
+      assert.deepEqual([requests.length, lines.length], [1, 1], "the release's repaint asked for nothing more: one request, one console line: " + JSON.stringify({ requests, lines }));
+      assert.deepEqual([after.md, after.loader, after.katex, after.src], [true, false, 0, 2], "the note painted at the release, each formula as its source: " + JSON.stringify(after));
+      assert.deepEqual([under.loader, under.md], [true, false], "under the press the held loader stood: " + JSON.stringify(under));
+      assert.deepEqual(errors, []);
+    });
+  });
+}
+
+// A note long enough that its target sits screens below the top, one inline formula at its head: the hold's case for a target.
+const FILLER = Array.from({ length: 40 }, (_, i) => PARA(i + 1)).join("\n\n");
+const TARGETED = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n" + FILLER + "\n\n## Second\n\nTarget paragraph here.\n\n" + FILLER + "\n";
+const TARGET_OFFSET = TARGETED.indexOf("Target paragraph here.");
+// the same note with a second formula in its first paragraph: a paint that meets two formulas while a retry is out (the retry scene)
+const TARGETED2 = TARGETED.replace("The ratio $\\frac{a}{b}$ holds.", "The ratio $\\frac{a}{b}$ holds, and $c^2$ with it.");
+
+type Landing = { loader: boolean; notice: string | null; scrollTop: number; clientHeight: number; heading: number | null; target: { top: number; bottom: number } | null; katex: number; paints: number };
+const landing = (page: any): Promise<Landing> => page.evaluate(() => {
+  const b = document.querySelector(".fileview-body") as HTMLElement;
+  const bar = document.getElementById("fileview-save-err");
+  const bt = b.getBoundingClientRect().top;
+  const h = Array.from(b.querySelectorAll("h2")).find((x) => (x.textContent || "").includes("Second")) as HTMLElement | undefined;
+  const p = Array.from(b.querySelectorAll("p")).find((x) => (x.textContent || "").includes("Target paragraph")) as HTMLElement | undefined;
+  return { loader: !!b.querySelector(".fileview-load"), notice: bar ? bar.textContent : null, scrollTop: b.scrollTop, clientHeight: b.clientHeight,
+    heading: h ? Math.round(h.getBoundingClientRect().top - bt) : null,
+    target: p ? { top: Math.round(p.getBoundingClientRect().top - bt), bottom: Math.round(p.getBoundingClientRect().bottom - bt) } : null,
+    katex: b.querySelectorAll(".katex").length, paints: (window as any).__paints - (window as any).__reflows };
+});
+
+// Scrollbars. Playwright's headless Chromium hides them (--hide-scrollbars), so the body keeps its width when a paint brings the
+// text's overflow; a desktop browser shows a classic one, and so does Playwright's WebKit, and there that paint narrows the body by
+// the scrollbar's width (10 px under the sheet's rule). The width hook's repaint (file-view.ts) then ran a frame or two after the
+// open's landing and seated the place the paint had read at the note's top, so the landing was undone: every held open meets it,
+// the loader standing for frames before the text arrives, and so does an open whose text lands after its first frame, math or none
+// (the check of round 2's pass, first seen in WebKit; the same at fork main). "classic" launches Chromium without that flag
+// (file-view-scrollbar-browser.test.ts's idiom), so CI's one engine runs the width change; each such scene asserts that its paint
+// did narrow the body, so a sheet that stops showing the scrollbar cannot turn it into a scene that never meets the change.
+const BARS = ["hidden", "classic"] as const;
+type Bars = (typeof BARS)[number];
+const barsName = (b: Bars): string => (b === "classic" ? "chromium with classic scrollbars" : "chromium");
+const barsLaunch = (b: Bars): Parameters<typeof inBrowser>[2] => (b === "classic" ? ({ ignoreDefaultArgs: ["--hide-scrollbars"] } as unknown as Parameters<typeof inBrowser>[2]) : {});
+const bodyWidth = (page: any): Promise<number> => page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).clientWidth);
+/** Under classic scrollbars, the paint between the two widths brought the scrollbar: the scene met the width change it pins. */
+const metWidthChange = (bars: Bars, before: number, after: number): void => {
+  if (bars === "classic") assert.ok(after < before, "armed: the paint's scrollbar narrowed the body: " + JSON.stringify({ before, after }));
+};
+
+for (const bars of BARS)
+for (const [name, at] of [["a heading", { heading: "#second" }], ["an offset", { offset: TARGET_OFFSET }]] as const) {
+  test(`${barsName(bars)}: a math note opened at ${name} before the math renderer is in raises no notice while held and lands on its target at the arrival's paint`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      assert.ok(TARGET_OFFSET > 0);
+      const g = gate(); const requests: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, { at });
+      await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+      await frames(page, 6);   // the frames a spent heading or offset would have run in (spendHeading's, scrollToSourceOffset's)
+      const held = await landing(page);
+      assert.deepEqual([held.loader, held.paints, held.notice], [true, 0, null], "held: the loader stands and no notice speaks for a target the paint has not reached: " + JSON.stringify(held));
+      const w0 = await bodyWidth(page);
+      g.open();
+      await paintsReach(page, 1);
+      await frames(page, 6);
+      const b = await landing(page);
+      metWidthChange(bars, w0, await bodyWidth(page));
+      assert.deepEqual([b.loader, b.katex, b.paints, b.notice], [false, 1, 1, null], "one paint, the formula laid out, no notice: " + JSON.stringify(b));
+      assert.ok(b.scrollTop > 0, "the note no longer sits at its top: " + JSON.stringify(b));
+      if ("heading" in at) {
+        assert.ok(b.heading !== null && b.heading >= 0 && b.heading < 60, "the section's heading at the top of the body, as the synchronous fill lands it: " + JSON.stringify(b));
+      } else {
+        assert.ok(b.target !== null && b.target.top >= 0 && b.target.bottom <= b.clientHeight, "the offset's block in view: " + JSON.stringify(b));
+      }
+      assert.equal(requests.length, 1);
+      assert.deepEqual(errors, []);
+    }, barsLaunch(bars));
+  });
+}
+
+for (const bars of BARS)
+test(`${barsName(bars)}: a Raw pick while a math note opened at an offset is held paints the rows and lands the offset there; the arrival changes nothing after it`, { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, { at: { offset: TARGET_OFFSET } });
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 6);
+    assert.equal((await landing(page)).loader, true, "held");
+    const w0 = await bodyWidth(page);
+    await page.locator(".fileview-seg button", { hasText: "Raw" }).click();
+    await frames(page, 6);
+    metWidthChange(bars, w0, await bodyWidth(page));
+    const rows = (): Promise<{ rows: number; scrollTop: number; target: { top: number; bottom: number } | null; clientHeight: number; notice: string | null }> => page.evaluate(() => {
+      const b = document.querySelector(".fileview-body") as HTMLElement;
+      const bt = b.getBoundingClientRect().top;
+      const r = Array.from(b.querySelectorAll(".fv-cl")).find((x) => (x.textContent || "").includes("Target paragraph here.")) as HTMLElement | undefined;
+      const bar = document.getElementById("fileview-save-err");
+      return { rows: b.querySelectorAll(".fv-cl").length, scrollTop: b.scrollTop, clientHeight: b.clientHeight, notice: bar ? bar.textContent : null,
+        target: r ? { top: Math.round(r.getBoundingClientRect().top - bt), bottom: Math.round(r.getBoundingClientRect().bottom - bt) } : null };
+    });
+    const raw = await rows();
+    assert.ok(raw.rows > 0 && raw.notice === null, "the rows are painted, no notice: " + JSON.stringify(raw));
+    assert.ok(raw.target !== null && raw.target.top >= 0 && raw.target.bottom <= raw.clientHeight, "the offset's row in view: " + JSON.stringify(raw));
+    g.open();
+    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+    await frames(page, 6);
+    const after = await rows();
+    assert.deepEqual([after.scrollTop, after.rows, after.notice], [raw.scrollTop, raw.rows, null], "the arrival repaints nothing over the Raw view: " + JSON.stringify(after));
+    assert.equal(requests.length, 1);
+    assert.deepEqual(errors, []);
+  }, barsLaunch(bars));
+});
+
+// The same landing with no formula at all (the check of round 2's pass: the fault is the landing's, not the hold's): a note whose
+// text lands frames after the open, as on a slow link (its file fetch held here), opened at a heading or an offset. Red at fork main
+// under classic scrollbars, where nothing is held.
+const PLAIN_TARGETED = TARGETED.replace("The ratio $\\frac{a}{b}$ holds.", "The ratio a over b holds.");
+/** Holds the viewer's file fetches (a GET with a path) until `window.__releaseFile()`: installed before the open. */
+const holdFileFetch = async (page: any): Promise<void> => {
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__fileHeld = new Promise((r) => { w.__releaseFile = r; });
+    const f0 = w.fetch;
+    w.fetch = async function (url: string, init: any) { if (String(url).includes("path=") && !(init && init.method === "HEAD")) await w.__fileHeld; return f0.call(this, url, init); };
+  });
+};
+for (const [name, at] of [["a heading", { heading: "#second" }], ["an offset", { offset: PLAIN_TARGETED.indexOf("Target paragraph here.") }]] as const) {
+  test(`chromium with classic scrollbars: a note with no formula whose text lands frames after the open, opened at ${name}, lands on its target`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      assert.ok(PLAIN_TARGETED !== TARGETED && !PLAIN_TARGETED.includes("$"), "the note holds no formula");
+      const requests: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: PLAIN_TARGETED }, "serve", null, requests, { at }, { before: holdFileFetch });
+      await frames(page, 6);
+      const held = await landing(page);
+      assert.deepEqual([held.loader, held.paints], [true, 0], "the loader stands while the text is out: " + JSON.stringify(held));
+      const w0 = await bodyWidth(page);
+      await page.evaluate(() => (window as any).__releaseFile());
+      await paintsReach(page, 1);
+      await frames(page, 8);
+      const b = await landing(page);
+      metWidthChange("classic", w0, await bodyWidth(page));
+      if ("heading" in at) {
+        assert.ok(b.scrollTop > 0 && b.heading !== null && b.heading >= 0 && b.heading < 60, "the section's heading at the top of the body: " + JSON.stringify(b));
+      } else {
+        assert.ok(b.scrollTop > 0 && b.target !== null && b.target.top >= 0 && b.target.bottom <= b.clientHeight, "the offset's block in view: " + JSON.stringify(b));
+      }
+      assert.deepEqual([b.paints, b.notice, requests.length], [1, null, 0], "one paint, no notice, no chunk: " + JSON.stringify(b));
+      assert.deepEqual(errors, []);
+    }, barsLaunch("classic"));
+  });
+}
+
+for (const viewer of ["file", "url"] as const) {
+  test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}: after a failed load the next Rendered paint asks again and paints at once while the retry is out (no loader, the source shown); the retry, served, repaints the note once with KaTeX, the reader's place kept`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const retry = gate(); const requests: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: TARGETED2 }, ["404", "serve"], null, requests, null, {
+        gates: [null, retry], before: countRoots, ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: TARGETED2 } } : {}),
+      });
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-md code.md-math-src"), null, { timeout: 15000 });
+      await frames(page, 6);
+      let b = await overNow(page);
+      assert.deepEqual([b.loader, b.md, b.katex, b.roots], [false, true, 0, 1], "the failed load painted the note once, its formulas as source: " + JSON.stringify(b));
+      assert.equal(requests.length, 1, "the failure's own repaint used no retry");
+      await putAtTop(page, "Paragraph 20");
+      await frames(page, 2);
+      const before = await topBlock(page);
+      await button(page, "Raw");
+      await frames(page, 4);
+      await button(page, "Rendered");
+      await frames(page, 4);
+      b = await overNow(page);
+      assert.deepEqual([b.loader, b.md, b.katex, b.roots, b.src], [false, true, 0, 2, 2], "the Rendered paint stands at once, both formulas as source: nothing waits on the retry, the second formula met after the first used it included: " + JSON.stringify(b));
+      assert.equal(requests.length, 2, "that paint's fill used the retry the failure armed");
+      const during = await topBlock(page);
+      assert.equal(during && during.text, before && before.text, "the place came back across Raw and Rendered: " + JSON.stringify([before, during]));
+      retry.open();
+      await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 2, null, { timeout: 15000 });
+      await frames(page, 6);
+      b = await overNow(page);
+      assert.deepEqual([b.loader, b.katex, b.roots], [false, 2, 3], "the served retry laid both formulas out by one repaint of the note, so the hooks ran over them: " + JSON.stringify(b));
+      assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-body code.md-math-src").length), 0, "no source left");
+      const after = await topBlock(page);
+      assert.ok(after !== null && before !== null && after.text === before.text && Math.abs(after.top - before.top) <= 1, "the reader's place kept across the repaint: " + JSON.stringify([before, after]));
+      assert.equal(requests.length, 2);
+      assert.deepEqual(errors, []);
+    });
+  });
+}
+
+// ── a Rendered pick held over rows (the review's round 1, ui-1): the loader goes up over the rows, which are hidden and inert, and
+// the arrival paints once with the place kept; in the Files pane's viewer (openFileView) and the URL viewer (openUrlView) ──
+
+
+for (const viewer of ["file", "url"] as const) {
+  for (const route of ["held open, Raw, then Rendered", "saved Raw, cold chunk, Rendered"] as const) {
+    test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}, ${route}: the loader stands over the hidden, inert rows while the paint is held, then one paint lays the note out with KaTeX, the place kept`, { timeout: 60000 }, async (t) => {
+      await inBrowser(t, async (browser) => {
+        const g = gate(); const requests: string[] = [];
+        const saved = route.startsWith("saved");
+        const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, null, {
+          raw: saved, before: countRoots, waitFor: saved ? ".fileview-body .fv-cl" : ".fileview-body",
+          ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: TARGETED } } : {}),
+        });
+        if (!saved) {
+          await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+          await frames(page, 4);
+          assert.equal((await overNow(page)).loader, true, "held at the open: the open's loader");
+          await button(page, "Raw");
+          await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+        } else {
+          await frames(page, 4);
+          assert.deepEqual(requests, [], "a saved Raw preference paints rows and fetches no chunk");
+        }
+        await frames(page, 2);
+        await putAtTop(page, "Paragraph 20");
+        await frames(page, 2);
+        const before = await topBlock(page);
+        assert.ok(before && before.view === "raw" && before.text.startsWith("Paragraph 20"), "the rows, Paragraph 20 at the top: " + JSON.stringify(before));
+        const rootsBefore = (await overNow(page)).roots;
+        // the body's scroll anchoring off before the click, as the served legs turn off #content's (the review's round 2, tests-3): the
+        // phone's WebKit has none, so a loader that took height would push the rows down there, where Chromium's anchoring absorbs it
+        await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).style.overflowAnchor = "none"; });
+        const rowAt = (): Promise<{ scrollTop: number; rowTop: number | null }> => page.evaluate(() => {
+          const b = document.querySelector(".fileview-body") as HTMLElement;
+          const r = Array.from(b.querySelectorAll(".fv-cl")).find((x) => (x.textContent || "").startsWith("Paragraph 20")) as HTMLElement | undefined;
+          return { scrollTop: b.scrollTop, rowTop: r ? Math.round(r.getBoundingClientRect().top * 10) / 10 : null };
+        });
+        const atClick = await rowAt();
+        await button(page, "Rendered");
+        await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+        await frames(page, 4);
+        const held = await overNow(page);
+        assert.deepEqual([held.loader, held.rowsShown, held.inert, held.md, held.roots], [true, false, true, false, rootsBefore],
+          "held: the loader up, the rows under it hidden and inert, nothing painted: " + JSON.stringify(held));
+        const whileHeld = await rowAt();
+        assert.ok(atClick.rowTop !== null, "the top row, Paragraph 20, measured before the click");
+        assert.deepEqual(whileHeld, atClick, "the loader changes no layout: while held the body's scrollTop and the top hidden row's rect are what they were before the click: " + JSON.stringify([atClick, whileHeld]));
+        assert.ok(held.pressed.includes("Rendered") && !held.pressed.includes("Raw"), "under the pressed Rendered button: " + JSON.stringify(held));
+        g.open();
+        await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 1, null, { timeout: 15000 });
+        await frames(page, 6);
+        const after = await overNow(page);
+        assert.deepEqual([after.loader, after.md, after.katex, after.roots - rootsBefore], [false, true, 1, 1], "one paint, the formula laid out, the loader gone: " + JSON.stringify(after));
+        const top = await topBlock(page);
+        assert.ok(top && top.view === "rendered" && top.text === before!.text && Math.abs(top.top - before!.top) <= 2, "the place kept across the held pick: " + JSON.stringify([before, top]));
+        assert.equal(requests.length, 1);
+        assert.deepEqual(errors, []);
+      });
+    });
+  }
+}
+
+test("chromium: the URL viewer opened at a #fragment on a math note before the renderer is in keeps the loader, then paints once at the arrival with KaTeX, the heading at the body's top", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const href = URL_PATH + "#second";
+    const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, null, {
+      url: href, urls: { [ORIGIN + href]: TARGETED }, before: countRoots, waitFor: ".fileview-body",
+    });
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 6);
+    const held = await overNow(page);
+    assert.deepEqual([held.loader, held.md, held.roots], [true, false, 0], "held: the loader stands and no root is painted: " + JSON.stringify(held));
+    g.open();
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 1, null, { timeout: 15000 });
+    await frames(page, 8);
+    const after = await overNow(page);
+    assert.deepEqual([after.loader, after.md, after.katex, after.roots], [false, true, 1, 1], "the arrival repaints once (openUrlView's settle handler), the formula laid out, the loader gone: " + JSON.stringify(after));
+    const l = await landing(page);
+    assert.ok(l.heading !== null && l.heading >= 0 && l.heading < 60, "the fragment's heading at the body's top: " + JSON.stringify(l));
+    assert.deepEqual(requests, ["/dist/math-chunk.js?v=3"], "one request");
+    assert.deepEqual(errors, []);
+  });
+});
+
+// ── a takeover of the body ends the hold (the review's round 2, correctness-1): the fetch chain's failure pane and the editor's entry ──
+
+for (const answer of ["serve", "404"] as const) {
+  test(`chromium: a reload answered 404 while a math note's paint is held paints its pane, and the renderer's arrival (${answer === "serve" ? "the chunk served" : "the chunk answered 404"}) leaves the pane standing, the seam's error() keeping its sentence`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const g = gate(); const requests: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: NOTE }, answer, g, requests, null, {
+        before: async (pg: any) => {
+          // the chunk's script error, heard in the capture phase before math.ts's own onerror runs in the same dispatch: the 404's arrival
+          await pg.evaluate(() => { document.addEventListener("error", (e) => { const s = e.target as HTMLScriptElement; if (s && s.src && s.src.includes("math-chunk.js")) (window as any).__chunkErrs = ((window as any).__chunkErrs || 0) + 1; }, true); });
+        },
+      });
+      await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+      await frames(page, 4);
+      assert.deepEqual([(await bodyNow(page)).loader, (await bodyNow(page)).paints], [true, 0], "held at the open: the loader stands");
+      await page.evaluate((p: string) => { delete (window as any).__docs[p]; (window as any).__seam.reload(); }, REPORT);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body > .fileview-err"), null, { timeout: 10000 });
+      const pane = (): Promise<{ pane: string | null; error: string | null; md: boolean; loader: boolean; katex: number; src: number }> => page.evaluate(() => {
+        const b = document.querySelector(".fileview-body")!;
+        const e = b.querySelector(":scope > .fileview-err");
+        return { pane: e ? e.textContent : null, error: (window as any).__seam.error(), md: !!b.querySelector(".fileview-md"), loader: !!b.querySelector(".fileview-load"),
+          katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length };
+      });
+      const before = await pane();
+      assert.ok(before.error && before.pane !== null && before.pane.includes(before.error) && !before.md && !before.loader, "the reload's 404 paints its pane over the held loader, and error() answers its sentence: " + JSON.stringify(before));
+      g.open();
+      if (answer === "serve") await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+      else await page.waitForFunction(() => (window as any).__chunkErrs === 1, null, { timeout: 10000 });
+      await frames(page, 8);
+      const after = await pane();
+      assert.deepEqual(after, before, "the arrival paints nothing over the pane: the pane stands, error() keeps its sentence, no text, no loader, no formula: " + JSON.stringify([before, after]));
+      assert.equal(requests.length, 1);
+      assert.deepEqual(errors, []);
+    });
+  });
+}
+
+// The editor's entry takes the body in two steps, its loader while the editor chunk loads and then the editor (here the plain
+// fallback, the chunk answering 404): the chunk answered at once, so the fallback stands before the renderer arrives, and the chunk
+// held past the arrival, so the renderer meets the editor's loader (the check of round 2's pass: enterEdit's loader endHold, the one
+// that ends the hold when the chunk is slow, went unpinned while the 404 came at once).
+for (const bars of BARS)
+for (const editorChunk of ["answered at once", "held past the renderer's arrival"] as const) {
+  test(`${barsName(bars)}: the editor entered while a math note opened at an offset is held, its chunk ${editorChunk}, keeps the body through the renderer's arrival, and its Cancel lands the open's offset in the Raw rows`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const g = gate(); const requests: string[] = [];
+      const slow = editorChunk !== "answered at once";
+      const eg = slow ? gate() : null;
+      const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, { at: { offset: TARGET_OFFSET } }, eg ? { editor: eg } : {});
+      await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+      await frames(page, 6);
+      assert.equal((await landing(page)).loader, true, "held at the open");
+      await page.locator('#romp-fileview button[aria-label="Edit"]').click();
+      const editorNow = (): Promise<{ editor: boolean; loader: boolean; md: boolean; rows: number }> => page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { editor: !!b.querySelector(":scope > textarea.fileview-editor"), loader: !!b.querySelector(":scope > .fileview-load"), md: !!b.querySelector(".fileview-md"), rows: b.querySelectorAll(".fv-cl").length }; });
+      if (slow) {
+        await page.waitForFunction(() => !!document.querySelector('script[src*="editor-chunk.js"]'), null, { timeout: 10000 });   // the editor's loader up, its chunk out
+      } else {
+        await page.waitForFunction(() => !!document.querySelector(".fileview-body > textarea.fileview-editor"), null, { timeout: 10000 });   // the plain fallback editor: the editor's chunk answers 404
+      }
+      await frames(page, 4);
+      const before = await editorNow();
+      assert.deepEqual(before, slow ? { editor: false, loader: true, md: false, rows: 0 } : { editor: true, loader: false, md: false, rows: 0 }, "the editor's entry holds the body: " + JSON.stringify(before));
+      g.open();
+      await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+      await frames(page, 8);
+      const ed = await editorNow();
+      assert.deepEqual(ed, before, "the editor's entry holds the body through the arrival: " + JSON.stringify(ed));
+      if (eg) {
+        eg.open();
+        await page.waitForFunction(() => !!document.querySelector(".fileview-body > textarea.fileview-editor"), null, { timeout: 10000 });
+        await frames(page, 4);
+      }
+      const w0 = await bodyWidth(page);
+      await page.locator("#romp-fileview button.fileview-btn", { hasText: /^Cancel$/ }).click();
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+      await frames(page, 6);
+      metWidthChange(bars, w0, await bodyWidth(page));
+      const raw = await page.evaluate(() => {
+        const b = document.querySelector(".fileview-body") as HTMLElement;
+        const bt = b.getBoundingClientRect().top;
+        const r = Array.from(b.querySelectorAll(".fv-cl")).find((x) => (x.textContent || "").includes("Target paragraph here.")) as HTMLElement | undefined;
+        return { scrollTop: b.scrollTop, clientHeight: b.clientHeight, target: r ? { top: Math.round(r.getBoundingClientRect().top - bt), bottom: Math.round(r.getBoundingClientRect().bottom - bt) } : null };
+      });
+      assert.ok(raw.scrollTop > 0 && raw.target !== null && raw.target.top >= 0 && raw.target.bottom <= raw.clientHeight, "the Cancel's Raw paint lands the open's offset: its row in view: " + JSON.stringify(raw));
+      assert.equal(requests.length, 1);
+      assert.deepEqual(errors, []);
+    }, barsLaunch(bars));
+  });
+}
+
+// ── the arrival's repaint waits out a press on the card (the review's round 2, ui-1), through its own hold ──
+
+/** The retry scene's start (the two-formula note, the first chunk answered 404, the second held by `retry`): the failed load's
+ *  paint, then Raw and Rendered, whose fill sends the retry, the note on screen with its formulas as source. */
+async function failedThenRetryOut(browser: any, retry: Gate, requests: string[], viewer: "file" | "url", note = TARGETED2) {
+  const opened = await open(browser, { [REPORT]: note }, ["404", "serve"], null, requests, null, {
+    gates: [null, retry], ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: note } } : {}),
+  });
+  const { page } = opened;
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-md code.md-math-src"), null, { timeout: 15000 });
+  await frames(page, 4);
+  await button(page, "Raw");
+  await frames(page, 4);
+  await button(page, "Rendered");
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-md code.md-math-src"), null, { timeout: 15000 });
+  await frames(page, 4);
+  assert.equal(requests.length, 2, "the Rendered paint's fill sent the retry the failure armed, held");
+  // every click the page sees, with its target's text and whether the target was still in the page when the click reached it
+  await page.evaluate(() => { (window as any).__clicks = []; document.addEventListener("click", (e) => { const t = e.target as HTMLElement; (window as any).__clicks.push({ text: (t.textContent || "").trim().slice(0, 40), cls: t.className || "", connected: t.isConnected }); }, true); });
+  return opened;
+}
+/** The retry served under a press, its arrival run: KaTeX registered, then frames for the faces' settle and the arrival. */
+async function retryLandsNow(page: any, retry: Gate): Promise<void> {
+  retry.open();
+  await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+  await frames(page, 6);
+}
+
+test("chromium: the Files pane's viewer: a press on an Outline row held across a retry's success lands its pick, the row still in the page at the click, and the note is laid out after the release", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await page.locator(".fileview-outline-btn").click();
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-outline .fileview-outline-row").length > 0, null, { timeout: 10000 });
+    const row = page.locator(".fileview-outline").getByText("Second", { exact: true });
+    const box = await row.boundingBox();
+    assert.ok(box, "the Outline row for the section");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    const paints0 = await page.evaluate(() => (window as any).__paints - (window as any).__reflows);
+    await retryLandsNow(page, retry);
+    const pressed = await page.evaluate(() => { const o = document.querySelector(".fileview-outline"); return { popover: !!o && o.isConnected, paints: (window as any).__paints - (window as any).__reflows }; });
+    assert.deepEqual([pressed.popover, pressed.paints], [true, paints0], "while the press is held, the arrival's repaint waits: the popover and its pressed row stand, nothing painted: " + JSON.stringify(pressed));
+    await page.mouse.up();
+    await frames(page, 8);
+    assert.equal(await page.evaluate(() => (window as any).__paints - (window as any).__reflows), paints0 + 1, "the release ran the repaint the settle decided on, once: the seam's hooks heard the laid-out note");
+    const clicks = await page.evaluate(() => (window as any).__clicks);
+    assert.ok(clicks.some((c: any) => c.text === "Second" && c.connected), "the release clicked the row, still in the page: " + JSON.stringify(clicks));
+    const l = await landing(page);
+    assert.ok(l.heading !== null && l.heading >= 0 && l.heading < 60, "the pick landed: the section's heading at the body's top: " + JSON.stringify(l));
+    const b = await overNow(page);
+    assert.deepEqual([b.katex, b.src, b.loader], [2, 0, false], "after the release the note is laid out, both formulas: " + JSON.stringify(b));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a reload landing parked under a press survives the retry's arrival in the same press, and the release paints the new text, laid out", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    const para = page.locator(".fileview-body .fileview-md p", { hasText: "Paragraph 2:" }).first();
+    const box = await para.boundingBox();
+    assert.ok(box, "a paragraph to press on");
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    const fetched = await page.evaluate(() => (window as any).__fetches);
+    await page.evaluate(([p, text, mt]: [string, string, string]) => { (window as any).__docs[p] = text; (window as any).__mtime = mt; (window as any).__seam.reload(); }, [REPORT, TARGETED2 + "\nWritten by the reload, after the press began.\n", MT2]);
+    await page.waitForFunction((n: number) => (window as any).__fetches > n, fetched, { timeout: 10000 });
+    await frames(page, 4);
+    assert.equal(await page.evaluate(() => (document.querySelector(".fileview-body")!.textContent || "").includes("Written by the reload")), false, "the landing is parked under the press");
+    await retryLandsNow(page, retry);
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { reload: (b.textContent || "").includes("Written by the reload, after the press began."), katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length }; });
+    assert.deepEqual(after, { reload: true, katex: 2, src: 0 }, "the parked landing painted the reload's text at the release, with the renderer in: " + JSON.stringify(after));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a viewer closed while the arrival's repaint is parked under a press paints nothing at the release", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    const para = page.locator(".fileview-body .fileview-md p", { hasText: "Paragraph 2:" }).first();
+    const box = await para.boundingBox();
+    assert.ok(box, "a paragraph to press on");
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await retryLandsNow(page, retry);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("romp-fileview"), null, { timeout: 10000 });
+    const closed = await page.evaluate(() => (window as any).__paints);
+    await page.mouse.up();
+    await frames(page, 8);
+    assert.equal(await page.evaluate(() => (window as any).__paints), closed, "the parked repaint found the viewer gone and painted nothing: no hook of the closed viewer heard a paint");
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// ── the repaint opens the Outline again as a reload's landing does (the review's round 3, ui-1): the release's click on the Outline
+// button runs before the parked repaint, whose paint closes the popover ──
+
+type OutlineState = { popover: boolean; rows: number; focused: boolean; expanded: string | null; bodyFocused: boolean; paints: number };
+const outlineNow = (page: any): Promise<OutlineState> => page.evaluate(() => {
+  const pop = document.querySelector(".fileview-outline");
+  const a = document.activeElement;
+  return { popover: !!pop && pop.isConnected, rows: pop ? pop.querySelectorAll(".fileview-outline-row").length : 0, focused: !!pop && a === pop,
+    expanded: document.querySelector(".fileview-outline-btn")!.getAttribute("aria-expanded"), bodyFocused: a === document.querySelector(".fileview-body"),
+    paints: (window as any).__paints - (window as any).__reflows };
+});
+/** Presses the pointer on the Outline button and holds it. */
+async function pressOutlineButton(page: any): Promise<void> {
+  const box = await page.locator(".fileview-outline-btn").boundingBox();
+  assert.ok(box, "the Outline button to press");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+}
+
+test("chromium: the Files pane's viewer: a press on the Outline button held across a retry's success: the release's click opens the popover, and the parked repaint leaves it open on the laid-out note, holding the keyboard", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await pressOutlineButton(page);
+    const paints0 = (await outlineNow(page)).paints;
+    await retryLandsNow(page, retry);
+    const under = await outlineNow(page);
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await outlineNow(page);
+    assert.deepEqual([after.popover, after.focused, after.expanded], [true, true, "true"], "after the release the popover stands, holding the keyboard: the click opened it, and the parked repaint, whose paint closes it, opened it again: " + JSON.stringify(after));
+    assert.deepEqual([under.popover, under.paints], [false, paints0], "under the press no popover yet and nothing painted: the repaint was parked: " + JSON.stringify(under));
+    assert.ok(after.rows > 0, "the popover lists the note's headings: " + JSON.stringify(after));
+    assert.equal(after.paints, paints0 + 1, "the release ran the repaint, once");
+    const b = await overNow(page);
+    assert.deepEqual([b.katex, b.src], [2, 0], "the note laid out under the popover: " + JSON.stringify(b));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a press on the Outline button with the popover up, held across a retry's success: the release's click closes the popover and the parked repaint leaves it closed, the body holding the keyboard", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await page.locator(".fileview-outline-btn").click();
+    await frames(page, 2);
+    assert.equal((await outlineNow(page)).popover, true, "the popover up before the press");
+    await pressOutlineButton(page);
+    const paints0 = (await outlineNow(page)).paints;
+    await retryLandsNow(page, retry);
+    const under = await outlineNow(page);
+    assert.deepEqual([under.popover, under.paints], [true, paints0], "under the press the popover stands (a press on the button is not a press outside it) and nothing painted: " + JSON.stringify(under));
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await outlineNow(page);
+    assert.deepEqual([after.popover, after.expanded, after.bodyFocused], [false, "false", true], "the click closed the popover and the parked repaint opened nothing, the body holding the keyboard: " + JSON.stringify(after));
+    assert.equal(after.paints, paints0 + 1, "the release ran the repaint, once");
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a popover up with no press under way: the retry's success repaints the note and closes it, as every paint does", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await page.locator(".fileview-outline-btn").click();
+    await frames(page, 2);
+    const before = await outlineNow(page);
+    assert.deepEqual([before.popover, before.focused], [true, true], "the popover up and holding the keyboard before the arrival: " + JSON.stringify(before));
+    await retryLandsNow(page, retry);
+    const after = await outlineNow(page);
+    assert.deepEqual([after.popover, after.expanded, after.bodyFocused], [false, "false", true], "the arrival's repaint closed the popover and opened nothing, the keyboard handed to the body: " + JSON.stringify(after));
+    assert.equal(after.paints, before.paints + 1, "the arrival repainted the note, once");
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// The held branch of the same reopen (the review's round 3: with no scene driving it, openOutline() moved into the shown branch alone
+// passed every scene above). A held paint over an earlier one keeps that paint's Outline button (renderBody hides it before the paint
+// only for the editor or when no text is in hand, and a held paint returns before syncOutline), so a note with no formula, painted at
+// once with its button shown, then a reload whose text holds a formula, made before the renderer is in, puts the button under the
+// reader's pointer while the paint is held. The click at the release opens the popover over the held-over paint's headings; the
+// arrival's run then paints the held text, lands, and opens it again on the laid-out note's.
+const HEADED = "# Plain\n\nNo formula here.\n\n## Before\n\nThe first text.\n";
+const HEADED_MATH = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n## Second\n\n$$\\sum_{i=0}^{n} i^2$$\n\n## Third\n\nAfter the formulas.\n";
+
+test("chromium: the Files pane's viewer: a press on the Outline button held across the renderer's arrival over a reload's held paint: the release's click opens the popover, and the parked repaint of the held paint leaves it open on the laid-out note, holding the keyboard", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: HEADED }, "serve", g, requests);
+    await paintsReach(page, 1);
+    await frames(page, 4);
+    assert.deepEqual(requests, [], "a note with no formula fetches no chunk");
+    const fetched = await page.evaluate(() => (window as any).__fetches);
+    await page.evaluate(([p, text, mt]: [string, string, string]) => { (window as any).__docs[p] = text; (window as any).__mtime = mt; (window as any).__seam.reload(); }, [REPORT, HEADED_MATH, MT2]);
+    await page.waitForFunction((n: number) => (window as any).__fetches > n, fetched, { timeout: 10000 });
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]') && !!document.querySelector(".fileview-body > .fileview-math-wait"), null, { timeout: 10000 });
+    await frames(page, 4);
+    const held = await page.evaluate(() => {
+      const b = document.querySelector(".fileview-body")!;
+      const btn = document.querySelector(".fileview-outline-btn") as HTMLElement;
+      return { wait: !!b.querySelector(":scope > .fileview-math-wait"), button: !btn.hidden && btn.getBoundingClientRect().width > 0, katex: b.querySelectorAll(".katex").length, paints: (window as any).__paints - (window as any).__reflows };
+    });
+    assert.deepEqual(held, { wait: true, button: true, katex: 0, paints: 1 }, "the reload's paint is held over the first paint, the loader up, and the first paint's Outline button still shows: " + JSON.stringify(held));
+    // each popover put into the page from here on, by the headings its rows list when it goes in
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__opened = [];
+      new MutationObserver((recs) => { for (const r of recs) r.addedNodes.forEach((n) => { if (n instanceof HTMLElement && n.classList.contains("fileview-outline")) w.__opened.push(Array.from(n.querySelectorAll(".fileview-outline-row")).map((x) => (x.textContent || "").trim())); }); })
+        .observe(document.body, { childList: true, subtree: true });
+    });
+    await pressOutlineButton(page);
+    const paints0 = (await outlineNow(page)).paints;
+    g.open();
+    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+    await frames(page, 6);
+    const under = await outlineNow(page);
+    const loaderUnder = await page.evaluate(() => !!document.querySelector(".fileview-body > .fileview-math-wait"));
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await outlineNow(page);
+    const rows = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-outline .fileview-outline-row")).map((r) => (r.textContent || "").trim()));
+    assert.deepEqual([after.popover, after.focused, after.expanded], [true, true, "true"], "after the release the popover stands, holding the keyboard: the click opened it, and the parked repaint of the held paint, whose paint closes it, opened it again: " + JSON.stringify(after));
+    assert.deepEqual(rows, ["Ratios", "Second", "Third"], "the popover lists the laid-out note's headings: " + JSON.stringify(rows));
+    const opened = await page.evaluate(() => (window as any).__opened);
+    assert.deepEqual(opened, [["Plain", "Before"], ["Ratios", "Second", "Third"]], "two popovers across the release: the click's, over the held-over paint's headings, then the run's after its paint: " + JSON.stringify(opened));
+    assert.deepEqual([under.popover, under.paints, loaderUnder], [false, paints0, true], "under the press no popover yet, nothing painted and the loader still up: the held paint's repaint was parked: " + JSON.stringify({ under, loaderUnder }));
+    assert.equal(after.paints, paints0 + 1, "the release ran the repaint, once");
+    const b = await overNow(page);
+    assert.deepEqual([b.katex, b.src, b.loader], [2, 0, false], "the note laid out under the popover, the loader gone: " + JSON.stringify(b));
+    assert.deepEqual(requests, ["/dist/math-chunk.js?v=3"], "one request, sent by the reload's paint");
+    assert.deepEqual(errors, []);
+  });
+});
+
+// ── the parked repaint re-checks at the release that nothing painted since the settle (the check of round 2's pass): a landing
+// parked under the same press, which the release runs first, or the reader's own pick at the release, stands ──
+
+/** The local viewer's body as the takeover scenes read it: the failure pane's sentence, the seam's error(), and what else shows. */
+const paneNow = (page: any): Promise<{ pane: string | null; error: string | null; md: boolean; loader: boolean; katex: number; src: number }> => page.evaluate(() => {
+  const b = document.querySelector(".fileview-body")!;
+  const e = b.querySelector(":scope > .fileview-err");
+  return { pane: e ? e.textContent : null, error: (window as any).__seam.error(), md: !!b.querySelector(".fileview-md"), loader: !!b.querySelector(".fileview-load"),
+    katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length };
+});
+/** Records each root put into the body from now on, by its class, in order: installed under the press, before the release, so a scene
+ *  reads which paints ran across the release (the failure pane's root, a Rendered root) and in what order. */
+const watchBodyRoots = (page: any): Promise<void> => page.evaluate(() => {
+  const w = window as any;
+  w.__added = [];
+  new MutationObserver((recs) => { for (const r of recs) r.addedNodes.forEach((n) => { if (n instanceof HTMLElement) w.__added.push(n.className); }); })
+    .observe(document.querySelector(".fileview-body")!, { childList: true });
+});
+/** A reload of the note answered 404 (the file gone) while a press holds the card: its landing, the failure pane, parks. */
+async function reload404UnderPress(page: any): Promise<void> {
+  const fetched = await page.evaluate(() => (window as any).__fetches);
+  await page.evaluate((p: string) => { delete (window as any).__docs[p]; (window as any).__seam.reload(); }, REPORT);
+  await page.waitForFunction((n: number) => (window as any).__fetches > n, fetched, { timeout: 10000 });
+  await frames(page, 4);
+  assert.equal(await page.evaluate(() => !!document.querySelector(".fileview-body > .fileview-err")), false, "the failure pane is parked under the press");
+}
+
+test("chromium: the Files pane's viewer: a held open, under one press a reload answered 404 and the chunk served: the release paints the reload's pane, and the arrival's parked repaint stands down, error() keeping its sentence", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: NOTE }, "serve", g, requests);
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 4);
+    const box = await page.locator(".fileview-body > .fileview-load").boundingBox();
+    assert.ok(box, "the held open's loader to press on");
+    await page.mouse.move(box.x + 10, box.y + box.height / 2);
+    await page.mouse.down();
+    await reload404UnderPress(page);
+    g.open();
+    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+    await frames(page, 6);
+    await watchBodyRoots(page);
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await paneNow(page);
+    assert.ok(after.error && after.pane !== null && after.pane.includes(after.error) && !after.md && !after.loader && after.katex === 0,
+      "the reload's pane stands with its sentence, no note painted over it: " + JSON.stringify(after));
+    const added = await page.evaluate(() => (window as any).__added);
+    assert.deepEqual(added, ["fileview-err"], "across the release the pane is the only root put into the body: the arrival's parked repaint stood down and painted no note before the pane: " + JSON.stringify(added));
+    assert.equal(requests.length, 1);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a failed load's sources shown, under one press a reload answered 404 and the retry served: the release paints the reload's pane, and the arrival's parked repaint stands down, error() keeping its sentence", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    const para = page.locator(".fileview-body .fileview-md p", { hasText: "Paragraph 2:" }).first();
+    const box = await para.boundingBox();
+    assert.ok(box, "a paragraph to press on");
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await reload404UnderPress(page);
+    await retryLandsNow(page, retry);
+    await watchBodyRoots(page);
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await paneNow(page);
+    assert.ok(after.error && after.pane !== null && after.pane.includes(after.error) && !after.md && after.katex === 0 && after.src === 0,
+      "the reload's pane stands with its sentence, no note painted over it: " + JSON.stringify(after));
+    const added = await page.evaluate(() => (window as any).__added);
+    assert.deepEqual(added, ["fileview-err"], "across the release the pane is the only root put into the body: the arrival's parked repaint stood down and painted no note before the pane: " + JSON.stringify(added));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the URL viewer: a failed load's sources shown, a press on Raw held across the retry's success: the release's Raw pick paints the rows, and the arrival's parked repaint stands down", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "url");
+    const raw = page.locator("#romp-fileview button.fileview-btn", { hasText: /^Raw$/ });
+    const box = await raw.boundingBox();
+    assert.ok(box, "the Raw button to press");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await retryLandsNow(page, retry);
+    const under = await overNow(page);
+    assert.deepEqual([under.md, under.src, under.katex], [true, 2, 0], "under the press the note stands, its formulas still their sources: " + JSON.stringify(under));
+    // every paint of the body from here on: a swap of its children (the URL viewer fires no seam paint)
+    await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; (window as any).__swaps = 0; new MutationObserver((recs) => { if (recs.some((r) => r.addedNodes.length)) (window as any).__swaps++; }).observe(b, { childList: true }); });
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { rows: b.querySelectorAll(".fv-cl").length, md: !!b.querySelector(".fileview-md"), katex: b.querySelectorAll(".katex").length, swaps: (window as any).__swaps }; });
+    assert.ok(after.rows > 0 && !after.md && after.katex === 0, "the Raw pick's rows stand, no Rendered paint over them: " + JSON.stringify(after));
+    assert.equal(after.swaps, 1, "one paint after the release, the Raw pick's: the parked repaint found a paint since the settle and painted nothing: " + JSON.stringify(after));
+    const pressed = (await overNow(page)).pressed;
+    assert.ok(pressed.includes("Raw") && !pressed.includes("Rendered"), "under the pressed Raw button: " + JSON.stringify(pressed));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// the held half of the same re-check (the review's round 3, tests-2): the arrival's repaint of a held paint stands down when a paint
+// since the settle ended the hold, here the Raw pick the release clicks
+test("chromium: the URL viewer: a held open, a press on Raw held across the renderer's arrival: the loader stands under the press, and the release's Raw pick paints the rows, the arrival's parked repaint standing down: one paint", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: NOTE }, "serve", g, requests, null, { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: NOTE } });
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 4);
+    assert.deepEqual([(await overNow(page)).loader, (await overNow(page)).md], [true, false], "held at the open: the loader, no note");
+    const raw = page.locator("#romp-fileview button.fileview-btn", { hasText: /^Raw$/ });
+    const box = await raw.boundingBox();
+    assert.ok(box, "the Raw button to press");
+    // every paint of the body from the press on: a swap of its children (the URL viewer fires no seam paint)
+    await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; (window as any).__swaps = 0; new MutationObserver((recs) => { if (recs.some((r) => r.addedNodes.length)) (window as any).__swaps++; }).observe(b, { childList: true }); });
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    g.open();
+    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+    await frames(page, 6);
+    const under = await overNow(page);
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { rows: b.querySelectorAll(".fv-cl").length, md: !!b.querySelector(".fileview-md"), katex: b.querySelectorAll(".katex").length, swaps: (window as any).__swaps }; });
+    assert.ok(after.rows > 0 && !after.md && after.katex === 0, "the Raw pick's rows stand, no Rendered paint over them: " + JSON.stringify(after));
+    assert.deepEqual([under.loader, under.md], [true, false], "under the press the loader stood and no note was in the body: the arrival's repaint was parked, not run: " + JSON.stringify(under));
+    assert.equal(after.swaps, 1, "one paint from the press on, the Raw pick's: the parked repaint found the hold ended by a paint since the settle and painted nothing: " + JSON.stringify(after));
+    const pressed = (await overNow(page)).pressed;
+    assert.ok(pressed.includes("Raw") && !pressed.includes("Rendered"), "under the pressed Raw button: " + JSON.stringify(pressed));
+    assert.equal(requests.length, 1);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// two tall display formulas on the first screen, then a link to the section below: their growth from a source block to KaTeX's layout
+// moves the link by more than its own height
+const LINKED = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n$$\\sum_{i=0}^{n} \\frac{\\frac{a_i}{b_i}}{\\frac{c_i}{d_i}}$$\n\n$$\\prod_{j=1}^{m} \\frac{\\frac{x_j}{y_j}}{\\frac{u_j}{v_j}}$$\n\n"
+  + "Jump [to the second section](#second) from here.\n\n" + FILLER + "\n\n## Second\n\nTarget paragraph here.\n\n" + FILLER + "\n";
+
+for (const viewer of ["file", "url"] as const) {
+  test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}: a press on a link below two display formulas, held across a retry's success, clicks the link, still in the page, and its fragment lands; nothing in the body moved under the press`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const retry = gate(); const requests: string[] = [];
+      const { page, errors } = await failedThenRetryOut(browser, retry, requests, viewer, LINKED);
+      const link = page.locator(".fileview-body .fileview-md a", { hasText: "to the second section" });
+      const box = await link.boundingBox();
+      assert.ok(box, "the link on the first screen");
+      const top0 = await page.evaluate(() => { const a = Array.from(document.querySelectorAll(".fileview-body .fileview-md a")).find((x) => (x.textContent || "").includes("to the second section")) as HTMLElement; return a.getBoundingClientRect().top; });
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await retryLandsNow(page, retry);
+      // read under the press, asserted after the release, so a lost click, what the reader sees, reds first
+      const held = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; const a = Array.from(b.querySelectorAll(".fileview-md a")).find((x) => (x.textContent || "").includes("to the second section")) as HTMLElement | undefined;
+        return { top: a ? a.getBoundingClientRect().top : null, src: b.querySelectorAll("code.md-math-src").length, katex: b.querySelectorAll(".katex").length }; });
+      await page.mouse.up();
+      await frames(page, 8);
+      const clicks = await page.evaluate(() => (window as any).__clicks);
+      assert.ok(clicks.some((c: any) => c.text === "to the second section" && c.connected), "the release clicked the link, still in the page: " + JSON.stringify({ clicks, held, top0 }));
+      const l = await landing(page);
+      assert.ok(l.heading !== null && l.heading >= 0 && l.heading < 60, "its fragment landed: the section's heading at the body's top: " + JSON.stringify(l));
+      assert.deepEqual(held, { top: top0, src: 3, katex: 0 }, "under the press nothing in the body moved: the link where it was pressed, the three formulas still their sources: " + JSON.stringify(held));
+      const b = await overNow(page);
+      assert.deepEqual([b.katex, b.src, b.loader], [3, 0, false], "after the release the note is laid out: " + JSON.stringify(b));
+      assert.equal(requests.length, 2);
+      assert.deepEqual(errors, []);
+    });
+  });
+}

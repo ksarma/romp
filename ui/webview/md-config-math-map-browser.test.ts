@@ -81,7 +81,7 @@ const BUILD = { bundle: true, write: false, format: "iife", platform: "browser",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
 /** The Files pane's bundle plus the anchor map's and the reader's place's exports, one module instance, for the reads over the page's own box. */
 function filesBundle(): string {
-  const contents = 'import "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, paintRenderedPoint, unpaintChanges } from "./anchor-map";\nimport { readPlace } from "./reader-place";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, paintRenderedPoint, unpaintChanges, readPlace };\n';
+  const contents = 'import "./math-chunk";\nimport "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, paintRenderedPoint, unpaintChanges } from "./anchor-map";\nimport { readPlace } from "./reader-place";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, paintRendered, paintRenderedPoint, unpaintChanges, readPlace };\n';
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" } });
   return r.outputFiles[0].text;
 }
