@@ -1167,7 +1167,10 @@ jobs:
         # bound, names the leg and the bound, and runs the other legs on. The bound counts from each leg's own start, so
         # a hung leg that starts later than the step's timeout-minutes less the bound and that 10 s (50 s today), less
         # the time the kills and the closing pass take (under a second per leg cut at the same moment, measured on a
-        # development box), can be cut by the step first. node's own --test-timeout is not used: on node 22.23.2 its
+        # development box), can be cut by the step first. The cut's red is printed only once every leg has ended, so the
+        # script names a cut with its bound only when the legs still running at the cut and the legs that start after it
+        # end within the step's timeout-minutes too; on the private runner, which runs one leg at a time, every leg after
+        # the cut leg in the roster starts after the cut. node's own --test-timeout is not used: on node 22.23.2 its
         # cancel at the bound sends the file's process a SIGTERM and waits for it, so a leg whose process outlived that
         # signal ran on past it, and a process that ends on it leaves its children running; and a leg's own { timeout }
         # does not end the process either, since a live browser handle keeps it up after the named failure. Nothing

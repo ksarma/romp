@@ -20,14 +20,16 @@
 //     passage, read as the comments at those reads state), and the script's per-file bound (the default of its knob
 //     ROMP_BROWSER_LEGS_FILE_MS, the bound at which it kills a leg's node --test's file process and every process under
 //     it) sits above the timeout: values the bound pin reads (boundReds' docstring) in a rostered source, and the bound
-//     and its grace together under the step's bound, so a hung leg that starts with the step fails by name before the
-//     step is cut (a leg queued behind others gets its bound from its own start, so one that starts late can be cut by
-//     the step first: the script's comment above its knobs gives the window), and the figures the step comment and the
-//     script state (the default bound, the grace after it, the edge they leave under the step's bound and the script
-//     header's two defaults) are the script's defaults. The spellings the bound pin reads and the ones it does not read
-//     are boundReds' to state: a value spelled outside them is not held here, and a leg whose file outlasts the file
-//     bound meets the script's kill and its cut red whatever its own timeout says (the check's guarantee is that no
-//     value it reads reaches the file bound, and a leg's whole-file seconds are measured in the PR's body);
+//     and its grace together under the step's bound, so a hung leg that starts with the step is killed before the step
+//     is cut (a leg queued behind others gets its bound from its own start, so one that starts late can be cut by the
+//     step first, and the cut's red is printed only once every leg has ended, so it names the leg inside the step only
+//     when the other legs end inside it too: the script's comment above its knobs gives the window and that condition),
+//     and the figures the step comment and the script state (the default bound, the grace after it, the edge they leave
+//     under the step's bound and the script header's two defaults) are the script's defaults. The spellings the bound
+//     pin reads and the ones it does not read are boundReds' to state: a value spelled outside them is not held here,
+//     and a leg whose file outlasts the file bound meets the script's kill and its cut red whatever its own timeout
+//     says (the check's guarantee is that no value it reads reaches the file bound, and a leg's whole-file seconds are
+//     measured in the PR's body);
 //   - the roster is well formed: each line parseRoster keeps (its docstring) is a bundle path as wellFormed reads it (its
 //     docstring), no such line is duplicated, and each names a source that exists in the tree;
 //   - each home of the roster rule, read in its named section (RULE_HOMES' docstring), states it in the same words: the
@@ -823,7 +825,7 @@ test('boundReds\' table: each row read or not read as boundReds\' docstring stat
   assert.deepEqual(wrong, [], 'each row of boundReds\' table is read or not read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
 });
 
-test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment names that number; the script\'s per-file bound sits above the timeout: values the bound pin reads in a rostered source (boundReds\' docstring), and the bound and its grace together under the step\'s bound, so a hung leg fails by name before the step is cut; the figures the step comment and the script state are the script\'s defaults', () => {
+test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment names that number; the script\'s per-file bound sits above the timeout: values the bound pin reads in a rostered source (boundReds\' docstring), and the bound and its grace together under the step\'s bound, so a hung leg that starts with the step is killed before the step is cut; the figures the step comment and the script state are the script\'s defaults', () => {
   const job = extensionJob();
   const { cap, capLine } = jobCap(job);
   const step = steps(job).find((s) => s.name === STEP);
@@ -886,7 +888,7 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
     sources.push({ bundle: e.bundle, src: path.relative(REPO, src), text: read(src) });
   }
   assert.deepEqual(boundReds(sources, ms), [], 'the check\'s guarantee: no timeout: value the bound pin reads in a rostered source (boundReds\' docstring) reaches the script\'s per-file bound (' + ms + ' ms). A value spelled outside what it reads is not held here, and its leg meets what any leg whose file outlasts the bound meets: the script kills the file\'s node process and every process under it, and its cut red names the bundle and the bound, not the test. The file bound cuts a file\'s whole run, so a leg whose timed tests together outlast it is cut all the same: a leg\'s whole-file seconds are measured in the PR\'s body, not here');
-  assert.ok(ms + grace < bound * 60 * 1000, 'the script\'s per-file bound (' + ms + ' ms) and its grace (' + grace + ' ms) together are under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file that starts with the step is killed and named, and a node --test that outlives the kill is killed too, before the step is cut (a leg queued behind others gets its bound from its own start, so one that starts late can be cut by the step first)');
+  assert.ok(ms + grace < bound * 60 * 1000, 'the script\'s per-file bound (' + ms + ' ms) and its grace (' + grace + ' ms) together are under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file that starts with the step is killed, and a node --test that outlives the kill is killed too, before the step is cut (the cut\'s red is printed only once every leg has ended, so it names the leg inside the step only when the other legs end inside it too; a leg queued behind others gets its bound from its own start, so one that starts late can be cut by the step first)');
   // the figures the comments state, held to the script's defaults, each as it is spelled: the step comment's default
   // bound, its grace after the bound, and its edge (the step's bound less the bound and the grace, in seconds) beside
   // the grace that sentence names again; and the script's edge, where its knobs comment gives it and where that comment
