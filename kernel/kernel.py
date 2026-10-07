@@ -71468,7 +71468,7 @@ else if(tip.style.display==='block'){var mh=tipHTML();if(mh)modalPaint(mh);}
 // the spend modal's Totals section is these same rows: an open modal follows every landing too (T247)
 if(typeof SP!=='undefined'&&SP.open&&SP.data){var ts=document.getElementById('rsp-totals');if(ts)ts.innerHTML=totalsHTML(SP.data);}
 cardTell();}
-// The single-payload path the timeline still posts (and the mobile panel's own fetch): treat it as this
+// The single-payload path the timeline still posts (its forward, this payload's one source): treat it as this
 // machine's row, leaving any other account's bars alone. It is a read that ends as it starts (the writers' list at the top of
 // this script): it takes the next number and marks it ended, and clears the flag, since a reading arrived.
 function render(u){notices(u);READ_FAILED=false;PULL_ENDED=++PULLS;
