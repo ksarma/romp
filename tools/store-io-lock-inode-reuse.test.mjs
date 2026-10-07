@@ -26,8 +26,18 @@
 //     is in, and the waiter leaves on the breaker's report of its next step. Started at fixed times by
 //     the clock (until 2026-10-07), a child that loaded store-io late on a loaded machine let the waiter
 //     break the dead lock and go in before the breaker stalled, and the case failed its own setup.
-// A filesystem that never reuses an inode number (tmpfs) cannot tell the descriptor open from closed, so
-// neither case fails there with it closed; both do where the scratch directory reuses numbers (ext4).
+// Where the scratch directory reuses numbers (ext4), the in-process case fails every run alone and the
+// real-process case in most rounds alone, and far less often among concurrent copies, because other
+// copies' fresh locks take the freed number. A filesystem that never reuses an inode number (tmpfs)
+// cannot tell the descriptor open from closed, so neither case fails there with it closed. Measured on
+// 2026-10-07 with the descriptor closed (breakStaleLock judging with peekLock): under the sweep's tools
+// leg (every tools test file at once), the in-process case failed 0 of 10 runs on tmpfs, which is the
+// sweep's TMPDIR on the box and possibly CI's, and 8 of 10 on ext4 (3 of 5 on a second ext4; the
+// real-process case 4 of 10 and 2 of 5); among 20 concurrent copies of this file on ext4, the in-process
+// case failed in 11 to 17 copies of 20 and the real-process case in 1 or 2, and on tmpfs in none. Two
+// TEXT pins, not this behaviour, catch that change on any filesystem: tools/vendor-drift.test.mjs (the
+// vendor patch no longer applies) and the store-io source pin in
+// tools/file-review-plan-sidecar-records.test.mjs.
 // Synthetic paths only, under a scratch directory.
 // Run: node --test tools/store-io-lock-inode-reuse.test.mjs
 import { test, before, after } from 'node:test';
