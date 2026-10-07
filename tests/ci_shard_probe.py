@@ -13,7 +13,7 @@ The census's run legs (2026-10-06) run the items rather than list them, `pytest 
 does not hand a collect-only run to its worker, and read one `PASSED <path>::ci-shard-probe` line per file the process
 that runs tests collected. Each item, when run, asserts that ROMP_TESTS_SHARD is absent from its process's environment:
 tests/conftest.py removes the variable in every process that runs tests, so no process a test starts inherits it, and an
-item that finds it fails, naming its value.
+item that finds it fails, naming the variable but not its value.
 """
 import os
 
@@ -24,10 +24,13 @@ PROBE_ITEM = "ci-shard-probe"
 
 class _ProbeItem(pytest.Item):
     def runtest(self):
-        # the variable spelled out, as tests/conftest.py spells it where it reads it (SHARD_ENV there)
-        assert "ROMP_TESTS_SHARD" not in os.environ, (
-            "ROMP_TESTS_SHARD=%r is in the environment of the process that runs this item: tests/conftest.py's "
-            "_stash_run_shard removes it in every process that runs tests" % os.environ["ROMP_TESTS_SHARD"])
+        # the variable spelled out, as tests/conftest.py spells it where it reads it (SHARD_ENV there); the membership
+        # is bound first, since pytest explains a bare assert's `not in` by printing os.environ, and the message names
+        # the variable, not its value
+        present = "ROMP_TESTS_SHARD" in os.environ
+        assert not present, (
+            "ROMP_TESTS_SHARD is in the environment of the process that runs this item: tests/conftest.py's "
+            "_stash_run_shard removes it in every process that runs tests")
 
 
 class _UnimportedFile(pytest.File):
