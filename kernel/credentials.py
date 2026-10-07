@@ -586,7 +586,8 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
                     # session changes for a helper: it has no controlling terminal, so opening /dev/tty to
                     # prompt fails at once (the systemd unit gives the kernel no terminal, so there it failed
                     # before too; a kernel started in a terminal gave the helper that terminal), and a
-                    # terminal's Ctrl-C signals the kernel's group, not the helper.
+                    # terminal's Ctrl-C, or the SIGHUP when the terminal closes, signals the kernel's group, not
+                    # the helper (the end of this comment says what that leaves when the kernel exits).
                     # A KeyboardInterrupt on the thread waiting in communicate: communicate first waits up to a
                     # quarter second for the shell and reaps it if it has exited by then, and then the group is
                     # not signalled, as with subprocess.run before (a member still holding stdout runs on, and
@@ -600,13 +601,21 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
                     # KeyboardInterrupt. After a first one in communicate while the shell runs, a second one
                     # inside the kill gets no wait: one just after os.killpg leaves the shell it signalled
                     # unreaped, and one before os.killpg leaves the shell running, as with subprocess.run. A run
-                    # on another thread goes on to its bound. A helper still running when the kernel exits runs
-                    # on until it exits by itself. Under the systemd unit, KillMode=control-group ends it only
-                    # when the unit stops or restarts (a manager exit, as the stale-manager self-bounce, is one);
-                    # the manager's kernel restart (romp refresh, a dashboard restart, a quiet-window apply, a
-                    # restarting settings pick) signals the kernel's pid alone (termThenKill in
-                    # bin/romp-manager), so a hung helper runs on through it, as it did with subprocess.run
-                    # before.
+                    # on another thread goes on to its bound. A helper still running when the kernel exits runs on
+                    # until it exits by itself. With subprocess.run before, it was in the kernel's process group,
+                    # and the cleanup of that group at an exit reached it; its own session now escapes that
+                    # cleanup. That is a terminal's Ctrl-C, or the SIGHUP when the terminal closes, for a kernel
+                    # started in a terminal; and, under the macOS launchd agent, whose plist (bin/romp-service)
+                    # sets no AbandonProcessGroup, launchd's cleanup when the manager's job ends (romp-service
+                    # stop, a crash, the stale-manager self-bounce), which kills every process left in the job's
+                    # process group. Before, each of those reached a helper running at that moment and, unless the
+                    # helper handled the signal, ended it; now none reaches it. The systemd unit's
+                    # KillMode=control-group works on the unit's cgroup, which the session does not leave, so
+                    # there it ends the helper, as before, only when the unit stops or restarts (a manager exit,
+                    # as the stale-manager self-bounce, is one). Under the unit and the launchd agent alike, the
+                    # manager's kernel restart (romp refresh, a dashboard restart, a quiet-window apply, a
+                    # restarting settings pick) signals the kernel's pid alone (termThenKill in bin/romp-manager),
+                    # so a hung helper runs on through it, as it did with subprocess.run before.
                     try:
                         os.killpg(p.pid, signal.SIGKILL)
                     except (ProcessLookupError, PermissionError):
