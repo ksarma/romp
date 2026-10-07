@@ -19,8 +19,15 @@
 //     writer that arrives during the stall, breaks the stalled claim by its age and the dead lock,
 //     writes and leaves; the breaker waits for it instead of entering beside it. The defect's own shape
 //     (a claim is created and freed between the dead lock's unlink and the fresh lock's create, so the
-//     allocator hands back the dead lock's number in most rounds, not all: 1 of 3 here); with the
-//     descriptor closed it fails when it does.
+//     allocator hands back the dead lock's number in most rounds, not all); with the descriptor closed
+//     it fails when it does. The order is set by what the children report, never by the clock: each
+//     reports once it has loaded store-io and waits to be let go; the breaker goes first and reports its
+//     stall at the look; only then does the waiter go; the breaker looks on the waiter's report that it
+//     is in, and the waiter leaves on the breaker's report of its next step. Started at fixed times by
+//     the clock (until 2026-10-07), a child that loaded store-io late on a loaded machine let the waiter
+//     break the dead lock and go in before the breaker stalled, and the case failed its own setup.
+// A filesystem that never reuses an inode number (tmpfs) cannot tell the descriptor open from closed, so
+// neither case fails there with it closed; both do where the scratch directory reuses numbers (ext4).
 // Synthetic paths only, under a scratch directory.
 // Run: node --test tools/store-io-lock-inode-reuse.test.mjs
 import { test, before, after } from 'node:test';
@@ -31,7 +38,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { storeLockPathFor, withStoreLock, StoreLockError } from '../vendor/track-changents/store-io.mjs';
+import { storeLockPathFor, withStoreLock, StoreLockError, STORE_LOCK_STALE_MS } from '../vendor/track-changents/store-io.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STORE_IO = pathToFileURL(path.resolve(HERE, '..', 'vendor', 'track-changents', 'store-io.mjs')).href;
@@ -96,30 +103,61 @@ test('a breaker whose look for the unlink comes after a waiter broke its stale c
   fs.unlinkSync(w.lockPath);
 });
 
-// One real writer: spins to the instant `at`, takes the lock with the given bounds, and inside fn puts a
-// marker down, counts the markers it sees (a second one is another writer inside with it), holds for
-// `hold` ms, counts again, and leaves. With `stallMs`, it is the breaker under test: it stalls that long
-// at its look for the unlink (the third read-only open of the lock in this process). Prints one JSON line.
+// One real writer, driven by the parent through its reports. It loads store-io, reports `ready` and waits
+// to be let go (a byte on its stdin; the end of stdin, its parent gone, ends it). Then it takes the lock
+// and inside fn puts a marker down, counts the markers it sees (a second one is another writer inside with
+// it), reports `in`, waits to be let go again when it is the waiter, counts again and leaves; at the end
+// it reports `done` with what it saw. The breaker (`breaker` 1) is let go a second time at its look for
+// the unlink (the third read-only open of the lock in this process): it reports `stalled` there and
+// waits, and once let go it looks, reports `looked` with what it found at the name, and reports `waiting`
+// at its next look (a writer waiting at a held lock looks again). Each report is one JSON line on stdout,
+// written before the step that follows it.
 const WRITER = `
 import fs from 'node:fs';
 import path from 'node:path';
-const [storeIo, store, at, hold, markers, tag, waitMs, staleMs, stallMs] = process.argv.slice(1);   // -e: no script path in argv
+const [storeIo, store, markers, tag, waitMs, staleMs, breaker] = process.argv.slice(1);   // -e: no script path in argv
+const lock = store + '.lock';
+const claim = lock + '.break';
+const report = (ev, more) => fs.writeSync(1, JSON.stringify({ ev, tag, pid: process.pid, t: Date.now(), ...more }) + '\\n');
+const gate = (name) => {
+  const b = Buffer.alloc(1);
+  for (;;) {
+    let n;
+    try { n = fs.readSync(0, b, 0, 1, null); } catch (e) {
+      if (e && e.code === 'EAGAIN') { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1); continue; }
+      throw e;
+    }
+    if (n === 1) return;
+    report('abandoned', { gate: name });
+    process.exit(3);
+  }
+};
+// What is at a name now; read by path, not by the look's flags, so the breaker's count of its looks holds.
+const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+const ino = (p) => { try { return String(fs.lstatSync(p, { bigint: true }).ino); } catch { return null; } };
 const { withStoreLock, StoreLockError } = await import(storeIo);
-const out = { tag, held: false, overlap: 0, in: null, out: null, stalled: null, err: null };
-if (Number(stallMs) > 0) {
+if (breaker === '1') {
   const LOOK = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
-  const lock = store + '.lock';
   const real = fs.openSync;
   let looks = 0;
   fs.openSync = function (p, flags, ...rest) {
-    if (p === lock && flags === LOOK && ++looks === 3) {
-      out.stalled = Date.now();
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(stallMs));
+    if (p !== lock || flags !== LOOK) return real.call(fs, p, flags, ...rest);
+    ++looks;
+    if (looks === 3) {
+      report('stalled', { claim: read(claim), lock: read(lock), ino: ino(lock) });
+      gate('resume');
+      let fd;
+      try { fd = real.call(fs, p, flags, ...rest); } catch (e) { report('looked', { ino: null, lock: null, err: String(e && e.code) }); throw e; }
+      report('looked', { ino: String(fs.fstatSync(fd, { bigint: true }).ino), lock: read(lock) });
+      return fd;
     }
+    if (looks === 4) report('waiting', { lock: read(lock) });
     return real.call(fs, p, flags, ...rest);
   };
 }
-while (Date.now() < Number(at)) { /* spin */ }
+report('ready');
+gate('go');
+const out = { held: false, overlap: 0, in: null, out: null, err: null };
 try {
   withStoreLock(store, () => {
     out.held = true; out.in = Date.now();
@@ -127,8 +165,8 @@ try {
     const mine = path.join(markers, 'h-' + tag);
     fs.writeFileSync(mine, '', { flag: 'wx' });
     out.overlap = Math.max(out.overlap, seen());
-    const until = Date.now() + Number(hold);
-    while (Date.now() < until) { /* hold */ }
+    report('in', { ino: ino(lock), lock: read(lock), claim: read(claim) });
+    if (breaker !== '1') gate('leave');
     out.overlap = Math.max(out.overlap, seen());
     fs.unlinkSync(mine);
     out.out = Date.now();
@@ -136,43 +174,102 @@ try {
 } catch (e) {
   out.err = e instanceof StoreLockError ? 'StoreLockError held=' + e.held : String(e && e.stack || e);
 }
-process.stdout.write(JSON.stringify(out) + '\\n');
+report('done', out);
 `;
-function writer(w, markers, { at, hold, tag, waitMs, staleMs, stallMs = 0 }) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', WRITER, '--', STORE_IO, w.storePath, String(at), String(hold), markers, tag, String(waitMs), String(staleMs), String(stallMs)]);
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8'); child.stdout.on('data', (c) => { stdout += c; });
-    child.stderr.setEncoding('utf8'); child.stderr.on('data', (c) => { stderr += c; });
-    child.on('close', () => {
-      let json = null;
-      try { json = JSON.parse(stdout); } catch { json = { tag, err: `no JSON line: ${stdout} ${stderr}` }; }
-      resolve(json);
-    });
+// next(...names) resolves with the child's first report of any of those names, and fails, with its reports
+// and stderr, when the child exits without one; open() lets the child go past the gate it waits at.
+function writer(w, markers, { tag, waitMs, staleMs, breaker = false }) {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', WRITER, '--', STORE_IO, w.storePath, markers, tag, String(waitMs), String(staleMs), breaker ? '1' : '0']);
+  const reports = [];
+  const pending = [];
+  let stdout = '';
+  let stderr = '';
+  let exit = null;
+  const settle = () => {
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const { names, resolve, reject } = pending[i];
+      const hit = reports.find((r) => names.includes(r.ev));
+      if (hit) { pending.splice(i, 1); resolve(hit); continue; }
+      if (exit) { pending.splice(i, 1); reject(new Error(`${tag} exited (${exit}) without reporting ${names.join(' or ')}; its reports: ${JSON.stringify(reports)}; stderr: ${stderr}`)); }
+    }
+  };
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (c) => {
+    stdout += c;
+    let nl;
+    while ((nl = stdout.indexOf('\n')) >= 0) {
+      const line = stdout.slice(0, nl);
+      stdout = stdout.slice(nl + 1);
+      try { reports.push(JSON.parse(line)); } catch { reports.push({ ev: 'unparsed', line }); }
+    }
+    settle();
   });
+  child.stderr.setEncoding('utf8'); child.stderr.on('data', (c) => { stderr += c; });
+  child.stdin.on('error', () => { /* the child is gone: the wait for its report fails with its exit */ });
+  child.on('close', (code, signal) => { exit = signal || `code ${code}`; settle(); });
+  return {
+    next: (...names) => new Promise((resolve, reject) => { pending.push({ names, resolve, reject }); settle(); }),
+    open: () => { child.stdin.write('g'); },
+    kill: () => { if (!exit) child.kill('SIGKILL'); },
+  };
 }
 
-test('real processes: a breaker stalled past the stale bound at its look for the unlink, whose claim and dead lock a waiter broke meanwhile, waits for that waiter\'s write instead of removing its lock and entering beside it', async () => {
+// The waiter breaks the stalled breaker's claim once the claim is older than its bound, so the stall runs
+// past the bound by the lock's own rule, however long the machine takes. The breaker judges by the
+// callers' bound, so the waiter's live lock stays fresh to it whatever the steps between the reports
+// take; judged by the waiter's bound, a slow step would let the breaker break that lock by its age and
+// enter beside it, the very failure this case looks for. Both wait far longer than the case takes: a
+// writer that gives up fails the case.
+const WAITER_STALE_MS = 1000;
+const WAIT_MS = 30000;
+
+test('real processes: a breaker stalled past the stale bound at its look for the unlink, whose claim and dead lock a waiter broke meanwhile, waits for that waiter\'s write instead of removing its lock and entering beside it', { timeout: 120000 }, async (t) => {
   const w = world();
   const markers = path.join(path.dirname(w.root), 'markers');
   fs.mkdirSync(markers);
-  fs.writeFileSync(w.lockPath, `${deadPid()} ${Date.now()}\n`);
-  // The bound is 1000 ms here so the stall (1500 ms) puts the breaker's claim past it while the waiter
-  // (arriving 300 ms in) is looking, and the waiter's fresh lock (about 500 ms old when the breaker
-  // wakes) is not: the breaker finds a live lock at the name and must wait for it.
-  const base = Date.now() + 200;
-  const [X, Y] = await Promise.all([
-    writer(w, markers, { at: base, hold: 50, tag: 'X', waitMs: 4000, staleMs: 1000, stallMs: 1500 }),
-    writer(w, markers, { at: base + 300, hold: 600, tag: 'Y', waitMs: 4000, staleMs: 1000 }),
-  ]);
-  for (const j of [X, Y]) assert.equal(j.err, null, `${j.tag}: ${j.err}`);
-  assert.ok(X.stalled, 'the breaker reached its look for the unlink and stalled there');
-  assert.ok(Y.in > X.stalled && Y.in < X.stalled + 1500, `the waiter broke in during the stall (Y in at ${Y.in - X.stalled} ms of it)`);
-  assert.equal(Y.held, true, 'the waiter wrote');
-  assert.equal(X.held, true, 'the breaker wrote, after the waiter');
-  assert.ok(X.in >= Y.out, `the breaker entered ${Y.out - X.in} ms before the waiter left: it removed the waiter's live lock`);
-  assert.equal(Y.overlap, 1, 'the waiter had the lock alone');
-  assert.equal(X.overlap, 1);
-  assert.deepEqual(fs.readdirSync(w.dir), [], `left behind: ${fs.readdirSync(w.dir)}`);
+  const deadStamp = `${deadPid()} ${Date.now()}\n`;
+  fs.writeFileSync(w.lockPath, deadStamp);
+  const dead = fs.statSync(w.lockPath, { bigint: true });
+  const X = writer(w, markers, { tag: 'X', waitMs: WAIT_MS, staleMs: STORE_LOCK_STALE_MS, breaker: true });
+  const Y = writer(w, markers, { tag: 'Y', waitMs: WAIT_MS, staleMs: WAITER_STALE_MS });
+  // A child waiting at its gate keeps this process alive, so the case's timeout ends them too.
+  t.signal.addEventListener('abort', () => { X.kill(); Y.kill(); }, { once: true });
+  try {
+    // Each step waits for the report that makes it the next one, and its setup is checked on that report,
+    // so a setup not reached fails there.
+    await Promise.all([X.next('ready'), Y.next('ready')]);
+    X.open();   // the breaker alone: the dead lock judged, its claim taken
+    const stalled = await X.next('stalled');
+    assert.equal(stalled.lock, deadStamp, 'the breaker stalled at its look for the unlink with the dead lock still at the name');
+    assert.equal(stalled.ino, String(dead.ino), 'the dead lock\'s own inode');
+    const claimed = new RegExp(`^${stalled.pid} (\\d+)$`, 'm').exec(stalled.claim || '');
+    assert.ok(claimed, `the breaker stalled holding its own claim (the claim: ${JSON.stringify(stalled.claim)})`);
+    Y.open();   // the waiter: waits the claim out, breaks it and the dead lock, goes in
+    const yIn = await Y.next('in');
+    assert.equal(yIn.claim, null, 'the waiter broke the stalled breaker\'s claim before it went in');
+    assert.ok(yIn.lock && yIn.lock.startsWith(`${yIn.pid} `), `the waiter holds a lock of its own (${JSON.stringify(yIn.lock)})`);
+    X.open();   // the breaker looks for the unlink
+    const looked = await X.next('looked');
+    assert.ok(looked.t - Number(claimed[1]) > WAITER_STALE_MS, `the stall ran past the bound (${looked.t - Number(claimed[1])} ms from the claim's stamp)`);
+    assert.equal(looked.lock, yIn.lock, 'the breaker\'s look for the unlink found the waiter\'s fresh lock at the name');
+    assert.equal(looked.ino, yIn.ino, 'the waiter\'s lock itself');
+    // The lock's guarantee.
+    assert.notEqual(looked.ino, String(dead.ino), 'the judged inode was still open in the breaker, so the fresh lock could not take its number');
+    const nextStep = await X.next('waiting', 'in');   // waits at that lock, or removed it and went in
+    assert.equal(nextStep.ev, 'waiting', 'the breaker went in while the waiter held its lock: it removed that lock');
+    assert.equal(nextStep.lock, yIn.lock, 'the breaker waits at the waiter\'s lock');
+    Y.open();   // the waiter leaves
+    const [x, y] = await Promise.all([X.next('done'), Y.next('done')]);
+    for (const j of [x, y]) assert.equal(j.err, null, `${j.tag}: ${j.err}`);
+    // One clock in whole milliseconds: the waiter's entry and the breaker's look on its report can share one.
+    assert.ok(y.in >= stalled.t && y.in <= looked.t, `the waiter broke in during the stall (Y in at ${y.in - stalled.t} ms of it, the stall ${looked.t - stalled.t} ms)`);
+    assert.equal(y.held, true, 'the waiter wrote');
+    assert.equal(x.held, true, 'the breaker wrote, after the waiter');
+    assert.ok(x.in >= y.out, `the breaker entered ${y.out - x.in} ms before the waiter left: it removed the waiter's live lock`);
+    assert.equal(y.overlap, 1, 'the waiter had the lock alone');
+    assert.equal(x.overlap, 1);
+    assert.deepEqual(fs.readdirSync(w.dir), [], `left behind: ${fs.readdirSync(w.dir)}`);
+  } finally {
+    X.kill(); Y.kill();
+  }
 });
