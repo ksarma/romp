@@ -196,7 +196,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import traceback
 
 BODY_CAP = 65_536          # GitHub's PR body limit, in characters
 RESOLUTION_LINES = 300     # per conflicted merge, in the "Conflict resolutions" details block
@@ -4469,17 +4468,17 @@ def bisect_unfinished(body, wt, name, e, bisected, found=None):
 def bisect_found(body, found):
     """Print what bisect had found when a stop arrives during its cleanup, before the stop is raised (the closing check
     of PR 959, its NEW-1): the first bad commit's line, `found`'s, as bisect prints it when it ends; else why the run at
-    the base or the steps stopped, `body`, as main would have printed it: a Fail's message, or Python's traceback for
-    anything else (starting the command raised OSError, say: a command the run at the tip removed). A stop that ended
-    them (Stopped) prints nothing, and none can arrive during the cleanup after one: the first stop wins (_on_stop).
-    Before, the stop came out of the cleanup in place of what bisect had found, and batch.py said only that it was
-    stopped."""
+    the base or the steps stopped, `body`, as it would have been printed: a Fail's message, as main prints it, or for
+    anything else (starting the command raised OSError, say: a command the run at the tip removed) what Python prints
+    for an exception nothing catches, its traceback (sys.excepthook). A stop that ended them (Stopped) prints nothing,
+    and none can arrive during the cleanup after one: the first stop wins (_on_stop). Before, the stop came out of the
+    cleanup in place of what bisect had found, and batch.py said only that it was stopped."""
     if found is not None:
         print(found[1])
     elif isinstance(body, Fail):
         print("batch: %s" % body, file=sys.stderr)
     elif body is not None and not isinstance(body, Stopped):
-        traceback.print_exception(body)
+        sys.excepthook(type(body), body, body.__traceback__)
 
 
 # ── entry point ──────────────────────────────────────────────────────────────
