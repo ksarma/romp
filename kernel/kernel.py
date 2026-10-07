@@ -40378,8 +40378,9 @@ def _postal_card_deps_memo(deps, index, captions):
     - the names, as _names_scope_digest: the walk's name and colour reads (_name_of, _name_color,
       _name_color_by_name) answer from the thread's names snapshot when one is set. Without one they read the
       registry per card, nothing digests that, and the memo stands aside;
-    - the postal index, by identity: _postal_index builds a new dict exactly when the log's (mtime_ns, size)
-      moves and no reader edits one, so the object is the index's revision. The entry holds it by reference,
+    - the postal index, by identity: while the log exists, _postal_index builds a new dict exactly when the
+      log's (mtime_ns, size) moves, and no reader edits one, so the object is the index's revision (with no
+      log it returns a new empty dict on every call, so every check walks). The entry holds it by reference,
       so its id cannot be reused by a later dict;
     - the caption map, by identity, fetched as the walk fetches it: only when a card carries a mid, which is
       fixed for the record and learned on its first walk. _msg_summaries publishes a new union dict whenever it
@@ -42480,10 +42481,11 @@ def _chat_sig_deps(sid, deps):
     and only the messages a moved directory could have resolved are re-resolved (pathlink); and the
     postal cards' embedded values re-read from the current index and caption map beside this session's
     postal revision (postal), through the record's memo of them (_postal_card_deps_memo: the walk reruns
-    when the names digest, the index or the caption map moved). No record (a cold tab) gives the empty
-    components, which a first build's record then replaces. The pre-check is taken BEFORE the re-resolve and stored on the record only when every
-    answer held (stat-then-read): a file landing between the two is seen by the resolve, one landing
-    after moves the next pre-check."""
+    when the names digest or the index moved, or, for a record with a message-id card, the caption map;
+    with no names scope it reruns on every check). No record (a cold tab) gives the empty components,
+    which a first build's record then replaces. The pre-check is taken BEFORE the re-resolve and stored on
+    the record only when every answer held (stat-then-read): a file landing between the two is seen by
+    the resolve, one landing after moves the next pre-check."""
     if not deps:
         return ((), (), None)
     touts = tuple((of, _chat_stat_key(of)) for of, _k in deps["task_outs"])
@@ -42514,7 +42516,9 @@ def _chat_sig_deps(sid, deps):
         # cycle, where the log-identity key stat'd it once and _postal_index again
         idx = _postal_index()
         # the card values through the record's memo (_postal_card_deps_memo, 2026-10-06): the walk runs again only
-        # when the names digest, the index or the caption map moved, and the caption map is still fetched every cycle
+        # when the names digest or the index moved (a new index object: the log moved, or no log exists), or, for
+        # a record with a message-id card, the caption map (fetched every cycle for such a record); with no names
+        # scope it runs on every check
         postal = (_chat_postal_rev(sid, idx), _postal_card_deps_memo(deps, idx, _msg_summaries_scoped))
     return (touts, tuple(pl), postal)
 
