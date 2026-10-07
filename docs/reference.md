@@ -3306,21 +3306,25 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   read counts of 175 against 10), so the quarter rule alone timed full
   collections: 103 an hour, one every 35 s, each about 3 s holding the
   interpreter lock, 8.5% of a core. At 1,000 the collector's own
-  generation-1 count (5.6 a second measured there) keeps them at least 1,001
-  generation-1 collections apart, at that rate at least 179 s, at most about
-  20 an hour. Each pause stays about the same length:
-  it walks the same long-lived population either way and also frees the
-  cyclic garbage accrued since the previous one, about five times today's
-  per pass (a lab with an acyclic churn read the mean pause 5% higher; one
-  where cyclic garbage outgrew the live set read it nine times longer), so
-  read `gen.2`'s `msLast`, `msMax` and `collectedLast` after a deploy. The
-  event is the collector's count, never a clock. On a collector where the
-  third threshold is not the generation-2 trigger (the free-threaded build;
-  CPython 3.14.0 to 3.14.4, whose incremental collector ignores it) the
-  kernel says so once on stderr, a line prefixed `romp-kernel: gc gen2
-  threshold:`, and leaves the thresholds. Read the result back in
-  `heap.gc.thresholds` (and this block's `thresholds`) and in `gen.2`'s
-  `collections` over `uptime_s`.
+  generation-1 count keeps them at least 1,001 generation-1 collections
+  apart (the default is the 5.6 a second measured there times a 180 s gap,
+  rounded). Measured on 2026-10-06 and 2026-10-07: a production kernel ran
+  7.9 to 8.6 generation-1 collections a second, a bound of 28 to 31 full
+  collections an hour against the 47 to 81 it ran; two bench kernels side by
+  side at matched load, 2 h per setting, ran 39.4 full collections an hour
+  under 10 and 17.0 under 1,000, and 140.5 s against 60.7 s of generation-2
+  pause an hour (57% less). Each pause stays about the same length (on that
+  bench a median of 3.52 s under 10 and 3.57 s under 1,000): it walks the
+  same long-lived population either way and also frees the cyclic garbage
+  accrued since the previous one, which waits 1.6 to 2.7 times as long at
+  those live rates, so read `gen.2`'s `msLast`, `msMax` and `collectedLast`
+  after a deploy. The event is the collector's count, never a clock. On a
+  collector where the third threshold is not the generation-2 trigger (the
+  free-threaded build; CPython 3.14.0 to 3.14.4, whose incremental collector
+  ignores it) the kernel says so once on stderr, a line prefixed
+  `romp-kernel: gc gen2 threshold:`, and leaves the thresholds. Read the
+  result back in `heap.gc.thresholds` (and this block's `thresholds`) and in
+  `gen.2`'s `collections` over `uptime_s`.
 - `jobs`: the jobs thread, which runs the housekeeping (the sweeps, the
   reminder walk, the interrupt tick, the persists, the pause and retry
   family) off the pusher since 2026-09-13, so no browser frame waits on a
