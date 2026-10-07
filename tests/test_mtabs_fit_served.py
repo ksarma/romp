@@ -322,15 +322,18 @@ on hover (4.38:1 in the dark theme; 5.44 on the resting fill, and 5.37 in the li
 built, in Chromium, WebKit and Firefox, both labels' hovered colour is red, the row's hover colour reaching them
 (rgb(156, 210, 255) hovered where they are rgb(204, 204, 204) at rest in the dark theme, rgb(194, 65, 12) where they are
 rgb(31, 30, 29) in the light one, which reads 3.89:1 on the hovered fill #e7ded2, under TEXT_FLOOR). In Chromium, a
-mutant of gear.css's label rule that drops either label turns that label's reads red and the other's not, and one whose
-rule does not skip a disabled Usage turns the no-reading leg's name red (rgb(204, 204, 204), the card's text colour,
-where the disabled button wears rgb(110, 118, 129)). At the head round 3 reviews, in Chromium, WebKit and Firefox,
-the read of every button in the row is red on Restart kernel's label alone, in the light theme alone, the one label the
-row's hover colour still reached: rgb(194, 65, 12), 4.15:1 on its hovered wash #f4e3d7, under TEXT_FLOOR. Every paint of the
-row's glyphs passes there. The glyph read is red in Chromium under a mutant of gear.css that fades every enabled glyph as a
+mutant of the label rule that pass added, which named the two labels, that dropped either label turned that label's reads
+red and the other's not, and one whose rule did not skip a disabled Usage turned the no-reading leg's name red
+(rgb(204, 204, 204), the card's text colour, where the disabled button wears rgb(110, 118, 129)). At the head round 3
+reviews, in Chromium, WebKit and Firefox, the read of every button in the row is red on Restart kernel's label alone, in
+the light theme alone, the one label the row's hover colour still reached: rgb(194, 65, 12), 4.15:1 on its hovered wash
+#f4e3d7, under TEXT_FLOOR. Every paint of the row's glyphs passes there. The glyph read is red in Chromium under a mutant of gear.css that fades every enabled glyph as a
 disabled one is (opacity .4 on each button's svg), Usage's glyph among those red; a mutant that drops Usage's resting fill on
 hover leaves it green, Usage's accent glyph reading over GLYPH_FLOOR on the wash in both themes (higher than on the fill in
-the light theme, lower in the dark one), and the hovered Couldn't load line's read is what that mutant turns red.
+the light theme, lower in the dark one), and the hovered Couldn't load line's read is what that mutant turns red. The
+row's one rule, which replaced the two-label rule, skips a disabled button as that one did: in Chromium a mutant of it that
+does not skip one turns the no-reading leg's name red (rgb(204, 204, 204) where the disabled button wears
+rgb(110, 118, 129)).
 Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
@@ -702,11 +705,11 @@ def _states_problems(engine, acts):
 
 def _no_reading_problems(engine, nr):
     """Usage with no reading: disabled with its line once the opening's ask has ended, its name in the disabled button's own
-    colour (the faint one, not the text colour gear.css sets on an enabled Usage's name), a tap leaving the card open and posting
-    nothing; then a reading landing while the card is still open enables Usage there with no line (the shell tells the open
-    card), the readings emptying disable it with its line again and filling enable it again; the readings emptying, and
-    filling, while the Token usage panel stands over the card show in the card its close shows; and one click opens the Usage
-    modal."""
+    colour (the faint one, not the text colour gear.css sets on an enabled button's label, which Usage's name inherits), a
+    tap leaving the card open and posting nothing; then a reading landing while the card is still open enables Usage there
+    with no line (the shell tells the open card), the readings emptying disable it with its line again and filling enable it
+    again; the readings emptying, and filling, while the Token usage panel stands over the card show in the card its close
+    shows; and one click opens the Usage modal."""
     out = []
     where = "%s Usage with no reading at %dx%d" % (engine, nr["vp"][0], nr["vp"][1])
     pre = nr.get("premise") or {}
