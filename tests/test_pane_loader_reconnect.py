@@ -500,7 +500,7 @@ out({ s1, after30: painted(), runs: runs() });""")
 
     def test_on_a_page_with_no_shell_a_repeat_drop_over_the_painted_badge_restarts_upstreams_failsafe(self):
         # round 2, tests-1: a pane page opened on its own (no link word) keeps upstream's failsafe, restarted by a repeat drop as
-        # upstream's own wsdown line restarts it, so the guide's "takes the badge down after 30 seconds" counts from the last drop.
+        # upstream's own wsdown line restarts it, so docs/reference.md's "30 seconds after it appears or after the latest drop" holds.
         # Read at the paint's deadline (a restart moved it), 1 ms before the repeat drop's, and at it
         o = self._run(r"""
 fire('romp:wsdown'); after(RHOLD_T);                                  // painted at the hold, the failsafe due 30 s on

@@ -414,17 +414,9 @@ kernel's machine to them.
 
 When you come back to Romp after the phone has had it in the background, the page
 reconnects to the kernel on its own. If that takes more than a second, the pane you
-are looking at (Chat, Feed, Outline or Waiting) shows a **reconnecting…** badge near
-its top right until fresh content arrives, however long that takes. The badge stays
-clear of the buttons above the list and of any button that stays put when you
-scroll. It can sit over the top row of the list, which moves out from under it when
-you scroll, and if the view has no spot at its right edge clear of buttons, it can
-cover part of one. A tap on the badge still reaches what is under it, and what is on
-screen stays readable. The Sessions and Files tabs show no badge. On every tab, the
-Log (the triangle in the bottom bar) says what the page is doing: waiting for the
-kernel to respond, or trying again after a try got no response or could not connect,
-with the number of tries. A pane page opened on its own, outside the dashboard, takes
-the badge down after 30 seconds.
+are looking at (Chat, Feed, Outline or Waiting) shows a **reconnecting…** badge
+until fresh content arrives. The Log (the triangle in the bottom bar) says what the
+page is doing while it reconnects.
 
 #### Notifications on your phone
 

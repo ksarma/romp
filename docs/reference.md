@@ -8520,6 +8520,52 @@ internet and your agents, with no device check in front of it.
     standing between other members and your agents. Either keep the tailnet to
     your own devices, or write an ACL restricting the kernel machine to them.
 
+## The reconnecting badge
+
+When a pane's connection to the kernel drops, as it does when a phone puts Romp
+in the background, the pane reconnects on its own and keeps what it was showing
+on screen. If reconnecting takes more than a second, the pane shows a small
+**reconnecting…** badge until fresh content arrives, so a reconnect that
+finishes sooner shows no badge. On a phone, the Chat, Feed, Outline and Waiting
+tabs show the badge; the Sessions and Files tabs show none.
+
+In the phone's dashboard the badge stays until fresh content arrives, however
+long that takes. A pane page opened on its own, outside the dashboard, takes the
+badge down 30 seconds after it appears or after the latest drop, whichever is
+later, even if no fresh content has arrived.
+
+The badge starts near the pane's top right, 8 pixels from the right edge and 8
+pixels below the top of the list, which keeps it off the header above the list.
+While it shows, it keeps clear of every control that stays put when you scroll,
+a control being anything you can tap or drag: the header's buttons, tabs and
+fields, and any control pinned in place inside the list, such as the drag handle
+and fold button on each of the Feed's column heads. When its starting spot would cover one, it
+moves to the nearest clear spot below or to the left, and it moves again if a
+control appears or moves under it. It can sit over a header's text, and over the
+top row of the list, which moves out from under it when you scroll.
+
+When the list has no clear spot, as when a phone turned sideways with the
+keyboard up and a long pinned note leaves the list shorter than the badge, the
+badge takes the spot along the view's right edge that covers the least of those
+controls. That spot is clear, perhaps over the header's text, whenever the edge
+has room for the badge; only a view without that room leaves it over part of a
+control. The pane's content stays on screen while the badge shows, and a tap on
+the badge reaches whatever is under it.
+
+On a phone, the Log (the triangle in the bottom bar) says what the page is doing
+while it reconnects, in a line at its top, whichever tab you are on:
+
+- **Waiting for the kernel to respond. The dashboard updates on its own when it
+  does.** until a try fails.
+- **Trying again: the first try got no response.** or **Trying again: the first
+  try could not connect to the kernel.** after the first try fails.
+- **Trying again: 3 tries got no response.** or **Trying again: 3 tries could
+  not connect to the kernel.** after more, with the number of tries that failed.
+
+A try that gets no response is cut after 15 seconds. The line says **got no
+response** when every failed try was cut that way and **could not connect to the
+kernel** otherwise, and it goes when the connection opens.
+
 ## Notifications on a phone or browser
 
 Romp can buzz your phone when a session needs you or finishes a task, so you can
