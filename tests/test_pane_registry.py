@@ -340,6 +340,20 @@ class TheDoors(unittest.TestCase):
         except ValueError:
             return st, {"raw": raw.decode(errors="replace")}
 
+    def _status(self, path, token=True):
+        # the served status alone (200 when the landing builds, 500 when it cannot), no body read: the GET / check below
+        # needs only the code, and reading no response body keeps the served-page reader census from counting this as a
+        # page read (its helper-return follow gives a status-only return the empty set, so this call is no fetch to it)
+        headers = {}
+        if token:
+            headers["X-Romp-Token"] = km.TOKEN
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
     def test_the_shipped_panes_are_records_the_door_lists_and_the_rail_renders_from(self):
         st, r = self._call("/panes")
         self.assertEqual(st, 200, "GET /panes answers")
@@ -452,7 +466,7 @@ class TheDoors(unittest.TestCase):
         (self.w.pdir / "sur.json").write_text(json.dumps(_full({"id": "sur", "title": "x\ud800y", "source": "/feed", "on": True})) + "\n")
         self.w.reset_memos()
         with contextlib.redirect_stderr(io.StringIO()):
-            st, _ = self._call("/")
+            st = self._status("/")
         self.assertEqual(st, 200, "the landing stays at 200: the surrogate title is refused at the disk re-check, not served")
 
     def test_an_id_that_is_an_object_prototype_name_is_refused_at_every_install_road(self):
