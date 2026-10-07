@@ -51,9 +51,10 @@ the job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared la
 `ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value counts), and under the switch,
 `inBrowser` fails a launch it cannot make, naming the switch and the reason, instead of skipping. A PR
 that wants its legs run adds their bundle paths to the roster and puts each leg's own whole-file seconds,
-measured, in its body: the step's script runs the rostered files side by side, each as its own `node
---test`, so the step's total does not give one leg's time, and the script's per-file bound, at which it
-kills a file's node process and every process under it, has to sit above it.
+measured, in its body: the step's script runs the rostered files, as many at once as the CPUs it counts
+less one and at least one (one at a time on the private runner's 2 CPUs), each as its own `node --test`,
+so the step's total does not give one leg's time, and the script's per-file bound, at which it kills a
+file's node process and every process under it, has to sit above it.
 
 The roster rule: under the switch, a rostered leg passes only when `inBrowser` has launched Chromium, and
 the leg does nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing
