@@ -253,7 +253,9 @@ class Shell(unittest.TestCase):
         # not po-waiting: the class list closes before the generic panes' attribute (the project's PR 1919)
         self.assertIn("<body class='po-chat po-feed po-timeline' data-panes=", self.html)
         self.assertIn("po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false}", self.html)
-        self.assertIn("po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false}", self.html)   # the ?panes= reset
+        # the ?panes= reset, made with no prototype (tests/test_pane_id_keyed_lookups.py)
+        self.assertIn("if(qp!==null){po=Object.assign(Object.create(null),\n"
+                      "    {chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false});", self.html)
         self.assertIn("document.body.classList.toggle('po-waiting',!!po.waiting)", self.html)
         self.assertIn("waiting:'Waiting pane'", self.html)   # the rail tooltip's words
 

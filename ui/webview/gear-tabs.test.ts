@@ -312,6 +312,9 @@ test("panesOf keeps every stored boolean member beside the three hand keys, and 
     { timeline: true, fleet: true, feed: true, lab: true, notes: false }, "the registry keys survive; a stray stored value does not ride along");
   assert.deepEqual(panesOf({ panes: { fleet: false } }), { timeline: true, fleet: false, feed: true }, "a missing hand key reads as shown");
   assert.deepEqual(panesOf({}), { timeline: true, fleet: true, feed: true }); assert.deepEqual(panesOf(null), { timeline: true, fleet: true, feed: true });
+  // a stored pane whose id is an Object member's name (constructor) is kept as any other: the check reads own keys
+  assert.deepEqual(panesOf({ panes: { constructor: false, notes: true } }),
+    { timeline: true, fleet: true, feed: true, constructor: false, notes: true }, "a stored constructor flag survives");
   // the handler's write: one hand key flipped keeps the rest of the set
   const s = { panes: panesOf({ panes: { timeline: true, fleet: true, feed: true, artifacts: true, notes: false } }) };
   s.panes.fleet = false;

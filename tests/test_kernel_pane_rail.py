@@ -136,7 +136,10 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("var GK='romp-pane-grow'", self.html)
         # two passes (2026-09-08): every shown width is READ before any grow is written — a write re-flows the row,
         # and a read after it came back at a mixed scale, ballooning the first column on a fresh browser's first drag
-        self.assertIn("var px={};PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});", self.html)
+        # the widths map has no prototype: keyed by element id (tests/test_pane_id_keyed_lookups.py)
+        self.assertIn("var px=Object.create(null);"
+                      "PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});",
+                      self.html)
         self.assertIn("Object.keys(px).forEach(function(id){setGrow(key(id),px[id]);});", self.html)
         self.assertIn("localStorage.setItem(GK,JSON.stringify(grow))", self.html)
         # gv-b picks its left neighbour live: the outline (fleet) when shown, else the RIGHTMOST chat column (so it's the

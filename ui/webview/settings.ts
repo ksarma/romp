@@ -98,7 +98,10 @@ export const OPTIONAL_PANES: ReadonlyArray<"timeline" | "fleet" | "feed"> = ["ti
 export function paneSet(v: unknown): PaneSet {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
   const out: PaneSet = { timeline: o.timeline !== false, fleet: o.fleet !== false, feed: o.feed !== false };
-  for (const [k, val] of Object.entries(o)) if (!(k in out) && typeof val === "boolean") out[k] = val;
+  // own keys only: a pane id can be an Object member's name (constructor), which `in` finds on every object
+  for (const [k, val] of Object.entries(o)) {
+    if (!Object.prototype.hasOwnProperty.call(out, k) && typeof val === "boolean") out[k] = val;
+  }
   return out;
 }
 export type ChatTabTheme = "classic" | "yatharth";

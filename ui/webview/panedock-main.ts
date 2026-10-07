@@ -156,6 +156,16 @@ function frameOfPane(id: PaneId): HTMLIFrameElement | null {
   return p ? (p.querySelector(":scope > iframe") as HTMLIFrameElement | null) : null;
 }
 
+/** Whether the shell's GET /panes read is not in: its state object (window.__rompPaneRecords, the shell's head script)
+ *  exists and is loading or failed. The panes defined at the kernel are missing from the row then, so a layout built
+ *  from the row lacks their places. A page without the shell's read (no state object) counts as in. */
+function recordsUnread(): boolean {
+  try {
+    const r = (window as any).__rompPaneRecords;
+    return !!(r && typeof r === "object" && r.state !== "ok");
+  } catch { return false; }
+}
+
 class Engine {
   on = false;
   private col: HTMLElement | null = null;
@@ -178,6 +188,7 @@ class Engine {
   private tab: { sid: string; name: string; from: PaneId | null; stripH: number } | null = null;   // a session tab in flight (the chat's dragstart)
   private newChatDock: { target: PaneId; edge: Edge } | null = null;   // where the next new column docks (a tab's drop edge), for the reconcile the shipped split's event raises
   private tabZones: HTMLElement[] = [];
+  private unread = false;   // started while the shell's GET /panes read was not in: the layout lacks the defined panes
 
   constructor() {
     const w = window as any;
@@ -223,6 +234,7 @@ class Engine {
     let stored: Layout | null = null;
     try { stored = parse(localStorage.getItem(LAYOUT_KEY) || ""); } catch { stored = null; }
     const sh = this.shown();
+    this.unread = recordsUnread();
     this.lay = reconcileShown(stored || seedLayout(sh), sh);
     this.persist();
     this.render();
@@ -327,6 +339,10 @@ class Engine {
 
   private reconcile(): void {
     if (!this.on || !this.lay) return;
+    // the read came in after a start without it (a failed read's backstop, then the late answer): start again from the
+    // stored layout, which keeps the defined panes' places since persist wrote nothing meanwhile, rather than reconcile
+    // the layout in memory, which lost them (a move made in the meantime was never stored, and goes with it)
+    if (this.unread && !recordsUnread()) { this.stop(); this.start(); return; }
     const next = reconcileShown(this.lay, this.shown());
     const changed = serialise(next) !== serialise(this.lay);
     this.lay = next;
@@ -334,8 +350,12 @@ class Engine {
     this.render();
   }
 
+  // The ONE write of the stored layout; every road that saves comes through here (the start, the reconcile, a pane's
+  // drop, a tab's drop, a divider's commit). It writes nothing while the shell's GET /panes read is not in, nor after a
+  // start made without it: the layout in memory then lacks the panes defined at the kernel, and storing it would drop
+  // their docked and parked places. A failed read is shown by the shell (the Log's panes entry).
   private persist(): void {
-    if (!this.lay) return;
+    if (!this.lay || this.unread || recordsUnread()) return;
     try { localStorage.setItem(LAYOUT_KEY, serialise(this.lay)); } catch { /* a full store: the layout still shows */ }
   }
 

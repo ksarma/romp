@@ -593,7 +593,9 @@ function initGear(post, opts) {
   // registry key: the Artifacts control hid and its column closed while its row read checked, and a data pane's stored
   // false came back on). The filter is paneSet's: booleans only, so a stray stored value never rides along.
   function panesOf(s) { var p = (s && s.panes && typeof s.panes === 'object') ? s.panes : {}; var out = { timeline: p.timeline !== false, fleet: p.fleet !== false, feed: p.feed !== false };
-    Object.keys(p).forEach(function (k) { if (!(k in out) && typeof p[k] === 'boolean') out[k] = p[k]; }); return out; }
+    // own keys only: a pane id can be an Object member's name (constructor), which `in` finds on every object
+    Object.keys(p).forEach(function (k) {
+      if (!Object.prototype.hasOwnProperty.call(out, k) && typeof p[k] === 'boolean') out[k] = p[k]; }); return out; }
   Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].addEventListener('change', function () { var s = load(); var p = panesOf(s); p[k] = pn[k].checked; s.panes = p; save(s); }); });
   // the registry panes' rows (plans/panes-as-data.md), read from the shell (the settings page is a same-origin frame of it, and on
   // VS Code's panel there is no dashboard and no list): the generic panes the shell ships with ride its body attribute (the shipped
@@ -639,18 +641,57 @@ function initGear(post, opts) {
       span.appendChild(b); span.appendChild(sub); lab.appendChild(cb); lab.appendChild(span); box.appendChild(lab);
       cb.addEventListener('change', function () { var st = load(); var pp = (st.panes && typeof st.panes === 'object') ? st.panes : panesOf(st); pp[p.id] = cb.checked; st.panes = pp; save(st); });
     });
+    // the read's line: a visible status in the section's flow (rs-note), never a row's hover popover (an rs-sub shows
+    // only while its row is hovered or focused); rs-panes-row lets the off-dashboard hide take it with the rows
     var line = recordsLine();
-    if (line) { var ln = document.createElement('div'); ln.className = 'rs-row rs-panes-row rs-panes-read'; ln.setAttribute('role', 'status'); var lsub = document.createElement('span'); lsub.className = 'rs-sub'; lsub.textContent = line; ln.appendChild(lsub); box.appendChild(ln); }
+    if (line) {
+      var ln = document.createElement('div'); ln.className = 'rs-note rs-panes-row rs-panes-read';
+      ln.setAttribute('role', 'status'); ln.textContent = line; box.appendChild(ln);
+    }
   }
   // the shell's read settles after this page may have opened (the builder's romp-pane-records, on the shell's window): the rows are
   // rendered again from the store, so a gear opened before the read lands shows the panes once they are in. That render rebuilds
   // the rows, so it waits out a press on the section (pressHold, ui/CLAUDE.md: a rebuild from a fetch landing during a press takes
   // the pressed box away and drops its click) and runs after the release, once the box's own change has been saved
-  var regHold = null;
-  try { var regBox = document.getElementById('rs-panes-data'); if (regBox) regHold = AC.pressHold(regBox); } catch (e) { regHold = null; }
-  try { if (window.parent && window.parent !== window) window.parent.addEventListener('romp-pane-records', function () { if (!document.getElementById('rs-panes-data')) return;
-    var run = function () { renderRegistryRows(load()); };
-    if (regHold) regHold.defer(run).catch(function () { /* the render's own throw, as before the hold */ }); else run(); }); } catch (e) { /* no shell */ }
+  // A key held on the section is a press too: Space toggles a box on its keyup, so a rebuild between the keydown and
+  // the keyup hands the keyup to a new box that saw no keydown, and the toggle is lost. A keydown inside the section
+  // holds the render until a keyup or the window's blur, and the parked render runs a tick later, after the keyup's
+  // click (the pointer's rule in pressHold). The rebuild then puts the focus back on the control that had it, found by
+  // its id in the new rows; a row the read no longer gives has no control to return to, and the focus stays where the
+  // browser put it.
+  var regHold = null, keyHeld = false, keyParked = false;
+  var KEY_CAPTURE = { capture: true };   // one options object for the install and the removal (pressHold's note)
+  function keyRelease() {
+    window.removeEventListener('keyup', keyRelease, KEY_CAPTURE); window.removeEventListener('blur', keyRelease);
+    keyHeld = false;
+    if (keyParked) { keyParked = false; setTimeout(landed, 0); }
+  }
+  function keyPress() {
+    if (keyHeld) return;
+    keyHeld = true;
+    window.addEventListener('keyup', keyRelease, KEY_CAPTURE); window.addEventListener('blur', keyRelease);
+  }
+  try {
+    var regBox = document.getElementById('rs-panes-data');
+    if (regBox) { regHold = AC.pressHold(regBox); regBox.addEventListener('keydown', keyPress, KEY_CAPTURE); }
+  } catch (e) { regHold = null; }
+  function renderKeepingFocus() {
+    if (keyHeld) { keyParked = true; return; }   // a key went down while the pointer's release was pending
+    var box = document.getElementById('rs-panes-data'); if (!box) return;
+    var ae = document.activeElement, keep = (ae && ae !== box && box.contains(ae) && ae.id) ? ae.id : '';
+    renderRegistryRows(load());
+    var back = keep ? document.getElementById(keep) : null;
+    if (back && back !== ae && typeof back.focus === 'function') back.focus();
+  }
+  function landed() {
+    if (!document.getElementById('rs-panes-data')) return;
+    if (keyHeld) { keyParked = true; return; }
+    if (regHold) regHold.defer(renderKeepingFocus).catch(function () { /* the render's own throw, as before */ });
+    else renderKeepingFocus();
+  }
+  try {
+    if (window.parent && window.parent !== window) window.parent.addEventListener('romp-pane-records', landed);
+  } catch (e) { /* no shell */ }
   // the section is the dashboard's: VS Code's panels have no dashboard shell to hide a pane from
   if (!ownPage) Array.prototype.forEach.call(document.querySelectorAll('#rs-panes-sec,.rs-panes-row'), function (el) { el.hidden = true; });
   // ── the settings' value-picker DROPDOWNS (T117, the user 2026-08-27, screenshot: the Chat

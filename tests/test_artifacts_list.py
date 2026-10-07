@@ -582,7 +582,9 @@ class Shell(unittest.TestCase):
         _has(self, "if(en){if(!(k in DPX)&&f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", js)
         _has(self, "var gf=document.getElementById('f-'+k);var load=mob?(tab===k&&(k in po)):!!po[k];", js)   # on a phone by the tab alone (the registry fix PR, 2026-09-21), on a desktop by the rail flag
         _has(self, "if(load&&gf&&!gf.getAttribute('src')&&gf.getAttribute('data-src'))gf.setAttribute('src',gf.getAttribute('data-src'));", js)
-        _has(self, "function optOn(){var on={};OPT.forEach(function(k){on[k]=!DPX[k];});", js)   # an experimental record is off in the gear until asked for
+        # an experimental record is off in the gear until asked for; the map has no prototype
+        # (tests/test_pane_id_keyed_lookups.py)
+        _has(self, "function optOn(){var on=Object.create(null);OPT.forEach(function(k){on[k]=!DPX[k];});", js)
         st = open(os.path.join(ROOT, "ui", "webview", "settings.ts")).read()
         for gone in ("showArtifactsControl: boolean", "showArtifactsControl: false", "s.showArtifactsControl ="):
             self.assertNotIn(gone, st, "the bespoke key is gone: no field, no default, no normalization")

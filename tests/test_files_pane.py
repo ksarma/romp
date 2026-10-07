@@ -228,7 +228,9 @@ class Shell(unittest.TestCase):
     def test_off_by_default_and_toggled_by_the_controller(self):
         _has(self, "<body class='po-chat po-feed po-timeline' data-panes=\"", self.html)   # not po-files
         _has(self, "po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false}", self.html)
-        _has(self, "po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false}", self.html)   # the ?panes= reset
+        # the ?panes= reset, made with no prototype (tests/test_pane_id_keyed_lookups.py)
+        _has(self, "if(qp!==null){po=Object.assign(Object.create(null),\n"
+             "    {chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false});", self.html)
         _has(self, "document.body.classList.toggle('po-files',!!po.files)", self.html)
         _has(self, "files:'files pane'", self.html)   # the rail tooltip's words (upstream's spelling of the label since the pull-in; the Waiting pane keeps its own)
 

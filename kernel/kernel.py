@@ -68559,10 +68559,15 @@ def _boards():
 # (_LANDING_PANE_RECORDS_JS; the inline scripts gained the joins). A URL source is a plain sandboxed iframe with no
 # token and no protocol; a state-root source (pane:<id>) is a static page under STATE/panes/<id>/ served at /pane/<id>/
 # with shim.js and theme.css beside it; a route source is a page the kernel already serves.
-# A pane id is checked whole, with fullmatch: $ alone also matches before a trailing newline, which fullmatch refuses.
-# The shell's check (_LANDING_PANE_RECORDS_JS) builds its JavaScript RegExp from this same pattern string, so the
-# pattern stays portable: ^ and $ only, no Python-only anchor such as \Z or \A (JavaScript reads \Z as a literal Z).
+# A pane id and a pane source are checked whole, with fullmatch: $ alone also matches before a trailing newline, which
+# fullmatch refuses. The shell's check (_LANDING_PANE_RECORDS_JS) builds its JavaScript RegExps from these same pattern
+# strings (_PANE_ID_RE, _PANE_URL_RE, _PANE_ROUTE_RE), so each stays portable: ^ and $ only, no Python-only anchor such
+# as \Z or \A (JavaScript reads \Z as a literal Z), and no \s, which the two engines read differently (Python's also
+# matches U+001C to U+001F and U+0085, JavaScript's also U+FEFF). _PANE_URL_RE lists by hand every character that either
+# engine's \s matches (the space among them), so both refuse a URL that holds any of them.
 _PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_PANE_URL_RE = re.compile(r"^https?://[^\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a"
+                          r"\u2028\u2029\u202f\u205f\u3000\ufeff]+$")
 _PANE_ROUTE_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
 _PANE_RESERVED = ("chat", "timeline", "fleet", "feed", "waiting", "files", "artifacts", "settings")   # "waiting": the fork's shipped Waiting pane
 # ids whose DERIVED element names (<id>-pane, gv-<id>, f-<id>) the shell already mints for something else: the band (tl-pane), the
@@ -68580,9 +68585,9 @@ def _pane_source_kind(src):
         return None
     if src.startswith("pane:"):
         return "state" if _PANE_ID_RE.fullmatch(src[5:] or "") else None
-    if re.match(r"^https?://[^\s]+$", src):
+    if _PANE_URL_RE.fullmatch(src):
         return "url"
-    if src.startswith("/") and not src.startswith("//") and _PANE_ROUTE_RE.match(src):
+    if src.startswith("/") and not src.startswith("//") and _PANE_ROUTE_RE.fullmatch(src):
         return "route"
     return None
 
@@ -68660,7 +68665,10 @@ def _pane_path(pid):
 def _panes_snapshot():
     """ONE listing of STATE/panes -> {"data": {id: defn}, "rev": digest}: the data-defined panes and the pane set's revision
     from the same directory listing and file stats, memoized on the directory's stat and each file's (mtime_ns, size), the
-    board store's rule (_boards_data). A file that fails the check is skipped and named on stderr once per (file, reason).
+    board store's rule (_boards_data). A file that fails the check is skipped and named on stderr once per (file,
+    reason), with its path and how to remove it by hand: romp pane remove reaches only the listed panes, and
+    remove_pane is not widened to a file the check refuses, since its id joins a path. A record an earlier kernel
+    wrote under a looser rule (an id or a source ending in a newline, a URL holding U+FEFF) is such a file.
     A reader that needs the records and the revision takes both from ONE snapshot (GET /panes, the state-root pane route), so a
     define landing between two listings cannot pair one set's rows with another's revision (the 1919 read, low b). The landing
     lists none: it renders the shipped panes, and the shell builds the defined ones from GET /panes."""
@@ -68695,7 +68703,9 @@ def _panes_snapshot():
         if err:
             if (str(fp), err) not in _PANES_BAD:
                 _PANES_BAD.add((str(fp), err))
-                sys.stderr.write("[panes] %s skipped: %s\n" % (fp, err))
+                # the path in repr: a control character in a file's name (an id ending in a newline) shows as an escape
+                sys.stderr.write("[panes] %r skipped: %s. To remove it, delete the file by hand: romp pane remove"
+                                 " reaches only the panes romp pane list shows.\n" % (str(fp), err))
             continue
         out[defn["id"]] = defn
     # the revision is a digest of the CHECKED records (the 1919 read, still standing at 1922): a re-define of an identical record,
@@ -72771,8 +72781,8 @@ try{if(window.__rompReload&&!window.__rompReload.inShell()){window.__rompReload.
 // null takes it down (accepted, or declined); a wording change (o.text moved: an unknownOp refusal arrived) is written into the standing bar
 try{if(window.__rompReload&&!window.__rompReload.inShell()){window.__rompReload.offer=function(o){var have=document.getElementById("romp-stale-self");var mine=have&&have.dataset.kind==="offer";
 if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text;return;}selfBar(o.text,"offer");};}}catch(e){}
-// [fork] the pane set's revision on a page standing ALONE (outside the dashboard shell: a pane page opened by itself,
-// the VS Code panel). The page bakes none, so it reads GET /panes, the read the shell builds its custom panes from,
+// [fork] the pane set's revision on a page standing ALONE (outside the dashboard shell: a pane page opened by itself in
+// a browser tab). The page bakes none, so it reads GET /panes, the read the shell builds its custom panes from,
 // and hands the answer's revision to the reload core (adoptPanes) and to the keepalive gate below (LOADEDPV), which
 // offer a reload when a keepalive carries another. A failed read is said on the page's one bar (kind warn), never
 // taken for no change; a refusal its header marks (pvReauth) says nothing, since another script on the page is
@@ -74086,6 +74096,7 @@ window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);})
 // grows persist.
 var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];
 var GK='romp-pane-grow',grow={chat:60,fleet:34,feed:40,waiting:34,files:40};
+grow=Object.assign(Object.create(null),grow);   // keyed by pane id: no prototype, so a lookup reads only own keys
 try{var g=JSON.parse(localStorage.getItem(GK)||'null');if(g)grow=Object.assign(grow,g);}catch(e){}
 function setGrow(k,v){grow[k]=v;row.style.setProperty('--g-'+k,v);}
 // the GENERIC panes (plans/panes-as-data.md): body[data-panes] names the ones the page ships with (the Artifacts record); each is a
@@ -74096,7 +74107,7 @@ DPANES.forEach(function(p){if(!p||!p.id)return;if(PANES.indexOf(p.id+'-pane')<0)
 for(var k in grow)setGrow(k,grow[k]);
 // split chat columns (the user 2026-09-08) are made AFTER this runs: they register here so the grab's
 // normalisation and the fair-grow average see them, and gv-a/gv-b's left neighbour is the RIGHTMOST one.
-var KEYS={};
+var KEYS=Object.create(null);   // keyed by a pane's element id: no prototype, as grow above
 DPANES.forEach(function(p){if(p&&p.id)KEYS[p.id+'-pane']=p.id;});
 window.__rompRegisterPane=function(id,k){KEYS[id]=k;if(PANES.indexOf(id)<0)PANES.splice(PANES.indexOf('fleet-pane'),0,id);};
 window.__rompUnregisterPane=function(id){var k=KEYS[id];delete KEYS[id];var i=PANES.indexOf(id);if(i>=0)PANES.splice(i,1);
@@ -74120,7 +74131,7 @@ window.__rompGrowFairIfNew=function(k){if(typeof grow[k]==='number'&&isFinite(gr
 // column with no stored width: a boot restore). The new pane is not in the row yet, so it is never read; a hidden
 // pane is never written. Returns whether it wrote (a hidden or missing left pane: nothing).
 window.__rompSplitGrow=function(leftId,newKey){var L=document.getElementById(leftId);if(!L||!shown(leftId)||!newKey)return false;
-var px={};PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});
+var px=Object.create(null);PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});
 Object.keys(px).forEach(function(id){setGrow(key(id),px[id]);});
 var w=px[leftId];setGrow(key(leftId),w/2);setGrow(newKey,w/2);
 try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}return true;};
@@ -74130,7 +74141,7 @@ try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}return true;};
 // pane's key takes the closing pane's width plus the 7 px gutter that goes with it (the row keeps its width: one gutter
 // fewer). Runs while the closing pane is still in the row and shown; __rompUnregisterPane drops its key after.
 window.__rompSplitShrink=function(leftId,goneId){var L=document.getElementById(leftId),G=document.getElementById(goneId);if(!L||!G||!shown(leftId)||!shown(goneId))return false;
-var px={};PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});
+var px=Object.create(null);PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});
 Object.keys(px).forEach(function(id){setGrow(key(id),px[id]);});
 setGrow(key(leftId),px[leftId]+px[goneId]+7);
 try{localStorage.setItem(GK,JSON.stringify(grow));}catch(e){}return true;};
@@ -74148,7 +74159,7 @@ document.body.classList.add('drag','dragv');
 // read EVERY shown pane's width first, then write: a setGrow re-flows the row, so a width read after it came back
 // at a mixed scale (the first pane in px, the rest still on their small default numbers) and the first drag in a
 // fresh browser ballooned the first column (served-test find, 2026-09-08; the split's fresh columns hit it every time)
-var px={};PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});
+var px=Object.create(null);PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});
 Object.keys(px).forEach(function(id){setGrow(key(id),px[id]);});
 var wL=L.offsetWidth,wR=R.offsetWidth,sum=wL+wR,sx=e.clientX,mn=Math.min(120,sum*0.25),nL=wL,lx=L.getBoundingClientRect().left,rr=row.getBoundingClientRect();
 function show(){if(!ghost)return;ghost.style.top=rr.top+'px';ghost.style.height=rr.height+'px';ghost.style.left=(lx+nL)+'px';ghost.style.display='block';}
@@ -74189,6 +74200,7 @@ window.addEventListener('romp-panes',autosize);   // re-fit when the Timeline to
 # mobile (one pane at a time; .pane is display:contents).
 _LANDING_FOCUS_JS = """
 (function(){var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-waiting':'waiting-pane','f-files':'files-pane','f-timeline':'tl-pane'};   // the Outline (key fleet) is its own pane
+PANE=Object.assign(Object.create(null),PANE);   // keyed by frame id: no prototype, so a lookup reads only own keys
 var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files'];   // the side-by-side column panes, left->right (the Outline's key is fleet; waiting = Waiting on you; Files last)
 try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){PANE['f-'+p.id]=p.id+'-pane';COLS.push('f-'+p.id);});}catch(e){}   // the generic panes the page ships with, after Files (plans/panes-as-data.md); the panes defined at the kernel join below
 var TL='f-timeline';                       // the timeline is a bottom BAND under the columns
@@ -74490,10 +74502,12 @@ window.__rompNotify(m.kind||'error',m.text,
 // through is up. Gate on the pane-enabled body class the toggle sets (po-chat/po-feed/po-timeline/po-fleet).
 // Only the up->down TRANSITION logs an entry; the live red cue rides the state itself.
 var st={},stc={};   // stc: split chat columns (2026-09-08) by column, apart from the first column's `chat` key — one column's 'up' must never mask another's drop
+st=Object.create(null);   // keyed by a frame's app, a state-root pane's id: no prototype, so a lookup reads own keys
 function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}for(var c in stc){if(stc[c]==='down'&&shown('chat'))return true;}return false;}
 window.__rompColGone=function(c){delete stc[String(c)];paint();};   // a closed column takes its state with it
 var PN=""" + json.dumps(dict(_PANE_ORDER)) + """;   // key → rail label, from _PANE_ORDER (one list with the rail, the tabs and the drop row); timeline key stays internal — the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
+PN=Object.assign(Object.create(null),PN);   // keyed by pane id: no prototype, so a lookup reads only own keys
 try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){if(!(p.id in PN))PN[p.id]=String(p.title||p.id);});}catch(e){}   // the generic panes' titles the page ships with (plans/panes-as-data.md)
 function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()+k.slice(1):k);}   // the page's copy of _pane_label: the rail's word, else the key capitalised for a sentence (Settings), never a raw key (the 1715 lows, low 4)
 window.__rompPaneJoinErrs=function(rows){rows.forEach(function(p){if(p&&p.id&&!(p.id in PN))PN[p.id]=String(p.title||p.id);});};   // the panes defined at the kernel join from GET /panes (_LANDING_PANE_RECORDS_JS's go)
@@ -76782,8 +76796,10 @@ _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 # alone, never by the attribute, so no consumer sees a pane twice.
 # - A copied mechanism carries its own check: a row is built only as the kernel checks a record (_pane_check, _pane_source_kind): a
 #   pane id that is not reserved, derived-taken, a chat column's shape or already on the page, a title of 1 to _PANE_TITLE_MAX
-#   characters, boolean flags, and a source of one of the three shapes (a kernel route, its own pane:<id> page, an http(s) address;
-#   javascript:, data: and //host are refused). A refused row is left out and named in the Log. The frame's address follows
+#   code points as GET /panes serves it (stripped by _pane_check, so never trimmed again here, and counted as
+#   Python's len counts), boolean flags, and a source of one of the three shapes (a kernel route, its own pane:<id>
+#   page, an http(s) address; javascript:, data: and //host are refused), each shape read from the pattern string
+#   Python checks with fullmatch. A refused row is left out and named in the Log. The frame's address follows
 #   _pane_served_src (a state-root page at /pane/<id>/), and a URL source is protocol none whatever the row says.
 # - Each frame is made with data-src (never src, never the lazy panes' attribute: ruling B, the fork's lazy panes are the hand panes),
 #   data-protocol, and for protocol none its sandbox, both set before the frame is in the document and before any src. The rail
@@ -76800,11 +76816,17 @@ _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 #   section, the event. A refusal its header marks (RR.reauth) logs nothing, since another script on the page is already
 #   navigating the top frame away. The read's backstop is armed here (LOAD_MS, the lazy panes' bound): no answer within
 #   it is said as such, and a late answer still builds.
+# - Every object the shell's and the phone's scripts look a pane id up in has no prototype (Object.create(null)): an id
+#   the check accepts can be an Object member's name (constructor), and a lookup must read what was set under it or
+#   nothing, never an inherited member. tests/test_pane_id_keyed_lookups.py holds each such lookup to it.
 _LANDING_PANE_RECORDS_JS = """
 (function(){var RR=window.__rompPaneRecords;if(!RR||RR.go)return;RR.go=true;   // no head read (a harness, a page without it): nothing to build; once per page
 function note(t){try{if(window.__rompNotify)window.__rompNotify('panes',t);}catch(e){}}
 try{
-var IDRE=new RegExp(""" + json.dumps(_PANE_ID_RE.pattern) + """),URLRE=new RegExp(""" + json.dumps(r"^https?://[^\s]+$") + """),ROUTERE=new RegExp(""" + json.dumps(_PANE_ROUTE_RE.pattern) + """);   // the kernel's shapes (_pane_check, _pane_source_kind)
+// the kernel's shapes (_pane_check, _pane_source_kind): the pattern strings Python checks with fullmatch
+var IDRE=new RegExp(""" + json.dumps(_PANE_ID_RE.pattern) + """);
+var URLRE=new RegExp(""" + json.dumps(_PANE_URL_RE.pattern) + """);
+var ROUTERE=new RegExp(""" + json.dumps(_PANE_ROUTE_RE.pattern) + """);
 var RESERVED=""" + json.dumps(list(_PANE_RESERVED)) + """,TAKEN=""" + json.dumps(list(_PANE_DERIVED_TAKEN)) + """,TMAX=""" + str(_PANE_TITLE_MAX) + """;
 var COLS=""" + json.dumps(list(_COLUMN_IDS)) + """,MQ=""" + json.dumps(_MOBILE_MQ) + """,LOAD_MS=30000,built=false,timer=0;
 function tell(){try{window.dispatchEvent(new CustomEvent('romp-pane-records',{detail:{state:RR.state,rows:RR.rows||[],frames:RR.frames||[],error:RR.error||''}}));}catch(e){}}
@@ -76812,7 +76834,9 @@ function check(p,seen){var id=p?p.id:p,name=String(id).slice(0,40);
 if(typeof id!=='string'||!IDRE.test(id))return {why:"'"+name+"' is not a pane id"};
 if(RESERVED.indexOf(id)>=0||TAKEN.indexOf(id)>=0||id.indexOf('chat-')===0)return {why:"'"+id+"' is an id the dashboard keeps for its own panes"};
 if(seen[id]||document.getElementById('f-'+id))return {why:"'"+id+"' is already on the page"};
-var t=p.title;if(typeof t!=='string'||!t.trim()||t.length>TMAX)return {why:"'"+id+"' has no title of 1 to "+TMAX+" characters"};
+// the title as GET /panes serves it, stripped by _pane_check: not trimmed again; counted in code points, as len counts
+var t=p.title;if(typeof t!=='string'||!t.length||Array.from(t).length>TMAX)
+  return {why:"'"+id+"' has no title of 1 to "+TMAX+" characters"};
 if(typeof p.on!=='boolean'||typeof p.experimental!=='boolean')return {why:"'"+id+"' has a flag that is not true or false"};
 var s=p.source,k='';if(typeof s==='string'){if(s.indexOf('pane:')===0)k=(s==='pane:'+id)?'state':'';else if(URLRE.test(s))k='url';else if(s.charAt(0)==='/'&&s.charAt(1)!=='/'&&ROUTERE.test(s))k='route';}
 if(!k)return {why:"'"+id+"' has a source that is not a kernel route, its own pane: page or an http(s) address"};
@@ -77246,6 +77270,7 @@ function mobileOn(){return !!(MQ&&MQ.matches);}
 window.__rompMobileOn=mobileOn;
 var bar=document.getElementById('mtabs');if(!bar)return;
 var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-fleet'),feed:document.getElementById('f-feed'),waiting:document.getElementById('f-waiting'),files:document.getElementById('f-files'),timeline:document.getElementById('f-timeline')};
+F=Object.assign(Object.create(null),F);   // keyed by pane id: no prototype, so F[id] is a frame of this page or nothing
 try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){F[p.id]=document.getElementById('f-'+p.id);});}catch(e){}   // the generic panes' frames the page ships with (plans/panes-as-data.md; the panes defined at the kernel join through __rompPaneJoinMobile below); an experimental one has no tab button, so show() refuses it
 // ONLY the pane tabs (the user 2026-09-08, on the phone: the bell wore its OFF slash while its popover said
 // on). This list once took EVERY button in the bar, and show() toggled `.on` to data-pane===p on each — for
@@ -77358,6 +77383,8 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // its row in the reviewer's round 7).
 // The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
 var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
+URLS=Object.create(null);EPI=Object.create(null);TOK=Object.create(null);
+PEND=Object.create(null);DEAD=Object.create(null);   // the five maps above: keyed by pane id, no prototype
 var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
 var HAND=""" + json.dumps(list(_HAND_PANES)) + """;function hand(k){return HAND.indexOf(k)>=0;}   // [fork] ruling B (2026-10-03, the stage 0 header): the lazy panes' own set, the kernel's _HAND_PANES (F's literal keys); a registry pane's frame, in F since upstream PR 1919, is never parked, promoted, judged, backstopped or retried here
 var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so pass 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
@@ -78088,11 +78115,17 @@ _STALE_JS = (
 _LANDING_COLLAPSE_JS = """
 (function(){
   var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false},DEF=Object.assign({},po),stored={};
-  try{var s=JSON.parse(localStorage.getItem(PK)||'null');if(s){stored=s;po=Object.assign(po,s);}}catch(e){}
+  po=Object.assign(Object.create(null),po);DEF=Object.assign(Object.create(null),DEF);stored=Object.create(null);
+  // the three maps above are keyed by pane id: rebuilt with no prototype, so a lookup reads only own keys
+  try{var s=JSON.parse(localStorage.getItem(PK)||'null');
+    if(s){stored=Object.assign(Object.create(null),s);po=Object.assign(po,s);}}catch(e){}
   var qp=new URLSearchParams(location.search).get('panes');
-  if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
+  if(qp!==null){po=Object.assign(Object.create(null),
+    {chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false});
+    qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
   function saveP(){try{localStorage.setItem(PK,JSON.stringify(po));}catch(e){}}
   var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane',files:'files pane'};
+  LBL=Object.assign(Object.create(null),LBL);   // keyed by pane id: no prototype, so a lookup reads only own keys
   // THE FILES CONTROL'S OWN SETTING (T317, the user 2026-09-10): the gear's Files row (Settings, General, Panes; T407)
   // (romp:settings.showFilesControl, gear.js; hidden unless the store holds the literal true: OFF by default since T317b,
   // the user 2026-09-10, who wants the control asked for, not shipped. A FRESH key: the T317-era gear saved its merged-in
@@ -78127,6 +78160,7 @@ _LANDING_COLLAPSE_JS = """
   var DPX={};function addDP(p){if(!p||!p.id)return;var k=p.id;if(KEYS.indexOf(k)<0)KEYS.push(k);DPX[k]=!!p.experimental;LBL[k]=String(p.title||k).toLowerCase()+' pane';
     if(!(k in DEF))DEF[k]=!!p.on;
     if(qp!==null)po[k]=qp.split(',').map(function(x){return x.trim();}).indexOf(k)>=0;else if(!(k in po))po[k]=(k in stored)?!!stored[k]:!!p.on;}
+  DPX=Object.create(null);   // keyed by pane id: rebuilt with no prototype before addDP first runs
   DP.forEach(addDP);
   // on[k] is "this pane is on screen", not the po flag: in the mobile layout (one tab at a time, the po-*
   // classes ignored, _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
@@ -78144,7 +78178,7 @@ _LANDING_COLLAPSE_JS = """
   // (__rompPanesTell) is the one that carries a CHANGED link, so it is the one that reaches every iframe.
   function broadcast(){tellAll(panesMsg());}
   function linkMsg(){var m=panesMsg();return {romp:'link',link:m.link,mob:m.mob};}   // mob (review round 4, 2026-09-19, kernel-3): the LAYOUT word rides the link word too, so a split chat column, which hears no panes word, re-decides its return hold on every flip as the pane frames do (render.ts's link branch runs onLayoutWord on it); before this a column that armed the hold on the phone kept it for the socket's life after a flip to the desktop
-  function tellLink(){var m=linkMsg(),pane={};KEYS.forEach(function(k){pane['f-'+k]=true;});
+  function tellLink(){var m=linkMsg(),pane=Object.create(null);KEYS.forEach(function(k){pane['f-'+k]=true;});
     Array.prototype.forEach.call(document.querySelectorAll('iframe'),function(f){if(!pane[f.id])tell(f,m);});}
   function broadcastAll(){broadcast();tellLink();}
   window.__rompPanesTell=broadcastAll;   // the mobile script re-tells on a tab switch / layout flip; the shell socket on its open, close and abandon (_LANDING_MOBILE_JS shTell)
@@ -78187,8 +78221,10 @@ _LANDING_COLLAPSE_JS = """
   // the same with the Feed pane off in a browser.
   var ALL=KEYS.slice(),OPT=['timeline','fleet','feed'],SK='romp:settings';
   DP.forEach(function(p){if(p&&p.id&&OPT.indexOf(p.id)<0)OPT.push(p.id);});   // a generic pane is an optional pane: the gear's row decides whether it is in this dashboard
-  function optOn(){var on={};OPT.forEach(function(k){on[k]=!DPX[k];});   // an experimental registry pane defaults OFF in the gear (plans/panes-as-data.md)
-    try{var s=JSON.parse(localStorage.getItem(SK)||'{}'),p=s&&s.panes;if(p&&typeof p==='object')OPT.forEach(function(k){if(DPX[k]){on[k]=p[k]===true;}else{on[k]=p[k]!==false;}});}catch(e){}
+  // an experimental registry pane defaults OFF in the gear (plans/panes-as-data.md); both maps here have no prototype
+  function optOn(){var on=Object.create(null);OPT.forEach(function(k){on[k]=!DPX[k];});
+    try{var s=JSON.parse(localStorage.getItem(SK)||'{}'),p=Object.assign(Object.create(null),s&&s.panes);
+      OPT.forEach(function(k){if(DPX[k]){on[k]=p[k]===true;}else{on[k]=p[k]!==false;}});}catch(e){}
     return on;}
   function flagOf(k){return (k in stored)?!!stored[k]:DEF[k];}
   function reconcile(live){var on=optOn(),shown=false;

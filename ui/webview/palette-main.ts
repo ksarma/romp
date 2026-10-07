@@ -172,8 +172,9 @@ installMenuEcho();
   // romp:settings.panes[id]. The generic panes the shell ships with ride its body attribute (the shipped Artifacts record on every
   // kernel); the panes defined at the kernel are built by the shell from its GET /panes read, which can settle before or after
   // this module boots, so their commands come from the read's state object when it is in (window.__rompPaneRecords) and from the
-  // builder's romp-pane-records event when it lands later (registerCommand replaces by id, so both roads are one). They list after
-  // the shipped panes' commands in the palette's empty-query order (registration order).
+  // builder's romp-pane-records event when it lands later (registerCommand replaces by id, so both roads are one). Both
+  // roads run at the end of the boot (recordPanes below), so the panes defined at the kernel list after every command
+  // the boot registers in the palette's empty-query order (registration order), wherever the read lands.
   const registry: Array<{ id: string; title: string; experimental: boolean }> = (() => {
     try { const raw = document.body.getAttribute("data-panes"); const arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr.filter((p) => p && typeof p.id === "string").map((p) => ({ id: String(p.id), title: String(p.title || p.id), experimental: p.experimental === true })) : []; } catch { return []; }
   })();
@@ -191,9 +192,8 @@ installMenuEcho();
     for (const p of st.rows as Array<{ id?: unknown; title?: unknown; experimental?: unknown }>) {
       if (p && typeof p.id === "string") registerPane({ id: p.id, title: String(p.title || p.id), experimental: p.experimental === true });
     }
+    invalidate();   // the chord map is cached: a key bound to one of these commands works from here on
   };
-  recordPanes(w.__rompPaneRecords);
-  window.addEventListener("romp-pane-records", (e) => recordPanes((e as CustomEvent).detail));
   const optional = new Set<string>(OPTIONAL_PANES);
   for (const [key, label, words] of panes) {
     registerCommand({
@@ -406,4 +406,9 @@ installMenuEcho();
   // made later (the shell dispatches romp-chat-cols with the new frame) — so the chords work from every column
   ((w.__rompChatFrameIds ? w.__rompChatFrameIds() : []) as string[]).forEach((id) => { if (id !== "f-chat") wireKeys(pane(id)); });
   window.addEventListener("romp-chat-cols", (e) => wireKeys((((e as CustomEvent).detail || {}) as { frame?: HTMLIFrameElement }).frame || null));
+  // the panes defined at the kernel (recordPanes, the registry block): registered after every command above, from
+  // the read's state object when it is in now and from the builder's event when it lands later, so both roads list
+  // them last
+  recordPanes(w.__rompPaneRecords);
+  window.addEventListener("romp-pane-records", (e) => recordPanes((e as CustomEvent).detail));
 })();

@@ -432,6 +432,25 @@ class TheStore(unittest.TestCase):
         st = os.stat(fp); os.utime(fp, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000))
         self.assertEqual(listed()[-1], ("notes", "Notebook"))
 
+    def test_a_file_the_check_refuses_is_skipped_and_named_with_its_path_and_how_to_remove_it_by_hand(self):
+        # records a looser check let through and wrote, as an earlier kernel did: a route and a URL source ending in a
+        # newline or U+FEFF, and an id ending in a newline (its file's name ends the same way)
+        written = [dict(NOTES, source="/feed\n"), dict(DOCS, source=DOCS["source"] + chr(0xFEFF)),
+                   {"id": "x\n", "title": "X", "source": "/feed"}]
+        self.w.seed(*written)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            listed = [p["id"] for p in km._pane_order()]
+        self.assertEqual(listed, SHIPPED_IDS, "each file the check refuses is skipped, never listed")
+        lines = sorted(ln for ln in err.getvalue().split("\n") if ln.startswith("[panes] "))
+        remedy = "To remove it, delete the file by hand: romp pane remove reaches only the panes romp pane list shows."
+        path = lambda d: str(self.w.pdir / (d["id"] + ".json"))
+        want = sorted("[panes] %r skipped: %s. %s" % (path(d), km._pane_check(_full(d))[1], remedy) for d in written)
+        self.assertEqual(lines, want, "one line per file on stderr, naming its path, the reason and how to remove it")
+        for d in written:
+            self.assertFalse(km.remove_pane(d["id"])[0], "remove_pane reaches only the listed panes: %r" % d["id"])
+            self.assertTrue((self.w.pdir / (d["id"] + ".json")).exists(), "the file stays until it is deleted by hand")
+
     def test_the_landing_and_the_pages_bake_no_revision_and_the_state_root_shim_bakes_its_routes_listing(self):
         # Where the pane set's revision lives (the 1919 read made it one listing per build; it is now NO listing per page build).
         # SOURCE pins, keyed on where the code lives: _landing renders the shipped panes (list(_CODE_PANES)), lists no registry, and
@@ -622,6 +641,92 @@ def _css_rules(text):
     return {sel: decl for sel, decl in re.findall(r"([^{}]+)\{([^{}]*)\}", text)}
 
 
+# The Log's titles, the columns and the focus ring, run: _LANDING_ERRS_JS, _LANDING_JS and _LANDING_FOCUS_JS parse
+# in the landing's order over a stub of the shell, then the builder builds the panes GET /panes answered and hands
+# the rows to the three joins. The body's po- classes stand for the controller's outcome (the chat, the feed and both
+# defined panes on screen), and a pane element is shown when the body carries its class, as the column rules say. A
+# pane the builder adds gets a width, and its frame a document and a window that keep the listeners the focus script
+# adds. Recorded: the row's --g-* properties, the store, the shell window's and document's listeners, each frame's
+# focus() calls and posts. The shipped panes are the ones the drags and the walks read; a missing one reads as off.
+_JOINS_STUB = r"""
+'use strict';
+global.window = global;
+const STORE = __STORE__, BODY = new Set(['po-chat', 'po-feed', 'po-docs', 'po-notes']), ATTR = __ATTR__;
+const ROW = {}, WL = {}, DL = {}, FOCUSED = [], POSTS = [];
+global.localStorage = { getItem: (k) => (k in STORE ? STORE[k] : null), setItem: (k, v) => { STORE[k] = String(v); },
+  removeItem: (k) => { delete STORE[k]; } };
+global.addEventListener = (k, f) => { (WL[k] = WL[k] || []).push(f); };
+global.removeEventListener = (k, f) => { WL[k] = (WL[k] || []).filter((g) => g !== f); };
+global.innerHeight = 900;
+window.__rompPaneSourceOk = () => true;   // the boot script's check: this stub's messages stand for a protocol pane's
+const onScreen = (id) => BODY.has('po-' + (id === 'tl-pane' ? 'timeline' : id.replace(/-pane$/, '')));
+global.getComputedStyle = (el) => ({ display: /-pane$/.test(el.id || '') && !onScreen(el.id) ? 'none' : 'flex' });
+const WIDTH = { 'chat-pane': 600, 'feed-pane': 400, 'docs-pane': 300, 'notes-pane': 200 };
+function giveWidth(el) {
+  el.offsetWidth = WIDTH[el.id] || 0;
+  el.getBoundingClientRect = () => ({ left: 0, top: 0, width: el.offsetWidth, height: 800, bottom: 800 });
+}
+// a frame's document and window: the listeners the focus script adds there, its focus() calls, its posts
+function giveFrameParts(f) {
+  const ls = {};
+  f.contentDocument = { readyState: 'complete', body: { scrollHeight: 0 }, _ls: ls,
+    addEventListener: (k, fn) => { (ls[k] = ls[k] || []).push(fn); } };
+  f.contentWindow = { focus: () => FOCUSED.push(f.id), postMessage: (m) => POSTS.push([f.id, m]),
+    addEventListener: (k, fn) => { (ls['window ' + k] = ls['window ' + k] || []).push(fn); } };
+}
+function mkEl(id) {
+  const cls = new Set(), ls = {};
+  const toggle = (c, on) => {
+    if (on === undefined) on = !cls.has(c);
+    if (on) cls.add(c); else cls.delete(c);
+    return on;
+  };
+  return { id, hidden: id === 'rerr-back', textContent: '', title: '', className: '', children: [], _ls: ls,
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c), toggle },
+    style: { setProperty() {}, removeProperty() {} }, appendChild(c) { this.children.push(c); return c; },
+    querySelector: () => null, addEventListener: (k, f) => { (ls[k] = ls[k] || []).push(f); } };
+}
+const EL = {};
+['rail-errs', 'merr', 'rerr-back', 'rerr-list', 'rerr-clear', 'rerr-x', 'rerr-fgrid', 'col', 'gh', 'gv-a', 'gv-b',
+ 'gv-c', 'gv-d', 'gv-artifacts'].forEach((id) => { EL[id] = mkEl(id); });
+['chat', 'feed', 'waiting', 'files', 'artifacts', 'tl'].forEach((k) => {
+  const p = mkEl(k + '-pane'); p.classList.add('pane'); giveWidth(p); EL[p.id] = p; });
+['chat', 'feed', 'waiting', 'files', 'artifacts', 'timeline', 'settings'].forEach((k) => {
+  const f = mkEl('f-' + k); giveFrameParts(f); EL[f.id] = f; });
+let R = null;
+const paneEls = () => Object.keys(EL).map((k) => EL[k]).concat(R ? R.inserted : [])
+  .filter((e) => e.classList.contains('pane'));
+global.document = {
+  body: { getAttribute: (a) => (a === 'data-panes' ? JSON.stringify(ATTR) : null),
+    classList: { contains: (c) => BODY.has(c), add: (...cs) => cs.forEach((c) => BODY.add(c)),
+      remove: (...cs) => cs.forEach((c) => BODY.delete(c)) } },
+  getElementById: (id) => EL[id] || null,
+  querySelector: (s) => (s === '.col' ? EL.col : null),
+  querySelectorAll: (s) => (s === '.pane' ? paneEls() : []),
+  addEventListener: (k, f) => { (DL[k] = DL[k] || []).push(f); },
+  createElement: () => mkEl(''),
+};
+"""
+# the builder's DOM (tests/pane_records_stub.py), installed before the scripts parse so _LANDING_JS reads its row;
+# the row records the --g-* properties, and each element the builder adds gets its parts as it enters the document
+_JOINS_ROAD = r"""
+R = installRecordsDom(document, { adopt: (el) => {
+  if (el.tagName === 'IFRAME') giveFrameParts(el); else if (el.classList.contains('pane')) giveWidth(el); } });
+R.row.style = { setProperty: (k, v) => { ROW[k] = v; }, removeProperty: (k) => { delete ROW[k]; } };
+R.row.getBoundingClientRect = () => ({ left: 0, top: 0, height: 800, bottom: 800 });
+const lsOf = (el) => el._ev || el._ls;   // the listeners of an element the builder added, or of the stub's own
+const out = {};
+"""
+
+
+def _joins_js(body, before, after, store=None):
+    """The three scripts in the landing's order over _JOINS_STUB, `before` once they parsed, the builder over the
+    head read settled with `body` (GET /panes's answer), then `after` (run it with _run)."""
+    return (_JOINS_STUB.replace("__STORE__", json.dumps(store or {})).replace("__ATTR__", json.dumps([ARTIFACTS_ROW]))
+            + pane_records_stub.RECORDS_DOM + _JOINS_ROAD + km._LANDING_ERRS_JS + km._LANDING_JS + km._LANDING_FOCUS_JS
+            + before + pane_records_stub.records_state(body=body) + _RECORDS_JS() + after)
+
+
 class TheLanding(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -721,6 +826,108 @@ class TheLanding(unittest.TestCase):
         for n in _JOIN_ORDER:
             self.assertEqual(page.count("window.%s=function" % n), 1, "%s is defined by exactly one of the landing's scripts" % n)
 
+    # the three joins run (_JOINS_STUB): the panes' titles differ from their ids capitalised, the Log's fallback label
+    _TITLED = (dict(DOCS, title="Documentation"), dict(NOTES, title="Notebook"))
+
+    def test_the_columns_join_gives_a_defined_pane_a_grow_its_own_key_and_a_gutter_paired_by_the_shown_columns(self):
+        self.w.seed(*self._TITLED)
+        drive = r"""
+function drag(gid, dx) {   // a press on the gutter, a move of dx px, the release; then the stored grows
+  const g = document.getElementById(gid), down = g ? lsOf(g).mousedown || [] : [];
+  if (!down.length) return { wired: false };
+  down.forEach((f) => f({ preventDefault() {}, clientX: 500 }));
+  (WL.mousemove || []).slice().forEach((f) => f({ clientX: 500 + dx }));
+  (WL.mouseup || []).slice().forEach((f) => f({}));
+  return { wired: true, store: JSON.parse(STORE['romp-pane-grow'] || 'null') };
+}
+out.joined = Object.assign({}, ROW);
+out.docs = drag('gv-docs', 40);
+out.notes = drag('gv-notes', 50);
+BODY.delete('po-docs');
+out.notesDocsOff = drag('gv-notes', -20);
+console.log(JSON.stringify(out));
+"""
+        r = _run(_joins_js(_get_panes(self.port), "out.before = Object.assign({}, ROW);\n", drive,
+                           store={"romp-pane-grow": json.dumps({"notes": 77})}))
+        self.assertEqual((r["before"].get("--g-docs"), r["before"].get("--g-notes")), (None, 77),
+                         "before the build: no property for the docs pane; the boot set the notes pane's stored grow")
+        self.assertEqual((r["joined"].get("--g-docs"), r["joined"].get("--g-notes")), (40, 77),
+                         "the build: the default grow where none is stored, and a stored one kept: %r" % r["joined"])
+        # the shipped panes off screen are never read at a grab: each keeps the grow the boot set
+        off = {k[len("--g-"):]: v for k, v in r["before"].items() if k not in ("--g-chat", "--g-feed", "--g-notes")}
+        self.assertEqual(len(off), 4, "the boot's grows for the four shipped panes off screen: %r" % off)
+        self.assertEqual(r["docs"], {"wired": True, "store": dict(off, chat=600, feed=440, docs=260, notes=200)},
+                         "the docs pane's gutter pairs it with the feed, the rightmost shown column before it; the "
+                         "grab reads every shown pane at its width, the defined ones among them, each stored under its "
+                         "own key")
+        self.assertEqual(r["notes"], {"wired": True, "store": dict(off, chat=600, feed=400, docs=350, notes=150)},
+                         "the notes pane's gutter pairs it with the docs pane, the defined pane before it")
+        self.assertEqual(r["notesDocsOff"],
+                         {"wired": True, "store": dict(off, chat=600, feed=380, docs=350, notes=220)},
+                         "the docs pane off screen: the notes pane's gutter pairs it with the feed")
+
+    def test_the_focus_join_rings_a_defined_pane_walks_it_after_the_shipped_columns_and_wires_its_frame(self):
+        self.w.seed(*self._TITLED)
+        drive = r"""
+const ringed = () => paneEls().filter((e) => e.classList.contains('pane-focused')).map((e) => e.id);
+const docOf = (id) => document.getElementById(id).contentDocument;
+const fireIn = (d, k, ev) => (d._ls[k] || []).slice().forEach((f) => f(ev || {}));
+const alt = (key) => ({ altKey: true, shiftKey: false, ctrlKey: false, metaKey: false, key, target: { tagName: 'DIV' },
+  preventDefault() {}, stopPropagation() {} });
+out.listeners = ['f-docs', 'f-notes'].map((id) => Object.keys(docOf(id)._ls).sort());
+fireIn(docOf('f-docs'), 'pointerdown');
+out.pressed = ringed();
+fireIn(docOf('f-chat'), 'pointerdown');
+FOCUSED.length = 0; POSTS.length = 0;
+for (let i = 0; i < 4; i++) (DL.keydown || []).forEach((f) => f(alt('ArrowRight')));   // Alt+Right, 4 times
+out.right = { focused: FOCUSED.slice(), told: POSTS.filter((p) => p[1].romp === 'paneFocus').map((p) => p[0]),
+  ringed: ringed() };
+FOCUSED.length = 0;
+fireIn(docOf('f-notes'), 'keydown', alt('ArrowLeft'));   // Alt+Left inside the notes pane's frame
+out.left = { focused: FOCUSED.slice(), ringed: ringed() };
+const fd = document.getElementById('f-docs');
+giveFrameParts(fd);   // the docs pane's frame loads a new document
+fireIn(docOf('f-chat'), 'pointerdown');
+out.loads = (lsOf(fd).load || []).length;
+(lsOf(fd).load || []).forEach((f) => f({}));
+fireIn(docOf('f-docs'), 'focusin');
+out.reloaded = ringed();
+console.log(JSON.stringify(out));
+"""
+        r = _run(_joins_js(_get_panes(self.port), "", drive))
+        self.assertEqual(r["listeners"], [["focusin", "keydown", "pointerdown", "window focus"]] * 2,
+                         "each defined pane's frame document hears presses, focus and keys, its window focus: %r"
+                         % r["listeners"])
+        self.assertEqual(r["pressed"], ["docs-pane"], "a press in the docs pane's frame rings the docs pane")
+        walk = ["f-feed", "f-docs", "f-notes"]
+        self.assertEqual(r["right"], {"focused": walk, "told": walk, "ringed": ["notes-pane"]},
+                         "Alt+Right from the chat walks the shown columns, the defined panes in their order after the "
+                         "shipped ones, and stops at the last: %r" % r["right"])
+        self.assertEqual(r["left"], {"focused": ["f-docs"], "ringed": ["docs-pane"]},
+                         "Alt+Left inside the notes pane's frame moves to the docs pane")
+        self.assertEqual((r["loads"], r["reloaded"]), (1, ["docs-pane"]), "a load of the frame wires its new document")
+
+    def test_the_log_titles_join_names_a_defined_pane_by_its_title_in_a_connection_entry(self):
+        self.w.seed(*self._TITLED)
+        before = r"""
+const post = (data) => (WL.message || []).slice().forEach((f) => f({ data, source: {} }));
+const entries = () => JSON.parse(STORE['romp:notices'] || '[]').map((n) => [n.kind, n.text]);
+post({ romp: 'wsState', app: 'docs', state: 'down' }); out.before = entries();
+post({ romp: 'wsState', app: 'docs', state: 'up' });
+"""
+        after = r"""
+post({ romp: 'wsState', app: 'docs', state: 'down' }); post({ romp: 'wsState', app: 'notes', state: 'down' });
+out.after = entries().slice(out.before.length);
+console.log(JSON.stringify(out));
+"""
+        r = _run(_joins_js(_get_panes(self.port), before, after))
+        self.assertEqual(r["before"], [["conn", "Kernel connection lost: Docs pane (reconnecting)"]],
+                         "before the build the entry names the docs pane by its id capitalised (the contrast)")
+        self.assertEqual(r["after"], [["conn", "Kernel connection lost: Documentation pane (reconnecting)"],
+                                      ["conn", "Kernel connection lost: Notebook pane (reconnecting)"]],
+                         "after the build each defined pane is named by its title, and nothing else is logged: %r"
+                         % r["after"])
+
     def test_a_row_the_kernel_would_refuse_is_left_out_and_named_and_a_url_source_is_protocol_none(self):
         ok = pane_records_stub.door_rows(dict(NOTES, source="/feed"))
         bad = pane_records_stub.door_rows(
@@ -739,7 +946,8 @@ class TheLanding(unittest.TestCase):
             self.assertIn("Left out a pane defined at the kernel", line); self.assertIn("'%s'" % row["id"], line)
         # the source shapes agree with the kernel's (_pane_source_kind; a state-root source must name its own pane)
         sources = ["/feed", "/a/b.c-d_e", "/", "//x", "/x?y", "http://TESTHOST:9/a?b#c", "https://x", "HTTP://X", "ftp://x", "javascript:x",
-                   "pane:src", "pane:other", "", "feed", "http://x y"]
+                   "pane:src", "pane:other", "", "feed", "http://x y",
+                   "/feed\n", "http://TESTHOST:9/x\n", "http://TESTHOST:9/x" + chr(0xFEFF)]   # more: ThePaneRecordCheck
         rows = pane_records_stub.door_rows(*({"id": "src%d" % i, "source": s} for i, s in enumerate(sources)))
         for row in rows:
             if row["source"] == "pane:src":
@@ -813,6 +1021,84 @@ class ThePaneIdCheck(unittest.TestCase):
             self.assertEqual(differ, [], "source %r: (id, Python accepts, the shell accepts) for each id where they "
                              "differ; the shell's notes: %r" % (source, [t for k, t in r["notes"] if k == "panes"]))
 
+
+class ThePaneRecordCheck(unittest.TestCase):
+    """The shell's check of a row (the builder, _LANDING_PANE_RECORDS_JS) and Python's check of a record (_pane_check)
+    give the same verdict on titles and sources over a list this test generates. No verdict is written here, so a later
+    change to either check that the other does not make reds this pin. Each row reaches both checks in the form GET
+    /panes serves a record: the title stripped by Python's str.strip, as _pane_check stores it (two guards hold the fed
+    form to the record _pane_check returns), so every record GET /panes can serve is in the list, and so are rows Python
+    refuses. The whitespace characters are asked of both engines, never listed here: every code point that Python's
+    str.isspace or re's whitespace class takes, and every one that JavaScript's whitespace class or trim takes. The ids
+    (t<n> for a title, s<n> for a source) are valid, so only the title or the source decides."""
+
+    SELF = "pane:<id>"   # a source written so names the row's own pane: page
+    # the driver's answer in ASCII: _run reads its last line, and Python's splitlines also breaks a line at U+0085,
+    # U+2028 and U+2029, which JSON.stringify leaves as they are
+    ASCII_JSON = r"""
+const asciiJson = (o) => JSON.stringify(o).replace(/[^\x00-\x7e]/g,
+  (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+"""
+
+    @staticmethod
+    def _whitespace():
+        """(Python's, JavaScript's): the code points each engine reads as whitespace, JavaScript's asked of node."""
+        ws = re.compile(r"\s")
+        py = {c for c in range(0x110000) if chr(c).isspace() or ws.fullmatch(chr(c))}
+        js = set(_run("const out = [];\n"
+                      "for (let c = 0; c <= 0x10FFFF; c++) { const s = String.fromCodePoint(c);"
+                      " if (/\\s/.test(s) || s.trim() !== s) out.push(c); }\n"
+                      "console.log(JSON.stringify(out));\n"))
+        return py, js
+
+    def test_the_shells_check_and_pythons_agree_on_every_generated_title_and_source(self):
+        tmax = km._PANE_TITLE_MAX
+        py_ws, js_ws = self._whitespace()
+        self.assertTrue(0x20 in py_ws and 0x20 in js_ws, "both engines were asked for their whitespace")
+        either = [chr(c) for c in sorted(py_ws | js_ws)]   # today they differ on U+001C to U+001F, U+0085, U+FEFF
+        astral, bom = chr(0x1F4DD), chr(0xFEFF)   # one code point JavaScript stores as two UTF-16 units; U+FEFF
+        titles = ["", "a", "a" * tmax, "a" * (tmax + 1), astral * tmax, astral * (tmax + 1),
+                  "a" * (tmax - 1) + astral, "a" * tmax + astral, astral * (tmax // 2 + 1), bom, bom * tmax,
+                  bom * (tmax + 1), chr(0xD800), "a" * (tmax - 1) + chr(0xDFFF), None, 5]
+        for c in either:
+            titles += [c, "a" + c, c + "a", "a" + c + "b", c * tmax, "a" * tmax + c]
+        url = "http://TESTHOST:9/x"
+        sources = ["/feed", "/feed\n", "/", "//x", "/x?y", url, url + "\n", "https://TESTHOST/" + astral, "HTTP://X",
+                   "", "feed", "javascript:x", "pane:", "pane:other", self.SELF, self.SELF + "\n", None]
+        for c in either:
+            sources += ["/feed" + c, c + "/feed", "/fe" + c + "ed", url + c, c + url, "http://TESTHOST:9/" + c + "x",
+                        self.SELF + c]
+        # protocol none is valid for every source shape, so only the title or the source decides
+        flags = {"on": False, "experimental": False, "protocol": "none", "builtin": False}
+        rows = [dict(flags, id="t%d" % n, title=t.strip() if isinstance(t, str) else t, source="/feed")
+                for n, t in enumerate(titles)]
+        rows += [dict(flags, id="s%d" % n, title="Check",
+                      source=s.replace(self.SELF, "pane:s%d" % n) if isinstance(s, str) else s)
+                 for n, s in enumerate(sources)]
+        record = lambda row: {k: v for k, v in row.items() if k != "builtin"}
+        for n, t in enumerate(titles):
+            got, err = km._pane_check(record(dict(rows[n], title=t)))
+            if err is None:
+                self.assertEqual(got["title"], t.strip(), "the title fed is the one _pane_check stores: " + ascii(t))
+        python = {}
+        for row in rows:
+            got, err = km._pane_check(record(row))
+            python[row["id"]] = err is None
+            if err is None:
+                self.assertEqual(got, record(row), "an accepted row is the record GET /panes serves: " + row["id"])
+        self.assertEqual(set(python.values()), {True, False}, "the list has rows Python accepts and rows it refuses")
+        drive = (self.ASCII_JSON + "const rr = window.__rompPaneRecords;\n"
+                 "console.log(asciiJson({ state: rr.state, built: (rr.rows || []).map((p) => p.id),"
+                 " notes: NOTES_LOG.filter((n) => n[0] === 'panes').map((n) => n[1]) }));\n")
+        r = _run(_build_js(pane_records_stub.records_state(rows=rows), driver=drive))
+        self.assertEqual(r["state"], "ok", "the builder ran over the rows")
+        shell = set(r["built"])
+        shown = lambda row: ascii(row["title"] if row["id"].startswith("t") else row["source"])
+        differ = [(row["id"], shown(row), python[row["id"]], row["id"] in shell) for row in rows
+                  if python[row["id"]] != (row["id"] in shell)]
+        notes = [t for t in r["notes"] if any("'%s'" % d[0] in t for d in differ)]
+        self.assertEqual(differ, [], "(id, the title or the source, Python accepts, the shell accepts) for each row "
+                         "where they differ; the shell's notes on them: %r" % notes)
 
 class TheRevisionBaseline(unittest.TestCase):
     """The reload core takes the pane set's revision from the page's GET /panes read (adoptPanes): the landing and the pages bake an
@@ -1123,9 +1409,12 @@ class TheInlineScripts(unittest.TestCase):
 
     def test_the_baked_maps_read_the_attribute(self):
         # executed in every CI cell (the 1922 read: these pins sat behind a dist gate that skipped them everywhere but a built checkout).
-        # SOURCE pins on the parse-time reads, which now carry the generic panes the page ships with (the Artifacts record): the panes
-        # defined at the kernel reach the same maps through the joins, executed in TheLanding (the go point's order and hooks) and in
-        # TheInlineScripts above (the controller fed by the road)
+        # SOURCE pins on the parse-time reads, which now carry the generic panes the page ships with (the
+        # Artifacts record). The panes defined at the kernel reach the same maps through the joins, which run over
+        # the records stub in three places: the Log's titles, the columns and the focus ring in TheLanding's three
+        # join tests, the controller's in TheInlineScripts above, the phone's join and its restore in
+        # tests/test_kernel_mobile.py. TheLanding's order test hands every join a recorder: it pins their order and
+        # that each is defined once, not what any of them does.
         self.assertIn("PANE['f-'+p.id]=p.id+'-pane';COLS.push('f-'+p.id);", km._LANDING_FOCUS_JS, "the focus ring's map and column list")
         self.assertIn("if(!(p.id in PN))PN[p.id]=String(p.title||p.id);", km._LANDING_ERRS_JS, "the bell's titles")
         self.assertIn("F[p.id]=document.getElementById('f-'+p.id);", km._LANDING_MOBILE_JS, "the phone's frames")

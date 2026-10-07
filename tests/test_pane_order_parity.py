@@ -56,7 +56,11 @@ class PaneOrderParity(unittest.TestCase):
         self.assertEqual(_pane_seq(rail), order)
         self.assertEqual(_pane_seq(mtabs), [k for k in order if k not in {p["id"] for p in km._CODE_PANES if p["experimental"]}])
         src = open(os.path.join(BIN, "romp-kernel")).read()
-        self.assertIn("+ _rail_buttons_html(panes) +", src)   # the landing lists the registry once and hands the list on (plans/panes-as-data.md)
+        # what these two pin: the landing hands the rail and tab builders a list of its own and never calls either
+        # with no argument (with none, each lists the registry). They do not pin that the list is the shipped panes:
+        # the census, tests/test_pane_records_one_source.py, proves that (every page reads the same whatever panes
+        # are defined).
+        self.assertIn("+ _rail_buttons_html(panes) +", src)
         self.assertIn("+ _mtab_buttons_html(panes) +", src)
 
     def test_the_initial_mobile_pane_keys_on_chat_not_position(self):

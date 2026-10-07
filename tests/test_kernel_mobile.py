@@ -3707,6 +3707,8 @@ const KEYS = HAND.concat(ATTR.map((p) => p.id));
 const frames = {}; KEYS.forEach((k) => { frames['f-' + k] = el('f-' + k, (k === 'chat' || k === 'files') ? { src: '/' + k } : { 'data-src': '/' + k }); });
 const TABS = HAND.concat(ATTR.filter((p) => !p.experimental).map((p) => p.id));   // an experimental record has no phone tab
 const buttons = TABS.map((k) => el('mtab-' + k, { 'data-pane': k }));
+// each served tab keeps its listeners, so a tap can run the mobile script's click (a built tab keeps them already)
+buttons.forEach((b) => { b._ev = {}; b.addEventListener = (t, f) => { (b._ev[t] = b._ev[t] || []).push(f); }; });
 const railBtns = KEYS.map((k) => el('rail-' + k, { 'data-pane': k }));
 const keysNow = () => Object.keys(frames).map((id) => id.slice(2));   // the frames on the page now: the served ones, then any the GET /panes road built
 // a pane the shell builds from GET /panes joins this stub's lists as it enters the document: its frame (src writes counted), its tab, its rail button
@@ -3716,7 +3718,8 @@ function adoptRecord(e) {
   else if (e.tagName === 'BUTTON') buttons.push(e);
   else if (e.attrs.class === 'rail-btn') railBtns.push(e);
 }
-const bar = el('mtabs'); bar.querySelectorAll = (sel) => (sel === 'button[data-pane]' ? buttons : []);
+// a static list, as the browser's querySelectorAll returns: a tab built later is not in a list read before it
+const bar = el('mtabs'); bar.querySelectorAll = (sel) => (sel === 'button[data-pane]' ? buttons.slice() : []);
 const BODY_ATTR = { 'data-panes': JSON.stringify(ATTR) }; const bodyCls = new Set(['po-chat', 'po-feed', 'po-timeline']);
 const body = { getAttribute: (k) => (k in BODY_ATTR ? BODY_ATTR[k] : null), setAttribute: (k, v) => { BODY_ATTR[k] = v; }, removeAttribute: (k) => { delete BODY_ATTR[k]; },
   classList: { toggle: (c, on) => { if (on === undefined) on = !bodyCls.has(c); if (on) bodyCls.add(c); else bodyCls.delete(c); return on; }, contains: (c) => bodyCls.has(c), add: (c) => bodyCls.add(c), remove: (c) => bodyCls.delete(c) },
@@ -3724,7 +3727,11 @@ const body = { getAttribute: (k) => (k in BODY_ATTR ? BODY_ATTR[k] : null), setA
 global.window = global;
 global.document = { body, documentElement: { style: { setProperty() {}, removeProperty() {} }, scrollTop: 0, clientWidth: 390 }, visibilityState: 'visible', hasFocus: () => true,
   getElementById: (id) => (id === 'mtabs' ? bar : frames[id] || null), addEventListener() {}, removeEventListener() {},
-  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return railBtns; const m = /data-pane=([\w-]+)/.exec(sel); if (!m) return []; return railBtns.concat(buttons).filter((b) => b.getAttribute('data-pane') === m[1]); },
+  // a rail selector reads the rail's buttons, a #mtabs one the tabs (the controller's reconcile names both)
+  querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return railBtns;
+    const m = /data-pane=([\w-]+)/.exec(sel); if (!m) return [];
+    const pool = (sel.indexOf('.rail-btn') >= 0 ? railBtns : []).concat(sel.indexOf('#mtabs') >= 0 ? buttons : []);
+    return pool.filter((b) => b.getAttribute('data-pane') === m[1]); },
   querySelector: () => null, createElement: () => el('x'), activeElement: null };
 global.localStorage = { getItem: (k) => (k in STORE ? STORE[k] : null), setItem: (k, v) => { STORE[k] = String(v); }, removeItem: (k) => { delete STORE[k]; } };
 global.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
@@ -3743,6 +3750,9 @@ global.WebSocket = class { constructor() { this.readyState = 0; } send() {} clos
 global.MessageChannel = class { constructor() { this.port1 = { postMessage() {}, onmessage: null }; this.port2 = { postMessage() {}, onmessage: null }; } };
 // `sets`: the src writes to the GENERIC panes' frames (the hand-written optional panes, timeline, fleet and feed, load by their flag on every layout, as before)
 const generic = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => ['f-chat', 'f-timeline', 'f-fleet', 'f-feed', 'f-files'].indexOf(k) < 0));
+// a tap on a tab: its click listeners, the ones the mobile script added (a served tab's and a built one's alike)
+const tap = (k) => { const b = buttons.find((x) => x.getAttribute('data-pane') === k);
+  if (!b) throw new Error('no tab for ' + k); (b._ev.click || []).forEach((f) => f({})); };
 const snap = () => ({ tab: BODY_ATTR['data-tab'] || null, remembered: STORE['romp-mobile-tab'] || null, sets: generic(SETS),
   src: Object.fromEntries(keysNow().map((k) => [k, frames['f-' + k].getAttribute('src')])), shown: keysNow().filter((k) => frames['f-' + k].classList.contains('m-on')), po: [...bodyCls].filter((c) => c.indexOf('po-') === 0).sort() });
 const out = {};
@@ -3808,6 +3818,10 @@ class TheMobileSwitcherAndThePaneControllerBoot(unittest.TestCase):
         self.assertEqual((b["tab"], b["src"]["notes"]), ("chat", None), "the controller hides the gear-disabled pane's tab, so the restore does not go there; nothing loaded: %r" % b)
         self.assertEqual(b["sets"], {}, "no src written at all")
         self.built(b)
+        self.assertEqual(b["remembered"], "notes",
+                         "the restore did not go there and left the remembered tab on the pane: %r" % b)
+        f = r["afterFlip"]
+        self.assertEqual(f["remembered"], "notes", "and the layout flip leaves it there: %r" % f)
 
     def test_a_remembered_narrow_layout_key_on_a_desktop_boot_loads_nothing_off_screen(self):
         r = _run_two([_ART], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False, "docs": False}}, mobile=False, records=_RECORDS)
@@ -3842,6 +3856,63 @@ class TheMobileSwitcherAndThePaneControllerBoot(unittest.TestCase):
         r = _run_two([_ART], {"romp-mobile-tab": "gone"}, mobile=True, records=_RECORDS)
         b = r["afterBoot"]
         self.assertEqual((b["tab"], b["remembered"]), ("chat", "chat"), "the read no longer lists the remembered pane: the key goes to the chat: %r" % b)
+
+
+
+# the Object members' names a pane id could collide with; constructor alone fits the id rule ([a-z][a-z0-9_-]{0,31}), so
+# the others reach the scripts only through the body attribute's road, which this harness plants
+_MEMBER_IDS = ("constructor", "__proto__", "toString", "hasOwnProperty")
+# after the build: a switch away to the Feed tab, then a tap on the pane's own tab
+_AWAY_AND_TAP = ("out.restored = snap(); window.__rompMobileTab('feed'); out.away = snap();"
+                 " tap(%s); out.tapped = snap();\n")
+
+
+class ThePaneIdsThatNameObjectMembers(unittest.TestCase):
+    """A pane whose id is an Object member's name works as any other: the phone restores its remembered tab and a tap
+    shows its frame, and the desktop keeps its off flag. The shell's and the phone's scripts keep their id-keyed objects
+    with no prototype (tests/test_pane_id_keyed_lookups.py); a plain object reads the inherited member for an id nothing
+    was set under, so a remembered constructor tab was dropped, its tap showed no frame, and an off pane came on."""
+
+    def _phone(self, attr, records, pid):
+        r = _run_two(attr, {"romp-mobile-tab": pid}, mobile=True, records=records,
+                     drive=_AWAY_AND_TAP % json.dumps(pid))
+        self.assertEqual((r["restored"]["tab"], r["restored"]["remembered"], r["restored"]["shown"]), (pid, pid, [pid]),
+                         "%s: the remembered tab is restored and its frame shown: %r" % (pid, r["restored"]))
+        self.assertEqual((r["away"]["tab"], r["away"]["shown"]), ("feed", ["feed"]), "%s: the switch away" % pid)
+        self.assertEqual((r["tapped"]["tab"], r["tapped"]["remembered"], r["tapped"]["shown"]), (pid, pid, [pid]),
+                         "%s: a tap on its tab shows its frame: %r" % (pid, r["tapped"]))
+        return r
+
+    def _desktop_off(self, attr, records, pid):
+        b = _run_two(attr, {}, mobile=False, records=records)["afterBoot"]
+        self.assertNotIn("po-" + pid, b["po"], "%s: a pane whose flag is off stays off on the desktop: %r"
+                         % (pid, b["po"]))
+        self.assertIsNone(b["src"][pid], "%s: and its frame is not loaded: %r" % (pid, b["src"]))
+        return b
+
+    def test_constructor_from_get_panes_is_restored_shown_by_a_tap_and_keeps_its_off_flag(self):
+        others = [{"id": m, "title": "Member", "source": "/notes", "on": True} for m in _MEMBER_IDS[1:]]
+        recs = pane_records_stub.door_rows({"id": "constructor", "title": "Ctor", "source": "/notes", "on": False},
+                                           {"id": "docs", "title": "Docs", "source": "/docs", "on": True}, *others)
+        r = self._phone([_ART], recs, "constructor")
+        self.assertEqual(r["restored"]["src"]["constructor"], "/notes",
+                         "the restored tab's frame loads: %r" % r["restored"])
+        self.assertEqual([m for m in _MEMBER_IDS[1:] if m in r["afterBoot"]["src"]], [],
+                         "the other members' names fail the id rule: the builder leaves them out, so no frame")
+        b = self._desktop_off([_ART], recs, "constructor")
+        self.assertIn("po-docs", b["po"], "the contrast, a defined pane whose flag is on, is on: %r" % b["po"])
+        on = pane_records_stub.door_rows({"id": "constructor", "title": "Ctor", "source": "/notes", "on": True})
+        b = _run_two([_ART], {}, mobile=False, records=on)["afterBoot"]
+        self.assertEqual(("po-constructor" in b["po"], b["src"]["constructor"]), (True, "/notes"),
+                         "with its flag on it comes on and loads: %r" % b)
+
+    def test_each_member_name_through_the_body_attribute_is_restored_shown_by_a_tap_and_keeps_its_off_flag(self):
+        for pid in _MEMBER_IDS:
+            with self.subTest(id=pid):
+                row = {"id": pid, "title": "Member", "protocol": "romp", "experimental": False, "on": False,
+                       "builtin": True}
+                self._phone([_ART, row], _RECORDS, pid)
+                self._desktop_off([_ART, row], _RECORDS, pid)
 
 
 if __name__ == "__main__":

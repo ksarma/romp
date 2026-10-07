@@ -198,6 +198,22 @@ const frameEnding = async (suffix) => { let fr = null; for (let i = 0; i < 150 &
 // reads the state object itself
 const BUILT = (sel) => { const rr = window.__rompPaneRecords; return (!rr || rr.state !== "loading") && !!document.querySelector(sel); };
 const readState = (pg) => pg.evaluate(() => { const rr = window.__rompPaneRecords; return rr ? { state: rr.state, status: rr.status || 0, error: rr.error || "", rows: (rr.rows || []).map((p) => p.id) } : null; });
+// the read's line in the gear's Panes section as a reader meets it, read in the settings frame: its text and role;
+// rendered, the line has a box and checkVisibility passes; textShown, its rendered text is all of its text (innerText
+// leaves out what is not rendered, and equals textContent for an element not rendered at all, so rendered is read with
+// it); sectionShown, the section is on screen (the General tab open), so inSection, the section's rendered text holding
+// the line's, is not read off a hidden section
+const GEAR_LINE = () => { const l = document.querySelector("#rs-panes-data .rs-panes-read"); if (!l) return null;
+  const box = document.getElementById("rs-panes-data"), r = l.getBoundingClientRect();
+  const seen = (el) => (typeof el.checkVisibility === "function" ? el.checkVisibility() : true)
+    && el.getClientRects().length > 0;
+  return { text: l.textContent, role: l.getAttribute("role"), rendered: seen(l) && r.width > 0 && r.height > 0,
+    textShown: l.innerText.trim() === l.textContent.trim(), sectionShown: !!box && seen(box),
+    inSection: !!box && box.innerText.indexOf(l.textContent) >= 0 }; };
+// the settings frame once its Panes section is in it (the gear opened on a tab first), or null
+const gearFrame = async (pg) => { for (let i = 0; i < 150; i++) { for (const f of pg.frames()) {
+  if (await f.$("#rs-pane-artifacts").catch(() => null)) return f; } await pg.waitForTimeout(100); } return null; };
+
 
 // ---- 1. the landing ----
 await page.goto(cfg.url);
@@ -412,11 +428,11 @@ out.failedRead.log = await fp.evaluate(() => { const back = document.getElementB
   rows: Array.from(document.querySelectorAll("#rerr-list .rerr-row")).map((r) => { const c = r.querySelector(".rerr-chip");
     return { kind: c ? (Array.from(c.classList).find((k) => /^k-/.test(k)) || "") : "", chip: c ? c.textContent : "", text: (r.querySelector(".rerr-msg") || {}).textContent || "" }; }) }; });
 await fp.evaluate(() => { const x = document.getElementById("rerr-x"); if (x) x.click(); });
-await fp.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
-let fgf = null;
-for (let i = 0; i < 150 && !fgf; i++) { for (const f of fp.frames()) { if (await f.$("#rs-pane-artifacts").catch(() => null)) { fgf = f; break; } } if (!fgf) await fp.waitForTimeout(100); }
-out.failedRead.gear = fgf ? await fgf.evaluate(() => ({ rows: Array.from(document.querySelectorAll("#rs-panes-data input")).map((i) => i.id),
-  line: (() => { const l = document.querySelector("#rs-panes-data .rs-panes-read"); return l ? l.textContent : null; })() })) : null;
+await fp.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings("general"));   // the Panes section's tab
+const fgf = await gearFrame(fp);
+if (fgf) await fgf.waitForSelector("#rs-pane-artifacts", { state: "visible", timeout: 8000 }).catch(() => {});
+const ROW_IDS = () => Array.from(document.querySelectorAll("#rs-panes-data input")).map((i) => i.id);
+out.failedRead.gear = fgf ? { rows: await fgf.evaluate(ROW_IDS), line: await fgf.evaluate(GEAR_LINE) } : null;
 await fctx.close();
 const fmctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 await fmctx.route(panesRoute, failWith500);
@@ -518,7 +534,7 @@ let pgf2 = null;
 for (let i = 0; i < 150 && !pgf2; i++) { for (const f of gp.frames()) { if (await f.$("#rs-pane-artifacts").catch(() => null)) { pgf2 = f; break; } } if (!pgf2) await gp.waitForTimeout(100); }
 if (!pgf2) await die("no settings frame for the press across the read");
 await pgf2.waitForSelector("#rs-pane-artifacts", { state: "visible", timeout: 8000 }).catch(() => {});
-out.press.lineBefore = await pgf2.evaluate(() => { const l = document.querySelector("#rs-panes-data .rs-panes-read"); return l ? l.textContent : null; });
+out.press.lineBefore = await pgf2.evaluate(GEAR_LINE);
 out.press.before = await pgf2.evaluate(() => document.getElementById("rs-pane-artifacts").checked);
 const pbox = await (await pgf2.$("#rs-pane-artifacts")).boundingBox();
 await gp.mouse.move(pbox.x + pbox.width / 2, pbox.y + pbox.height / 2); await gp.mouse.down();
@@ -530,10 +546,124 @@ out.press.after = await pgf2.evaluate(() => document.getElementById("rs-pane-art
 out.press.saved = await gp.evaluate(() => { try { return (JSON.parse(localStorage.getItem("romp:settings") || "{}").panes || {}).artifacts === true; } catch (e) { return null; } });
 await gctx.close();
 
+// ---- 12b. the same with the keyboard: the Artifacts row's box focused, Space held while the read lands and released
+// after. Space toggles a box on its keyup, so a rebuild between the keydown and the keyup loses the toggle unless the
+// section holds it; the rebuild then puts the focus back on the box ----
+const SPLASH_GONE = () => { const b = document.getElementById("romp-boot");
+  return !b || b.classList.contains("gone"); };
+const LANDED = () => { const rr = window.__rompPaneRecords;
+  return !!rr && rr.state === "ok" && !!document.querySelector(".rail-btn[data-pane=notes]"); };
+const settles = (p) => p.then(() => true).catch(() => false);   // a wait as a verdict: true, or false when it timed out
+const kctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
+let releaseKeyRead;
+const keyReadHeld = new Promise((r) => { releaseKeyRead = r; });
+await kctx.route(panesRoute, async (route) => { await keyReadHeld; await route.continue(); });
+const kp = await kctx.newPage();
+await kp.goto(cfg.url);
+out.keys = { splashGone: await settles(kp.waitForFunction(SPLASH_GONE, null, { timeout: 12000 })) };
+await kp.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings("general"));
+const kgf = await gearFrame(kp);
+if (!kgf) await die("no settings frame for the key across the read");
+await kgf.waitForSelector("#rs-pane-artifacts", { state: "visible", timeout: 8000 }).catch(() => {});
+out.keys.before = await kgf.evaluate(() => document.getElementById("rs-pane-artifacts").checked);
+await kgf.focus("#rs-pane-artifacts");
+await kp.keyboard.down("Space");
+releaseKeyRead();
+out.keys.landed = await settles(kp.waitForFunction(LANDED, null, { timeout: 15000 }));
+await kp.keyboard.up("Space");
+out.keys.rowsAfter = await kgf.waitForFunction(() => !!document.getElementById("rs-pane-notes"), null,
+  { timeout: 5000 }).then(() => kgf.evaluate(ROW_IDS)).catch(() => null);
+out.keys.after = await kgf.evaluate(() => document.getElementById("rs-pane-artifacts").checked);
+out.keys.focus = await kgf.evaluate(() => { const a = document.activeElement; return a ? (a.id || a.tagName) : null; });
+const ARTIFACTS_SAVED = () => {
+  try { return (JSON.parse(localStorage.getItem("romp:settings") || "{}").panes || {}).artifacts === true; }
+  catch (e) { return null; } };
+out.keys.saved = await kp.evaluate(ARTIFACTS_SAVED);
+await kctx.close();
+
+// ---- 13. every consumer of the records on a page whose GET /panes read failed: the stores they write keep what a
+// page whose read was in left for the panes defined at the kernel (nothing derived from the missing list is written),
+// and the failure is shown (the Log's entry, the gear's line). The stores are seeded as such a page left them, the
+// docking kit on and the stored layout leg 6's (the notes pane docked left of the feed); then each consumer's road that
+// saves runs: the rail (a shipped pane toggled off and on), the docking kit (its start, and a real drag of the feed
+// into the chat's left half), the palette (its boot, and the key bound to a defined pane's command), the gear (a hand
+// row flipped off and on) and, on a phone, the tab bar (its boot, the remembered tab a defined pane's) ----
+if (!out.kitAfterDrop || !out.kitAfterDrop.layout) await die("leg 6 stored no layout to seed leg 13 with");
+const SEED = { "romp:settings": JSON.stringify({ paneDocking: true, panes: { lab: true, docs: false } }),
+  "romp-panes": JSON.stringify({ notes: true, docs: true, lab: true }),
+  "romp-pane-grow": JSON.stringify({ notes: 55, docs: 45 }), "romp-layout": out.kitAfterDrop.layout,
+  "romp:keys": JSON.stringify({ "pane.notes": "Alt+N" }), "romp-mobile-tab": "docs" };
+const SEEDED = (seed) => { if (window.top !== window || sessionStorage.getItem("lab-seeded")) return;
+  sessionStorage.setItem("lab-seeded", "1"); for (const k of Object.keys(seed)) localStorage.setItem(k, seed[k]); };
+const storesOf = (pg) => pg.evaluate((keys) => Object.fromEntries(keys.map((k) => [k, localStorage.getItem(k)])),
+  Object.keys(SEED));
+const KIT_ON = () => !!(window.__rompPaneDock && window.__rompPaneDock.on() && window.__rompPaneDock.layout());
+const LEAVES = () => { const lay = window.__rompPaneDock.layout();
+  const lv = (n) => (n.pane ? [n.pane] : n.kids.flatMap(lv)); return lay ? lv(lay.tree) : []; };
+const NOTICES = () => { try { return JSON.parse(localStorage.getItem("romp:notices") || "[]").map((n) => n.kind); }
+  catch (e) { return ["unreadable"]; } };
+const cctx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
+await cctx.route(panesRoute, failWith500);
+await cctx.addInitScript(SEEDED, SEED);
+const cp = await cctx.newPage();
+const cframe = () => cp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+await cp.goto(cfg.url);
+out.census = { settled: await settles(cp.waitForFunction(FAILED, null, { timeout: 15000 })) };
+out.census.kitOn = await settles(cp.waitForFunction(KIT_ON, null, { timeout: 15000 }));
+await cframe(); await cp.waitForTimeout(300);
+out.census.afterBoot = await storesOf(cp);
+await cp.evaluate(() => window.__rompPaneToggle("feed")); await cframe();
+await cp.evaluate(() => window.__rompPaneToggle("feed")); await cframe(); await cp.waitForTimeout(200);
+out.census.afterRail = await storesOf(cp);
+const crects = await cp.evaluate(() => Object.fromEntries(window.__rompPaneDock.rects().map((r) => [r.pane, r.rect])));
+const cfr = crects["feed-pane"], cch = crects["chat-pane"];
+out.census.drag = { rects: !!(cfr && cch), before: await cp.evaluate(LEAVES) };
+if (cfr && cch) {
+  await cp.mouse.move(cfr.x + 3, cfr.y + cfr.h / 2); await cp.mouse.down(); await cframe();
+  await cp.mouse.move(cfr.x + 17, cfr.y + cfr.h / 2 + 14, { steps: 3 }); await cframe();
+  await cp.mouse.move(cch.x + cch.w * 0.2, cch.y + cch.h / 2, { steps: 8 }); await cframe();
+  await cp.mouse.up(); await cframe();
+}
+out.census.drag.after = await cp.evaluate(LEAVES);
+out.census.afterDrag = await storesOf(cp);
+await cp.keyboard.press("Alt+KeyN"); await cp.waitForTimeout(200);
+out.census.afterKey = await storesOf(cp);
+await cp.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings("general"));
+const cgf = await gearFrame(cp);
+if (!cgf) await die("no settings frame on the census page");
+await cgf.waitForSelector("#rs-pane-artifacts", { state: "visible", timeout: 8000 }).catch(() => {});
+out.census.gearLine = await cgf.evaluate(GEAR_LINE);
+for (const on of [false, true]) {
+  await cgf.evaluate((v) => { const i = document.getElementById("rs-pane-timeline"); i.checked = v;
+    i.dispatchEvent(new Event("change", { bubbles: true })); }, on);
+  await cp.waitForTimeout(200);
+}
+out.census.afterGear = await storesOf(cp);
+out.census.log = await cp.evaluate(NOTICES);
+await cctx.close();
+const cmctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+await cmctx.route(panesRoute, failWith500);
+await cmctx.addInitScript(SEEDED, SEED);
+const cmp = await cmctx.newPage();
+await cmp.goto(cfg.url);
+out.census.phone = { settled: await settles(cmp.waitForFunction(FAILED, null, { timeout: 15000 })) };
+await cmp.waitForTimeout(800);
+out.census.phone.page = await cmp.evaluate(() => { const m = document.getElementById("merr");
+  return { mobile: !!(window.__rompMobileOn && window.__rompMobileOn()), tab: document.body.getAttribute("data-tab"),
+    merr: !!m && m.classList.contains("has") }; });
+out.census.phone.stores = await storesOf(cmp);
+out.census.phone.log = await cmp.evaluate(NOTICES);
+await cmctx.close();
+
 fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
 """
+
+
+# the read's line in the gear's Panes section, on screen with its section's tab open (GEAR_LINE in the driver), but
+# for its text
+_LINE_SHOWN = {"role": "status", "rendered": True, "textShown": True, "sectionShown": True, "inSection": True}
 
 
 class ServedPaneRegistry(unittest.TestCase):
@@ -820,8 +950,10 @@ class ServedPaneRegistry(unittest.TestCase):
         self.assertEqual(panes, [{"kind": "k-panes", "chip": "panes missing",
                                   "text": "Couldn't read the panes defined at the kernel (/panes answered HTTP 500), so they are missing from this page. Reload to try again."}],
                          "%s: one Log entry of its own kind names the failure: %r" % (self.ENGINE, fr["log"]["rows"]))
-        self.assertEqual(fr["gear"], {"rows": ["rs-pane-artifacts"], "line": "Couldn't read the panes defined at the kernel (/panes answered HTTP 500). Reload to try again."},
-                         "%s: the gear's Panes section shows the shipped row and says the defined panes could not be read: %r" % (self.ENGINE, fr["gear"]))
+        said = "Couldn't read the panes defined at the kernel (/panes answered HTTP 500). Reload to try again."
+        self.assertEqual(fr["gear"], {"rows": ["rs-pane-artifacts"], "line": dict(_LINE_SHOWN, text=said)},
+                         "%s: the gear's Panes section, open on its tab, shows the shipped row and, on screen, says "
+                         "the defined panes could not be read: %r" % (self.ENGINE, fr["gear"]))
         fm = r["failedPhone"]
         self.assertTrue(fm["settled"], "%s: the phone's read is marked failed: %r" % (self.ENGINE, fm))
         self.assertTrue(fm["page"]["mobile"], fm["page"])
@@ -871,9 +1003,69 @@ class ServedPaneRegistry(unittest.TestCase):
         # while the read lands: the section renders the read's rows (it re-renders on the builder's event) and the press is not lost
         # to that render (ui/CLAUDE.md, click-safe across re-renders: the render waits out the press)
         p = r["press"]
-        self.assertEqual((p["lineBefore"], p["before"], p["landed"]), ("Still reading the panes defined at the kernel.", False, True), p)
+        self.assertEqual((p["lineBefore"], p["before"], p["landed"]),
+                         (dict(_LINE_SHOWN, text="Still reading the panes defined at the kernel."), False, True),
+                         "%s: the still-reading line is on screen before the read lands: %r" % (self.ENGINE, p))
         self.assertIn("rs-pane-notes", p["rowsAfter"] or [], "%s: the rows the read gave are rendered once the press is released: %r" % (self.ENGINE, p))
         self.assertEqual((p["after"], p["saved"]), (True, True), "%s: the press held while the read landed still toggles the row's box and saves it: %r" % (self.ENGINE, p))
+
+
+    def test_a_space_held_on_a_gear_row_while_the_list_lands_still_toggles_it_and_keeps_the_focus(self):
+        r = self._result()
+        # 12b. the read held past the splash's backstop, the Artifacts row's box focused, Space held while the read
+        # lands and released after: the section waits for the keyup, so the toggle Space makes on its keyup lands, and
+        # the rebuild puts the focus back on the box
+        k = r["keys"]
+        self.assertEqual((k["before"], k["landed"]), (False, True), k)
+        self.assertIn("rs-pane-notes", k["rowsAfter"] or [], "%s: the read's rows are rendered: %r" % (self.ENGINE, k))
+        self.assertEqual((k["after"], k["saved"]), (True, True),
+                         "%s: the Space held across the landing toggles the box and saves it: %r" % (self.ENGINE, k))
+        self.assertEqual(k["focus"], "rs-pane-artifacts", "%s: the focus is back on the rebuilt box: %r"
+                         % (self.ENGINE, k))
+
+    def test_every_consumer_of_the_records_on_a_failed_read_shows_it_and_stores_nothing_derived_from_it(self):
+        r = self._result()
+        # 13. GET /panes answered 500 on a page whose stores a page with the read in left (the docking kit on, the
+        # stored layout leg 6's). Each consumer's road that saves ran: the rail, the docking kit's start and a real
+        # drag, the palette's boot and a bound key, the gear's hand row, the phone's tab bar. Every store still holds
+        # what was seeded for the panes defined at the kernel, and the failure is shown: the Log's panes entry, the
+        # gear's line on screen, the phone's mark
+        c, e = r["census"], self.ENGINE
+        self.assertEqual((c["settled"], c["kitOn"]), (True, True), "%s: the read failed, the kit came on: %r" % (e, c))
+        self.assertEqual(c["afterBoot"]["romp-layout"], r["kitAfterDrop"]["layout"],
+                         "%s: the census page's stored layout is leg 6's, the docking kit's start wrote none" % e)
+        self.assertIn("notes-pane", c["afterBoot"]["romp-layout"] or "", "the seeded layout holds the notes pane")
+        self.assertTrue(c["drag"]["rects"] and c["drag"]["after"] != c["drag"]["before"],
+                        "%s: the drag moved the feed in the layout on screen: %r" % (e, c["drag"]))
+        for step in ("afterBoot", "afterRail", "afterDrag", "afterKey", "afterGear"):
+            got = c[step]
+            with self.subTest(step=step):
+                self.assertEqual(got["romp-layout"], r["kitAfterDrop"]["layout"],
+                                 "%s, %s: the docking kit stored no layout built without the defined panes" % (e, step))
+                self.assertEqual((got["romp:keys"], got["romp-pane-grow"], got["romp-mobile-tab"]),
+                                 ('{"pane.notes":"Alt+N"}', '{"notes":55,"docs":45}', "docs"),
+                                 "%s, %s: the bindings, the grows and the remembered tab as seeded" % (e, step))
+                rail = json.loads(got["romp-panes"] or "{}")
+                self.assertEqual({k: rail.get(k) for k in ("notes", "docs", "lab")},
+                                 {"notes": True, "docs": True, "lab": True},
+                                 "%s, %s: the rail's flags for the defined panes as seeded: %r" % (e, step, rail))
+                gear = (json.loads(got["romp:settings"] or "{}") or {}).get("panes") or {}
+                self.assertEqual({k: gear.get(k) for k in ("lab", "docs")}, {"lab": True, "docs": False},
+                                 "%s, %s: the gear's flags for the defined panes as seeded: %r" % (e, step, gear))
+        self.assertIn("panes", c["log"], "%s: the Log holds the failed read's entry: %r" % (e, c["log"]))
+        line = dict(c["gearLine"] or {})
+        self.assertTrue(line.pop("text", "").startswith("Couldn't read the panes defined at the kernel"), c["gearLine"])
+        self.assertEqual(line, _LINE_SHOWN, "%s: the gear's line is on screen: %r" % (e, c["gearLine"]))
+        ph = c["phone"]
+        self.assertEqual((ph["settled"], ph["page"]["mobile"], ph["page"]["merr"], "panes" in ph["log"]),
+                         (True, True, True, True),
+                         "%s: the phone's read failed, the Log holds its entry, the bar's mark is lit: %r" % (e, ph))
+        self.assertEqual((ph["page"]["tab"], ph["stores"]["romp-mobile-tab"]), ("chat", "docs"),
+                         "%s: the phone shows the chat and keeps the remembered tab for the next load: %r" % (e, ph))
+        self.assertEqual(ph["stores"]["romp-layout"], r["kitAfterDrop"]["layout"], "%s: the phone's stored layout" % e)
+        rail = json.loads(ph["stores"]["romp-panes"] or "{}")
+        self.assertEqual({k: rail.get(k) for k in ("notes", "docs", "lab")}, {"notes": True, "docs": True, "lab": True},
+                         "%s: the phone's rail flags: %r" % (e, rail))
 
 
 class ServedPaneRegistryWebKit(ServedPaneRegistry):

@@ -212,6 +212,18 @@ test("a registry pane's choice rides the pane set beside the shipped three (plan
   delete store["romp:settings"];
 });
 
+// A pane id can be an Object member's name (constructor): the set compares its own keys, so that pane's stored
+// choice is kept as any other's, and a save of an unrelated setting (which reads the set back) does not drop it
+test("a pane whose id is an Object member's name keeps its stored choice in the set and through a save", () => {
+  assert.deepEqual(paneSet({ constructor: false, notes: true }),
+    { timeline: true, fleet: true, feed: true, constructor: false, notes: true }, "a stored constructor flag survives");
+  store["romp:settings"] = JSON.stringify({ panes: { timeline: true, fleet: true, feed: true, constructor: false } });
+  saveSettings({ commentsFilter: "comments" });
+  assert.deepEqual(loadSettings().panes, { timeline: true, fleet: true, feed: true, constructor: false },
+    "a save of another setting keeps the stored constructor flag");
+  delete store["romp:settings"];
+});
+
 // The Files CONTROL's own setting (T317, the user 2026-09-10): whether the dashboard bar's Files toggle and the
 // phone's Files tab show at all. OFF by default (T317b, the user the same day: the control is asked for, not
 // shipped); only the literal true shows them, so a corrupt entry may cost the preference, never surprise the user

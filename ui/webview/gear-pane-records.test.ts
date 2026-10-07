@@ -8,7 +8,11 @@
 //   - a gear opened before the read lands renders the rows again on the builder's romp-pane-records;
 //   - that render waits out a press on the section (actions.ts pressHold, ui/CLAUDE.md's click-safety rule): a rebuild while the
 //     pointer is down takes the pressed box away and its click with it, so the rows are rendered after the release, from the
-//     store the click has just written.
+//     store the click has just written. A key held on the section holds it the same way until its keyup (Space
+//     toggles a box on its keyup), and the rebuild puts the focus back on the control that had it;
+//   - the read's line is a status in the section's flow (rs-note), never a row's hover text (gear.css hides an rs-sub
+//     until its row is hovered or focused), read here from the classes and gear.css's rules; the served leg reads it on
+//     screen.
 // initGear builds the whole modal, so the section's code is LIFTED from gear.js (the browse-route idiom) and run over a small fake
 // DOM, a stand-in shell window holding the read's state and the settings frame's own window. The served leg
 // (tests/test_pane_registry_served.py) drives the same section in Chromium and WebKit.
@@ -20,6 +24,7 @@ import { pressHold } from "./actions";
 import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a node enumerates its primitives alone, so a failing dump never walks the tree
 
 const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+const GEAR_CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.css"), "utf8");
 // the shell's body attribute: the shipped Artifacts record's row alone (tests/test_pane_registry.py ARTIFACTS_ROW)
 const ARTIFACTS_ROW = { id: "artifacts", title: "Artifacts", protocol: "romp", experimental: true, on: false, builtin: true };
 // rows as the shell's builder keeps them in the read's state (rows), one per record shape
@@ -44,7 +49,11 @@ class El extends EventTarget {
   setAttribute(k: string, v: string): void { this.attrs[k] = String(v); }
   getAttribute(k: string): string | null { return k in this.attrs ? this.attrs[k] : null; }
   appendChild(c: El): El { this.children.push(c); c.parentNode = this; return c; }
+  focus(): void { focused.el = this; }
+  contains(o: El | null): boolean { for (let n = o; n; n = n.parentNode) if (n === this) return true; return false; }
 }
+/** The settings frame's focused node (document.activeElement); section() clears it. */
+const focused: { el: El | null } = { el: null };
 const all = (e: El): El[] => e.children.flatMap((c) => [c, ...all(c)]);
 const hasClass = (e: El, c: string): boolean => e.className.split(/\s+/).includes(c);
 
@@ -61,6 +70,9 @@ function lineOf(box: El): { text: string; role: string | null } | null {
   const ln = box.children.find((c) => hasClass(c, "rs-panes-read"));
   return ln ? { text: ln.textContent, role: ln.getAttribute("role") } : null;
 }
+/** gear.css's rules that hide what they select: [selector, declarations] for each rule setting display: none. */
+const HIDING = Array.from(GEAR_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g))
+  .filter((m) => /display:\s*none/.test(m[2])).flatMap((m) => m[1].split(",").map((sel) => sel.trim()));
 const boxOf = (box: El, id: string): El | undefined => all(box).find((n) => n.tag === "input" && n.id === "rs-pane-" + id);
 
 type Records = { state: string; rows: unknown; error: string };
@@ -72,7 +84,11 @@ function section(rr: Records, store: Store = {}) {
   assert.ok(a > 0 && b > a, "gear.js: the Panes section's anchors not found; re-anchor");
   const box = new El("div"); box.id = "rs-panes-data";
   let attached = true;
-  const doc = { getElementById: (id: string) => (id === "rs-panes-data" && attached ? box : null), createElement: (tag: string) => new El(tag) };
+  const byId = (id: string): El | null =>
+    (id === "rs-panes-data" ? (attached ? box : null) : all(box).find((n) => n.id === id) || null);
+  const doc = { getElementById: byId, createElement: (tag: string) => new El(tag),
+    get activeElement() { return focused.el; } };
+  focused.el = null;
   const shell: any = new EventTarget();
   shell.document = { body: { getAttribute: (k: string) => (k === "data-panes" ? JSON.stringify([ARTIFACTS_ROW]) : null) } };
   shell.__rompPaneRecords = rr;
@@ -96,6 +112,9 @@ function section(rr: Records, store: Store = {}) {
     land: () => shell.dispatchEvent(new CustomEvent("romp-pane-records", { detail: { state: rr.state, rows: rr.rows || [], frames: [], error: rr.error } })),
     press: () => box.dispatchEvent(Object.assign(new Event("pointerdown"), { button: 0 })),
     release: () => frame.dispatchEvent(new Event("pointerup")),
+    keydown: () => box.dispatchEvent(new Event("keydown")),   // the section hears a key go down on any of its controls
+    keyup: () => frame.dispatchEvent(new Event("keyup")),
+    blur: () => frame.dispatchEvent(new Event("blur")),
     detach: () => { attached = false; },
   };
 }
@@ -162,4 +181,74 @@ test("a read landing while a Panes row is pressed renders after the release, so 
     "after the release the rows are rendered from the read, and the pressed row shows what its click saved");
   assert.ok(!all(s.box).includes(pressed), "the render ran: the old box is gone");
   assert.equal(lineOf(s.box), null);
+});
+
+test("the read's line is a status in the section's flow, not a row's hover text: an rs-note gear.css shows", () => {
+  const reads = [{ state: "failed", rows: null, error: "/panes answered HTTP 500" },
+    { state: "loading", rows: null, error: "" }];
+  for (const rr of reads) {
+    const s = section(rr);
+    s.open();
+    const ln = s.box.children.find((c) => hasClass(c, "rs-panes-read"))!;
+    assert.ok(ln, rr.state + ": the section has the read's line");
+    assert.ok(hasClass(ln, "rs-note"), rr.state + ": the line is an rs-note, the inline status class: " + ln.className);
+    assert.ok(!hasClass(ln, "rs-row") && !all(ln).some((n) => hasClass(n, "rs-sub")),
+      rr.state + ": not a row and no rs-sub inside it (gear.css shows an rs-sub only while its row is hovered or "
+      + "focused)");
+    assert.equal(ln.getAttribute("role"), "status", rr.state + ": announced as a status");
+    assert.ok(ln.textContent.length > 0, rr.state + ": it carries its text, so the :empty rule does not hide it");
+  }
+  const hiders = HIDING.filter((sel) => /\.rs-note\b|\.rs-panes-read\b|\.rs-panes-row\b/.test(sel));
+  assert.deepEqual(hiders, ["#rsettings .rs-note:empty"],
+    "the one gear.css rule that hides the line's classes hides an empty note");
+});
+
+test("a rebuild when the read lands puts the focus back on the Panes row that had it", () => {
+  const rr: Records = { state: "loading", rows: null, error: "" };
+  const s = section(rr);
+  s.open();
+  const old = boxOf(s.box, "artifacts")!;
+  old.focus();
+  rr.state = "ok"; rr.rows = [NOTES];
+  s.land();
+  const now = boxOf(s.box, "artifacts")!;
+  assert.ok(now !== old, "the rows were rebuilt");
+  assert.ok(focused.el === now, "the focus is on the rebuilt Artifacts box, not left on the box the rebuild removed");
+  const elsewhere = new El("input"); elsewhere.id = "rs-compact";
+  const t = section({ state: "loading", rows: null, error: "" });
+  t.open();
+  elsewhere.focus();
+  t.land();
+  assert.ok(focused.el === elsewhere, "a focus outside the section is left where it is");
+});
+
+test("a key held on a Panes row holds the rebuild until its keyup: a Space across the landing toggles it", async () => {
+  const rr: Records = { state: "loading", rows: null, error: "" };
+  const s = section(rr);
+  s.open();
+  const pressed = boxOf(s.box, "artifacts")!;
+  pressed.focus();
+  s.keydown();
+  rr.state = "ok"; rr.rows = [NOTES];
+  s.land();
+  assert.ok(all(s.box).includes(pressed),
+    "under the key the section is not rebuilt: the box that saw the keydown is still in it");
+  pressed.checked = true; pressed.dispatchEvent(new Event("change"));   // the click Space brings with its keyup
+  s.keyup();
+  assert.ok(all(s.box).includes(pressed), "the render waits a tick past the keyup, so the keyup's click lands first");
+  await afterTimers();
+  assert.deepEqual(rowsOf(s.box).map((r) => [r.id, r.checked]), [["artifacts", true], ["notes", true]],
+    "after the keyup the rows are rendered from the read, the toggled row as its click saved it");
+  assert.deepEqual(s.saved.map((x) => x.panes), [{ artifacts: true }], "the toggle was saved");
+  assert.ok(focused.el === boxOf(s.box, "artifacts"), "and the focus is on the rebuilt box");
+  const brr: Records = { state: "loading", rows: null, error: "" };
+  const b = section(brr);
+  b.open();
+  b.keydown();
+  brr.state = "ok"; brr.rows = [NOTES];
+  b.land();
+  assert.deepEqual(rowsOf(b.box).map((r) => r.id), ["artifacts"], "held: not rebuilt yet");
+  b.blur();
+  await afterTimers();
+  assert.deepEqual(rowsOf(b.box).map((r) => r.id), ["artifacts", "notes"], "the window's blur releases the hold too");
 });
