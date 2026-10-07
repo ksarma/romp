@@ -138,11 +138,18 @@ const hiddenStart = { tabs: await tabCount(), skel: await skelCount() };
 await page.waitForFunction(() => document.querySelectorAll("#tabs .tab-skeleton").length === 0, null, { timeout: 40000 }).catch(() => {});   // the visible skeletons fill on idle callbacks
 await page.waitForTimeout(1500);   // idle callbacks past the visible set: a hidden tab built by mistake would show as a loaded tab when the filter lifts
 const hidden = { dial: (await page.evaluate(() => window.__dials[0] || null)), start: hiddenStart, tabs: await tabCount(), skelVisibleAfterWait: await skelCount(), nav: await nav() };
-await page.evaluate(() => { location.hash = ""; });
-await page.waitForFunction(() => document.querySelectorAll("#tabs .tab, #tabs [data-sid]").length >= 27, null, { timeout: 15000 }).catch(() => {});
-const skelAfterReveal = await skelCount();   // the tabs the filter hid come back: skeletons at the head (never built while hidden), loaded tabs at the base
+// the reveal and its count in ONE task. The page's own hashchange listener (render.ts onOnlyHashChange, bound at load) repaints the
+// strip, and that repaint re-arms the idle prefetch, which fills the first revealed skeleton a few ms later; a count read in a later
+// evaluate raced that fill (17 of 18, about 1 run in 60 under load). So the strip is read by a listener added here, after the page's:
+// it runs in the same dispatch, right after the repaint, before any idle callback or kernel frame can run. The timer only bounds a
+// hashchange that never fires (both counts null, so the test fails); it measures nothing.
+const atReveal = await page.evaluate(() => new Promise((resolve) => {
+  const t = setTimeout(() => resolve({ skel: null, tabs: null }), 15000);
+  window.addEventListener("hashchange", () => { clearTimeout(t); resolve({ skel: document.querySelectorAll("#tabs .tab-skeleton").length, tabs: document.querySelectorAll("#tabs .tab, #tabs [data-sid]").length }); }, { once: true });
+  location.hash = "";
+}));   // the tabs the filter hid come back: skeletons at the head (never built while hidden), loaded tabs at the base
 await page.waitForFunction(() => document.querySelectorAll("#tabs .tab-skeleton").length === 0, null, { timeout: 60000 }).catch(() => {});
-const revealed = { skelAfterReveal, skelFinal: await skelCount(), tabs: await tabCount() };
+const revealed = { skelAtReveal: atReveal.skel, tabsAtReveal: atReveal.tabs, skelFinal: await skelCount(), tabs: await tabCount() };
 // ROAD 5 (round two, medium 1): a PLAIN reload right after a restart reload dials no diet: the record was consumed by the read that acted on it
 await page.evaluate(() => { sessionStorage.setItem("romp:reloadReason", JSON.stringify({ reason: "restart", t: Date.now() })); });
 await page.reload();
@@ -522,7 +529,10 @@ class ColdBootDiet(unittest.TestCase):
         self.assertEqual(h["skelVisibleAfterWait"], 0, "the shown skeletons filled on idle callbacks: %r" % h)
         rv = r["revealed"]
         self.assertGreaterEqual(rv["tabs"], N_SESSIONS, "lifting the filter shows every tab: %r" % rv)
-        self.assertEqual(rv["skelAfterReveal"], hidden_n, "the tabs the filter hid come back as SKELETONS: none was built while hidden (at the base they came back loaded): %r" % rv)
+        # the count is read in the reveal's own task, after the page's repaint and before the re-armed prefetch can fill a tab: the
+        # strip it read holds every tab (a read that ran ahead of the page's listener would see the filtered strip and fail here)
+        self.assertEqual(rv["tabsAtReveal"], h["start"]["tabs"] + hidden_n, "the count read the strip the reveal's repaint left, every tab back in it: %r then %r" % (h["start"], rv))
+        self.assertEqual(rv["skelAtReveal"], hidden_n, "the tabs the filter hid come back as SKELETONS, counted as the reveal leaves them: none was built while hidden (at the base they came back loaded): %r" % rv)
         self.assertEqual(rv["skelFinal"], 0, "…and load once shown: %r" % rv)
 
     def test_a_plain_reload_after_a_restart_reload_dials_no_diet_the_record_consumed_on_the_read(self):
