@@ -729,13 +729,15 @@ ECHO_ROWS = {
         _echo_row("<bash-stdout>invented</bash-stdout><bash-stderr></bash-stderr>", isReplay=True),
     "a compact summary (the key present, false)":
         _echo_row("an invented summary", isReplay=False, isSynthetic=True),
-    # No CLI writes the next two: an `origin` that is not an object with a string kind. The SDK's parser drops such an
+    # No CLI writes the next three: an `origin` that is not an object with a string kind. The SDK's parser drops such an
     # origin, so the kernel reads the row as unstamped, and the host reads it the same way (a stamp decides only when the
     # SDK would keep it).
     "local-command output with an origin that is a string, which stamps nothing":
         _echo_row("<local-command-stdout>invented output</local-command-stdout>", origin="peer"),
     "local-command output with an origin object that has no kind, which stamps nothing":
         _echo_row("<local-command-stdout>invented output</local-command-stdout>", origin={"from": "invented"}),
+    "local-command output with an origin object whose kind is not a string, which stamps nothing":
+        _echo_row("<local-command-stdout>invented output</local-command-stdout>", origin={"kind": 5}),
 }
 # Rows that still open a turn at zero: only user rows are ever echoes, a user row's tool-result content is never read,
 # isSynthetic is not the mark (the CLI's in-turn user rows carry it), a tag counts only at the start of the text, and a
@@ -755,6 +757,10 @@ TURN_ROWS = {
                                             "</local-command-stdout></task-notification>"}], origin={"kind": "task-notification"}),
     "an origin-stamped row whose text opens with the tag (the stamp decides, not the text)":
         _echo_row("<local-command-stdout>an invented peer message</local-command-stdout>", origin={"kind": "peer"}),
+    # The next row's kind is an empty string, which is none of the kinds the SDK lists. The SDK's parser keeps it all the
+    # same, as it keeps any string kind, so both ends read the row as stamped.
+    "an origin stamp whose kind is an empty string, on a row that opens with the tag (any string kind stamps)":
+        _echo_row("<local-command-stdout>an invented peer message</local-command-stdout>", origin={"kind": ""}),
 }
 
 
