@@ -192,7 +192,9 @@ CLASSIFIED = {
     ".github/workflows/ci.yml": ((NOT_A_READ,), "github.ref in the concurrency group, which GitHub evaluates for a run "
                                                 "and no test runs; tests/test_ci_workflow_concurrency.py evaluates the "
                                                 "expression over values it gives"),
-    ".github/workflows/docs.yml": ((NOT_A_READ,), "github.ref in the concurrency group, which GitHub alone evaluates"),
+    ".github/workflows/docs.yml": ((NOT_A_READ,), "github.ref in the concurrency group of a pull request's run, which "
+                                                  "GitHub alone evaluates and no test runs; "
+                                                  "tests/test_docs_workflow_pins.py reads the expression as text"),
     ".github/workflows/ledger.yml": ((NOT_A_READ,), "github.ref in the concurrency group, which GitHub alone evaluates"),
     "kernel/kernel.py": ((READS, SYNTHETIC, NOT_A_READ),
                          "_tree_branch reads the branch of a session's directory, and _checkout_branch the install's "
@@ -254,12 +256,14 @@ CLASSIFIED = {
                                             "the calls a stubbed Popen records while the kernel signs a session whose "
                                             "directory the test builds; a docstring"),
     "tests/test_ci_sdk_pin.py": ((NOT_A_READ,), "a workflow text the test parses, github.ref in an if: key"),
-    "tests/test_ci_workflow_concurrency.py": ((NOT_A_READ,), "evaluates ci.yml's concurrency expression over github.ref "
-                                                             "values it gives; reads no repository"),
+    "tests/test_ci_workflow_concurrency.py": ((NOT_A_READ,), "evaluates ci.yml's expressions (the concurrency stanza's, "
+                                                             "the matrices' os) over github.ref values it gives; reads no "
+                                                             "repository"),
     "tests/test_converge_main_branch.py": ((SYNTHETIC, NOT_A_READ), "symbolic-ref --short HEAD of the checkout setUp "
                                                                     "builds (self.checkout); a comment"),
-    "tests/test_docs_workflow_pins.py": ((NOT_A_READ,), "an expected text: docs.yml's concurrency group, matched "
-                                                        "against the workflow file's text; reads no repository"),
+    "tests/test_docs_workflow_pins.py": ((NOT_A_READ,), "an expected text: docs.yml's concurrency group, github.ref in "
+                                                        "it, matched against the workflow file's text; reads no "
+                                                        "repository"),
     "tests/test_env_value_redaction.py": ((NOT_A_READ,), "GitHub's variables set to values the test gives, in an "
                                                          "environment it builds, for the redaction of their values"),
     "tests/test_federated_linkdrop_mint.py": ((SYNTHETIC,), "git worktree list of the repository the case builds "

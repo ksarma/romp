@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """When CI runs, and which of its runs cancel which (.github/workflows/ci.yml, 2026-09-08 and 2026-09-27).
 
-Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`), by hand
-(workflow_dispatch) and on its weekly schedule, and on nothing else. A member PR runs no ci.yml of its own:
+Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`) and by hand
+(workflow_dispatch), and, under the smaller shape alone (2026-10-06), on a weekly schedule; under full, the
+shape as built, nothing runs on a schedule. The shape is a switch of three lines that must agree, the on: block's
+two schedule lines, its schedule: key and cron entry (both commented under full, both live under smaller),
+and the 'full' or 'smaller' literal that opens the python job's python-version expression (shape_lines,
+shape_of and with_shape below read and set it; tests/test_ci_shards.py's ShapeSwitch holds what each shape
+runs, and tests/test_ci_macos_schedule.py the schedule lines themselves). A member PR runs no ci.yml of its own:
 the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate (scripts/batch.py
 verify and land read it), and GitHub's full matrix runs once on the batch branch, whose PR is expected to
 show that push run's checks on its head (the first batch confirms it). A merge to main runs none: batch.py
@@ -11,9 +16,9 @@ land refuses a batch whose head does not contain main and reads main again right
 push already tested; a move after that read is finish's loud report (LandAndFinish). The gate is the workflow's `on:` block and not a job-level
 `if:`: `pull_request`'s branch filter selects the base branch, so singling out batch PRs there would
 need an `if:` on every job, and a skipped job reports success (a required check reads it as passing).
-CiTriggers reads the `on:` block and holds it to exactly those three triggers, so an added one (a merge queue, a
-review, another workflow's run) fails by name; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any job
-ci.yml defines, read from the file.
+CiTriggers reads the `on:` block and holds it to exactly those triggers for the shape the switch says, so an added one
+(a merge queue, a review, another workflow's run, the schedule live under full) fails by name; NoJobLevelGate refuses an
+`if:` or `continue-on-error:` on any job ci.yml defines, read from the file.
 
 Concurrency (2026-09-08, extended 2026-09-27): the group was `ci-<event>-<ref>` with cancel-in-progress
 for every event, so two merges to main in quick succession cancelled the first merge's run, and a red
@@ -29,7 +34,9 @@ expressions for each kind of run instead of matching their spelling.
 Runners (2026-09-28): a batch push gets Linux alone. CiMatrixRunners evaluates each matrix job's `os:` expression
 (python, shell and vendored-tooling) for each kind of run with the same evaluator, joins every `include:` entry's os,
 and reads the other jobs' literal `runs-on:` (secrets, vscode-extension and served-pages), so macOS on a batch push by
-any of those roads fails by name.
+any of those roads fails by name. A dispatch adds macOS only when its `macos` input is true (2026-10-05;
+tests/test_ci_macos_input.py holds the input and the gate, with dispatch_inputs and dispatch_run below), and the
+schedule event, live under the smaller shape alone, gets Linux alone in both shapes (2026-10-06).
 
 No YAML library is in the test deps, so the blocks are read by indentation, and anything the readers
 do not understand fails with "re-anchor" rather than passing."""
@@ -147,18 +154,130 @@ def job_keys(src=None):
     return {job: [k for k, _r, _i in _keys_at(_children(lines, i, 2), 4)] for job, _rest, i in _keys_at(lines, 2)}
 
 
+# ---- the shape switch (2026-10-06) -------------------------------------------------------------------------------------
+# Two shapes of the python job's matrix (ci.yml's header, THE SHAPE SWITCH): under full, every batch push runs all five
+# interpreters and nothing runs on a schedule; under smaller, a batch push runs 3.12 and 3.14t, a weekly scheduled run
+# runs 3.10, 3.11 and 3.13, and a manual run all five. Three lines choose the shape, and they must agree. Lines 1 and 2
+# are the on: block's schedule: key and its one cron entry, in block form, both commented under full and both live under
+# smaller: the one-line flow form, `schedule: [{cron: ...}]`, is a flow mapping inside a flow sequence, a YAML form
+# tests/test_ci_sdk_pin.py's allowlist refuses. Line 3 is the python job's python-version expression, whose first
+# literal is the shape. One line cannot carry the choice: the on: block takes no expression, and a job's strategy reads
+# only the github, needs, vars and inputs contexts.
+SHAPES = ("full", "smaller")
+# the switch's three lines, in file order (shape_lines' keys)
+SWITCH_LINES = ("schedule", "cron", "python-version")
+# line 1: a schedule: key at two spaces inside the on: block, live or behind `# `
+SCHEDULE_KEY = re.compile(r"^  (# )?schedule:(?=[ \t]|$)")
+# line 2: the schedule's cron entry, a block sequence entry at four spaces when live (`    - cron:`), and the same text
+# behind `# ` at two spaces when commented (`  #   - cron:`)
+SCHEDULE_CRON = re.compile(r"^  (# )?  - cron:(?=[ \t])")
+# a cron entry in any spelling, live or behind any number of `#`, with or without its dash: what the on: block may hold
+# once, as line 2
+ANY_CRON = re.compile(r"^[ \t]*(?:#[ \t]*)*(?:-[ \t]*)?cron:")
+# line 3: the python-version key at the matrix's eight spaces, its value opening with the shape literal
+SHAPE_LITERAL = re.compile(r"^(        python-version: \$\{\{ fromJSON\(')(full|smaller)(' == 'smaller' && )")
+
+
+def shape_lines(src):
+    """{"schedule": (line index, "live" or "commented"), "cron": (line index, "live" or "commented"), "python-version":
+    (line index, "full" or "smaller")}: the three lines of the shape switch in src split at its line feeds. Line 1 is the
+    one line of the on: block (its top-level line to the next top-level line that is not a comment) that SCHEDULE_KEY
+    matches; line 2 is the line after it, which SCHEDULE_CRON must match, and the one cron entry, live or commented, of
+    the on: block (ANY_CRON); line 3 is the one line of the file at eight spaces that is a python-version key, a line of
+    the python job, whose value opens with the shape literal (SHAPE_LITERAL). Each line's state is read alone, so a
+    half-flip is read here and refused by shape_of. Raises LookupError when a line is missing or written twice, or is in
+    another form."""
+    ls = src.split("\n")
+    if "on:" not in ls:
+        raise LookupError("ci.yml has no top-level on: line; re-anchor this pin")
+    start = ls.index("on:")
+    end = next((k for k in range(start + 1, len(ls)) if ls[k][:1] not in ("", " ", "#")), len(ls))
+    sched = [(k, "commented" if m.group(1) else "live") for k in range(start + 1, end)
+             for m in [SCHEDULE_KEY.match(ls[k])] if m]
+    if len(sched) != 1:
+        raise LookupError("the on: block holds %d schedule: keys, live or commented, not one: the shape switch's line 1 "
+                          "is one schedule: key, commented under full and live under smaller" % len(sched))
+    crons = [k for k in range(start + 1, end) if ANY_CRON.match(ls[k])]
+    key = sched[0][0]
+    m = SCHEDULE_CRON.match(ls[key + 1]) if key + 1 < end else None
+    if crons != [key + 1] or m is None:
+        raise LookupError("the on: block's cron entries, live or commented, are at lines %r, where the shape switch's line "
+                          "2 is one cron entry right after the schedule: key (line %d), `    - cron: ...` live or "
+                          "`  #   - cron: ...` commented" % ([k + 1 for k in crons], key + 1))
+    cron = (key + 1, "commented" if m.group(1) else "live")
+    pyv = [k for k, l in enumerate(ls) if l.startswith("        python-version:")]
+    if len(pyv) != 1:
+        raise LookupError("ci.yml holds %d python-version lines at eight spaces, not one: the shape switch's line 3 is "
+                          "the python job's python-version expression; re-anchor this pin" % len(pyv))
+    m = SHAPE_LITERAL.match(ls[pyv[0]])
+    if m is None:
+        raise LookupError("the python job's python-version line does not open with the shape literal ('full' or "
+                          "'smaller' == 'smaller' && ...): %r" % ls[pyv[0]][:120])
+    if ls[pyv[0]] not in job_lines(src, "python"):
+        raise LookupError("the python-version line with the shape literal is not the python job's; re-anchor this pin")
+    return {"schedule": sched[0], "cron": cron, "python-version": (pyv[0], m.group(2))}
+
+
+def shape_of(src):
+    """The shape the three lines of the switch say, "full" or "smaller". The two schedule lines are read as one unit:
+    raises LookupError when they disagree (a live key with its entry commented is a schedule with no entries, and a live
+    entry under a commented key sits inside the dispatch's block; either makes the file invalid), and when the unit and
+    the literal disagree, a half-flip: the schedule lines live under full bill a weekly run nobody chose, and commented
+    under smaller leave 3.10, 3.11 and 3.13 unrun."""
+    lines = shape_lines(src)
+    key, cron, literal = lines["schedule"][1], lines["cron"][1], lines["python-version"][1]
+    if key != cron:
+        raise LookupError("the shape switch's two schedule lines disagree: the schedule: key is %s and its cron entry is "
+                          "%s; they are one unit, both commented under full and both live under smaller" % (key, cron))
+    if (key == "live") != (literal == "smaller"):
+        raise LookupError("the shape switch is half-flipped: the schedule lines are %s and the python-version literal is "
+                          "%r; under full the schedule lines are commented and under smaller they are live, so switching "
+                          "the shape edits all three lines" % (key, literal))
+    return literal
+
+
+def set_line(src, which, shape):
+    """src with one line of the switch, which (one of SWITCH_LINES), set to what shape writes there, and nothing else
+    changed. A half-flip when another line says the other shape."""
+    if shape not in SHAPES:
+        raise ValueError("no shape %r: the shapes are %r" % (shape, SHAPES))
+    if which not in SWITCH_LINES:
+        raise ValueError("no switch line %r: the lines are %r" % (which, SWITCH_LINES))
+    ls = src.split("\n")
+    k, value = shape_lines(src)[which]
+    if which == "python-version":
+        ls[k] = SHAPE_LITERAL.sub(lambda m: m.group(1) + shape + m.group(3), ls[k], count=1)
+    else:
+        # the text after the two spaces, and after `# ` when commented: `schedule: ...` or `  - cron: ...`
+        body = ls[k][4:] if value == "commented" else ls[k][2:]
+        ls[k] = ("  " if shape == "smaller" else "  # ") + body
+    return "\n".join(ls)
+
+
+def with_shape(src, shape):
+    """src with the three lines of the switch set to shape and nothing else changed: the edit that switches the shape."""
+    for which in SWITCH_LINES:
+        src = set_line(src, which, shape)
+    return src
+
+
 class CiTriggers(unittest.TestCase):
-    """The workflow runs on pushes to batch branches, by hand, and on the schedule; never on a PR event or a push to main."""
+    """The workflow runs on pushes to batch branches and by hand, and on the weekly schedule under the smaller shape alone;
+    never on a PR event or a push to main."""
 
     def setUp(self):
         self.events = triggers()
         self.filters = push_filters()
 
-    def test_the_triggers_are_exactly_batch_pushes_the_dispatch_and_the_schedule(self):
-        # round 1, tests-3 and extra6-1: the docstring's "and on nothing else", held as a closed set
-        self.assertEqual(sorted(self.events), ["push", "schedule", "workflow_dispatch"],
-                         "ci.yml's triggers are %r; an added trigger changes which events run the full matrix (a PR event, "
-                         "a review, a merge queue, another workflow's run)" % sorted(self.events))
+    def test_the_triggers_are_exactly_batch_pushes_and_the_dispatch(self):
+        # round 1, tests-3 and extra6-1: the docstring's "and on nothing else", held as a closed set; the schedule left it
+        # on 2026-10-04, and since 2026-10-06 it is a trigger under the smaller shape alone (the switch's lines 1 and 2)
+        shape = shape_of(_source())
+        want = ["push", "workflow_dispatch"] + (["schedule"] if shape == "smaller" else [])
+        self.assertEqual(sorted(self.events), sorted(want),
+                         "ci.yml's triggers are %r under the %s shape; an added trigger changes which events run the "
+                         "matrix (a PR event, a review, a merge queue, another workflow's run, or the weekly schedule "
+                         "under full, where it bills a run nobody chose)" % (sorted(self.events), shape))
 
     def test_no_pull_request_trigger(self):
         # a PR event would run the full matrix on every member push again: the cost the local gate removes
@@ -277,7 +396,10 @@ def _text_of(v):
 def evaluate(expr, ctx):
     """GitHub's value semantics for the subset the stanza uses: string literals, github.event_name, github.ref and
     github.sha, `==` and `!=` (case-insensitive on strings), `!`, `&&` and `||` (which return an operand, not a
-    boolean), parentheses, and startsWith(). Anything else raises LookupError."""
+    boolean), parentheses, and startsWith(). A name under `inputs.` (the matrix expressions' inputs.macos) is
+    ctx's value for it, and null when ctx has none: GitHub's inputs context is empty outside a dispatch, so an input
+    reads as null on a push (run() puts a dispatch's inputs in ctx; dispatch_run fills each at its declared default).
+    Anything else raises LookupError."""
     toks = _tokens(expr)
     pos = [0]
 
@@ -319,6 +441,8 @@ def evaluate(expr, ctx):
                 b = or_()
                 take("op", ")")
                 return _text_of(a).lower().startswith(_text_of(b).lower())
+            if value.startswith("inputs."):
+                return ctx.get(value)
             if value not in ctx:
                 raise LookupError("the name %s is not modelled; re-anchor this pin" % value)
             return ctx[value]
@@ -400,16 +524,72 @@ def matrix_os(src, job):
     return _strip_comment(keys["os"][0]), includes
 
 
-def os_list(expr, ctx):
-    """The runner list an os: expression gives: `${{ fromJSON(<inner>) }}`, the inner expression evaluated and its
-    string read as JSON (fromJSON is modelled for this one shape); anything else raises LookupError."""
+def json_list(expr, ctx, key, what):
+    """The list a matrix axis's expression gives: `${{ fromJSON(<inner>) }}`, the inner expression evaluated and its
+    string read as JSON (fromJSON is modelled for this one shape). Raises LookupError for any other shape, and when the
+    value is not a non-empty list of strings (key and what name the axis and its values in the message)."""
     m = re.fullmatch(r"\$\{\{\s*fromJSON\((.*)\)\s*\}\}", expr.strip())
     if m is None:
-        raise LookupError("the os: expression %r is not ${{ fromJSON(...) }}; re-anchor this pin" % expr)
+        raise LookupError("the %s expression %r is not ${{ fromJSON(...) }}; re-anchor this pin" % (key, expr))
     value = json.loads(_text_of(evaluate(m.group(1), ctx)))
-    if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
-        raise LookupError("the os: expression %r gives %r, not a list of runner labels; re-anchor this pin" % (expr, value))
+    if not (isinstance(value, list) and value and all(isinstance(v, str) for v in value)):
+        raise LookupError("the %s expression %r gives %r, not a list of %s; re-anchor this pin" % (key, expr, value, what))
     return value
+
+
+def os_list(expr, ctx):
+    """The runner list an os: expression gives (json_list); anything else raises LookupError."""
+    return json_list(expr, ctx, "os:", "runner labels")
+
+
+# a version on the python-version axis: MAJOR.MINOR, optionally ending in t (setup-python's free-threaded build)
+PYTHON_VERSION = re.compile(r"\d+\.\d+t?")
+
+
+def python_versions(text, ctx):
+    """The python-version axis as a run in ctx gets it, from its value as written: a one-line flow sequence of quoted
+    versions as its strings, or a ${{ fromJSON(...) }} expression evaluated (json_list). Each must be a version
+    (PYTHON_VERSION) written as a string: in a flow list a plain 3.10 is the number 3.1 to YAML. Raises LookupError for
+    any other shape."""
+    text = _strip_comment(text)
+    if text.startswith("["):
+        if not text.endswith("]"):
+            raise LookupError("a python-version flow list that does not close on its line: %r; re-anchor this pin" % text)
+        words = [w.strip() for w in text[1:-1].split(",") if w.strip()]
+        if not words or any(len(w) < 2 or w[0] != w[-1] or w[0] not in "'\"" for w in words):
+            raise LookupError("the python-version list %r holds a value that is not a quoted string" % text)
+        versions = [w[1:-1] for w in words]
+    else:
+        versions = json_list(text, ctx, "python-version", "versions")
+    bad = [v for v in versions if not PYTHON_VERSION.fullmatch(v)]
+    if bad:
+        raise LookupError("the python-version axis gives %r, which are not MAJOR.MINOR versions" % bad)
+    return versions
+
+
+def python_version_axis(src):
+    """The python job's strategy.matrix python-version value as written (read as matrix_os reads os:)."""
+    jl = job_lines(src, "python")
+    strat = next((_children(jl, i, 4) for k, _r, i in _keys_at(jl, 4) if k == "strategy"), None)
+    mat = next((_children(strat, i, 6) for k, _r, i in _keys_at(strat, 6) if k == "matrix"), None) if strat else None
+    found = [rest for k, rest, _i in (_keys_at(mat, 8) if mat else []) if k == "python-version"]
+    if len(found) != 1:
+        raise LookupError("the python job's matrix has %d python-version keys, not one; re-anchor this pin" % len(found))
+    return found[0]
+
+
+def every_python(src):
+    """Every interpreter the python job runs in any run under either shape: the union of the python-version axis over
+    both shapes (with_shape) and a batch push, a pull_request, the schedule and a dispatch with its macos input at its
+    default and on."""
+    out = set()
+    for shape in SHAPES:
+        s = with_shape(src, shape)
+        axis = python_version_axis(s)
+        for ctx in (run("push", BATCH_X, SHA_A), run("pull_request", "refs/pull/1/merge", SHA_A),
+                    run("schedule", MAIN, SHA_A), dispatch_run(s, MAIN, SHA_A), dispatch_run(s, MAIN, SHA_A, macos=True)):
+            out.update(python_versions(axis, ctx))
+    return sorted(out)
 
 
 def render(template, ctx):
@@ -433,8 +613,61 @@ def concurrency(src=None):
     return keys["group"], keys["cancel-in-progress"]
 
 
-def run(event, ref, sha):
-    return {"github.event_name": event, "github.ref": ref, "github.sha": sha}
+def run(event, ref, sha, inputs=None):
+    """The context a run of `event` on `ref` at `sha` evaluates its expressions in. `inputs`, {name: value}, are a
+    dispatch's inputs, each as inputs.<name>; only a workflow_dispatch carries any (ValueError otherwise), and each one
+    the dict lacks reads as null (evaluate), so dispatch_run is the faithful dispatch: it fills every declared input."""
+    ctx = {"github.event_name": event, "github.ref": ref, "github.sha": sha}
+    if inputs:
+        if event != "workflow_dispatch":
+            raise ValueError("a %s run carries no inputs; only a workflow_dispatch does" % event)
+        ctx.update(("inputs." + k, v) for k, v in inputs.items())
+    return ctx
+
+
+def dispatch_inputs(src=None):
+    """{name: {key: value}} for each input `on: workflow_dispatch: inputs:` declares, as written (comment lines dropped):
+    each input's keys at two columns past its name, each a one-line plain or quoted scalar, unquoted; a plain true or
+    false is that boolean, as YAML reads it, and a quoted one stays a string. {} when the dispatch declares none. A
+    workflow_dispatch key other than inputs:, or a line in a shape this reader does not read, raises LookupError."""
+    lines = triggers(src).get("workflow_dispatch")
+    if lines is None:
+        raise LookupError("ci.yml has no workflow_dispatch trigger; re-anchor this pin")
+    keys = _keys_at(lines, 4)
+    if [k for k, _r, _i in keys] not in ([], ["inputs"]):
+        raise LookupError("workflow_dispatch holds %r, not inputs: alone; re-anchor this pin" % [k for k, _r, _i in keys])
+    if not keys:
+        return {}
+    under = _children(lines, keys[0][2], 4)
+    out, read = {}, 0
+    for name, rest, i in _keys_at(under, 6):
+        if _strip_comment(rest):
+            raise LookupError("the input %s has a value on its own line, not a mapping; re-anchor this pin" % name)
+        fields = {}
+        body = _children(under, i, 6)
+        for key, value, _j in _keys_at(body, 8):
+            value = _strip_comment(value)
+            fields[key] = {"true": True, "false": False}.get(value, _unquote(value))
+        if len(_keys_at(body, 8)) != len(body):
+            raise LookupError("the input %s holds a line deeper than its keys; re-anchor this pin" % name)
+        out[name] = fields
+        read += 1 + len(body)
+    if read != len(under):
+        raise LookupError("inputs: holds a line that is neither an input's name nor one of its keys; re-anchor this pin")
+    return out
+
+
+def dispatch_run(src, ref, sha, **given):
+    """run() for a workflow_dispatch on `ref` at `sha` as GitHub fills its inputs: every input the file declares
+    (dispatch_inputs), at its declared default unless `given` names it (an input with no default reads as null);
+    a name `given` holds that the file does not declare raises LookupError, as GitHub refuses an undeclared input."""
+    declared = dispatch_inputs(src)
+    unknown = sorted(set(given) - set(declared))
+    if unknown:
+        raise LookupError("the dispatch declares no input %r; GitHub refuses it" % unknown)
+    values = {name: fields.get("default") for name, fields in declared.items()}
+    values.update(given)
+    return run("workflow_dispatch", ref, sha, values)
 
 
 SHA_A, SHA_B = "a" * 40, "b" * 40
@@ -479,6 +712,11 @@ class CiConcurrency(unittest.TestCase):
         self.assertNotEqual(self.group("schedule", MAIN, SHA_A), self.group("push", MAIN, SHA_A))
 
     def test_the_evaluator_itself(self):
+        dispatch = run("workflow_dispatch", MAIN, SHA_A, {"macos": True})
+        self.assertIs(evaluate("github.event_name == 'workflow_dispatch' && inputs.macos", dispatch), True)
+        self.assertIsNone(evaluate("inputs.macos", run("push", MAIN, SHA_A)), "an input reads as null outside a dispatch")
+        with self.assertRaises(ValueError):
+            run("push", MAIN, SHA_A, {"macos": True})
         ctx = run("push", MAIN, SHA_A)
         self.assertEqual(evaluate("github.event_name == 'PUSH' && github.sha || github.ref", ctx), SHA_A)
         self.assertEqual(evaluate("github.event_name == 'pull_request' && github.sha || github.ref", ctx), MAIN)
@@ -499,12 +737,15 @@ FIXED_JOBS = ("secrets", "vscode-extension", "served-pages")   # runs-on: a lite
 class CiMatrixRunners(unittest.TestCase):
     """Round 1, tests-5: a batch push gets Linux alone. Every job's runners on a push to refs/heads/batch/x: each matrix
     job's (MATRIX_JOBS) evaluated os: list joined with every include: entry's os, and each other job's (FIXED_JOBS)
-    literal runs-on. The weekly schedule and a manual dispatch add macOS to every matrix job."""
+    literal runs-on. A manual dispatch with its macos input on adds macOS to every matrix job (one with the input at its
+    default, off, adds none: tests/test_ci_macos_input.py). The schedule event, a trigger under the smaller shape alone,
+    gets Linux alone for every job in both shapes (2026-10-06): no expression names it, so the weekly run that took the
+    macOS cells until 2026-10-04 stays paused for them."""
 
     def setUp(self):
         self.src = _source()
 
-    def runners(self, event, ref, src=None):
+    def runners(self, event, ref, src=None, inputs=None):
         """{job: its runner labels} for EVERY job ci.yml defines (job_keys), not a list of the known ones: a job whose
         runs-on is `${{ matrix.os }}` gets its matrix's evaluated os: list joined with every include: entry's os, any
         other job its literal runs-on; a runs-on in neither form is a re-anchor."""
@@ -516,7 +757,7 @@ class CiMatrixRunners(unittest.TestCase):
                 raise LookupError("the %s job has no runs-on:; re-anchor this pin" % job)
             if value == "${{ matrix.os }}":
                 expr, includes = matrix_os(src, job)
-                out[job] = sorted(set(os_list(expr, run(event, ref, SHA_A))) | set(includes))
+                out[job] = sorted(set(os_list(expr, run(event, ref, SHA_A, inputs))) | set(includes))
             elif "${{" in value:
                 raise LookupError("the %s job's runs-on %r is neither ${{ matrix.os }} nor a literal; re-anchor this pin" % (job, value))
             else:
@@ -527,17 +768,26 @@ class CiMatrixRunners(unittest.TestCase):
         got = self.runners("push", BATCH_X)
         for job, labels in got.items():
             self.assertEqual(labels, ["ubuntu-latest"], "a batch push runs the %s job on %r; it gets Linux alone (macOS runs "
-                                                        "only on the weekly schedule or a manual dispatch)" % (job, labels))
+                                                        "only on a manual dispatch with its macos input on)" % (job, labels))
         self.assertEqual(sorted(got), sorted(MATRIX_JOBS + FIXED_JOBS), "re-anchor: the jobs are %r" % sorted(got))
         for job in MATRIX_JOBS:
             self.assertEqual(job_value(self.src, job, "runs-on"), "${{ matrix.os }}", "the %s job runs on its matrix's os" % job)
 
-    def test_the_schedule_and_a_dispatch_add_macos_to_every_matrix_job(self):
-        for event in ("schedule", "workflow_dispatch"):
-            got = self.runners(event, MAIN)
-            for job in MATRIX_JOBS:
-                with self.subTest(event=event, job=job):
-                    self.assertEqual(got[job], ["macos-latest", "ubuntu-latest"])
+    def test_a_dispatch_with_macos_on_adds_macos_to_every_matrix_job(self):
+        got = self.runners("workflow_dispatch", MAIN, inputs={"macos": True})
+        for job in MATRIX_JOBS:
+            with self.subTest(job=job):
+                self.assertEqual(got[job], ["macos-latest", "ubuntu-latest"])
+
+    def test_the_schedule_runs_every_job_on_linux_alone_in_both_shapes(self):
+        # the schedule is live under smaller alone, and its run is Linux alone: the weekly run of 3.10, 3.11 and 3.13
+        # takes none of the macOS cells, which bill at about ten times the Linux rate (2026-10-06)
+        for shape in SHAPES:
+            got = self.runners("schedule", MAIN, src=with_shape(self.src, shape))
+            for job, labels in got.items():
+                with self.subTest(shape=shape, job=job):
+                    self.assertEqual(labels, ["ubuntu-latest"], "the schedule runs the %s job on %r under %s; the weekly "
+                                     "run is Linux alone" % (job, labels, shape))
 
     def test_an_added_job_and_a_flow_form_include_are_read(self):
         """The two ways round 1's verify put a job on macOS for a batch push past the pin: an added job with a literal
@@ -546,13 +796,16 @@ class CiMatrixRunners(unittest.TestCase):
         re-anchor, not a silent skip."""
         fifth = self.src.rstrip("\n") + "\n\n  late:\n    runs-on: macos-latest\n    steps:\n      - run: true\n"
         self.assertEqual(self.runners("push", BATCH_X, src=fifth)["late"], ["macos-latest"])
-        m = re.search(r"^(\s+)include:\s*\n", self.src, re.M)
-        self.assertIsNotNone(m, "the python job's matrix has an include:; re-anchor this pin")
+        # the include: is planted after the python job's matrix os: line, since the matrix itself has none (its shard
+        # layout, 2026-10-04, is an exclude:); a key's place in a mapping does not change what it means
+        m = re.search(r"^  python:\n(?:    .*\n|\n)*?(        )os: \$\{\{.*\n", self.src, re.M)
+        self.assertIsNotNone(m, "the python job's matrix has no os: expression line; re-anchor this pin")
         pad = m.group(1) + "  "
-        flow = self.src[:m.end()] + "%s- {os: macos-latest, python-version: '3.11'}\n" % pad + self.src[m.end():]
+        head = self.src[:m.end()] + m.group(1) + "include:\n"
+        flow = head + "%s- {os: macos-latest, python-version: '3.11'}\n" % pad + self.src[m.end():]
         got = self.runners("push", BATCH_X, src=flow)
         self.assertIn("macos-latest", got["python"], got)
-        odd = self.src[:m.end()] + "%s-   os  :  macos-latest\n" % pad + self.src[m.end():]
+        odd = head + "%s-   os  :  macos-latest\n" % pad + self.src[m.end():]
         with self.assertRaises(LookupError):
             self.runners("push", BATCH_X, src=odd)
 

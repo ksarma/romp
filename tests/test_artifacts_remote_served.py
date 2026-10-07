@@ -150,7 +150,19 @@ if (fr) {
         nameStyle: nm ? { fontWeight: getComputedStyle(nm).fontWeight, fontSize: parseFloat(getComputedStyle(nm).fontSize), color: getComputedStyle(nm).color, chip: nm.style.getPropertyValue("--chip-bg") } : null }; });
     return { background: getComputedStyle(card).backgroundColor, menuBg, classes: Array.from(card.classList), rows, fg: getComputedStyle(document.body).color };
   });
-  if (cfg.pickerOnly) { process.stdout.write("RESULT:" + JSON.stringify(out) + "\n"); await browser.close(); process.exit(0); }   // the remote-first run covers the picker leg alone
+  if (cfg.pickerOnly) {
+    // the mark follows the shown session when that is the REMOTE too: every read above has the hub's own shown, which is also the
+    // strip's first tab on most boots, so a picker that marked the first tab or the hub's own would pass them; a real switch to the
+    // remote, its echo, the button wearing the remote's name, then the card with the remote marked and the hub's own not
+    const rid = "TESTHOST:" + cfg.rsid;
+    const switchedR = cf ? await switchTo(cf, rid) : false;
+    const echoR = switchedR ? await fr.waitForFunction((x) => { const r = (window.__relays || []).slice(-1)[0]; return !!r && r.id === x && typeof r.nonce === "number" && (window.__echoes || []).some((e) => e.id === r.id && e.nonce === r.nonce); }, rid, { timeout: 30000 }).then(() => true).catch(timedOut) : false;
+    const buttonR = await fr.waitForFunction(() => { const n = document.querySelector("#art-pick .session-name"); const p = document.querySelector("#art-pick .host-prefix"); return !!n && n.textContent === "api" && !!p && p.textContent === "TESTHOST:"; }, null, { timeout: 30000 }).then(() => true).catch(timedOut);
+    await fr.click("#art-pick", { timeout: 15000 }).catch(() => {});
+    const markR = await fr.waitForFunction((a) => !!document.querySelector('#art-picker .ctx-item[data-sid="' + a.lsid + '"]') && !!document.querySelector('#art-picker .ctx-item.current[data-sid="TESTHOST:' + a.rsid + '"]'), { rsid: cfg.rsid, lsid: cfg.lsid }, { timeout: 30000 }).then(() => true).catch(timedOut);
+    out.remoteRead = { switchedR, echoR, buttonR, markR, rows: await fr.evaluate(() => Array.from(document.querySelectorAll("#art-picker .ctx-item[data-sid]")).map((r) => ({ sid: r.getAttribute("data-sid"), current: r.classList.contains("current") }))) };
+    process.stdout.write("RESULT:" + JSON.stringify(out) + "\n"); await browser.close(); process.exit(0);
+  }   // the remote-first run covers the picker leg alone
   // pick the remote session: the listing is answered by the kernel that owns it, the thumbnail rides the host relay
   await fr.click('#art-picker .ctx-item[data-sid="TESTHOST:' + cfg.rsid + '"]', { timeout: 15000 }).catch(() => {});
   await fr.waitForFunction(() => document.querySelectorAll(".art-row").length >= 2, null, { timeout: 90000 }).catch(() => {});
@@ -369,7 +381,8 @@ class ArtifactsRemoteServed(unittest.TestCase):
 
     def _result_remote_first(self):
         """The picker leg on an emulated REMOTE-FIRST boot (the second contributor's post-merge review of PR 2097 at 16:50Z): a second,
-        short driver run on the same two kernels, the remote tab made active before the pane exists, ending after the card."""
+        short driver run on the same two kernels, the remote tab made active before the pane exists, ending after two reads of
+        the card: with the hub's own shown, then after a real switch back to the remote, with the remote shown."""
         if type(self)._fail:               # the main run's fault first: after stage one it leaves the remote kernel down, and its message names that cause
             self.fail(type(self)._fail)
         if type(self)._fail_rf:
@@ -433,6 +446,12 @@ class ArtifactsRemoteServed(unittest.TestCase):
         by = {row["sid"]: row for row in (r.get("card") or {}).get("rows", [])}
         self.assertTrue(by.get(SID_L, {}).get("current"), "the hub's own row wears the mark: %r" % by)
         self.assertFalse(by.get("TESTHOST:" + SID_R, {}).get("current"), "and the remote row does not")
+        rr = r.get("remoteRead") or {}
+        for k in ("switchedR", "echoR", "buttonR", "markR"):
+            self.assertTrue(rr.get(k), "the remote shown: %s: %r" % (k, rr))
+        byr = {row["sid"]: row for row in rr.get("rows") or []}
+        self.assertTrue(byr.get("TESTHOST:" + SID_R, {}).get("current"), "with the remote shown, the remote row wears the mark: %r" % byr)
+        self.assertFalse(byr.get(SID_L, {}).get("current"), "and the hub's own row does not: %r" % byr)
 
     def test_the_picker_wears_the_strips_dress_in_the_menu_tokens(self):
         card = self._result()["card"]
