@@ -90,8 +90,9 @@
 // load), Usage's name read with the pointer off the row, then the pointer moved onto Usage's centre (its transitions off
 // first), and its hovered fill, the line's and the name's colours and whether :hover holds read; then the card opened over the
 // lab's reading again and every button the row holds, listed from the page, hovered in turn from off the row (its transitions
-// and its descendants' off first): whether :hover holds, whether it is disabled, and each label (each visible, laid-out element
-// holding words of its text), its computed colour with the backgrounds and opacities out to the first opaque background.
+// and its descendants' off first): whether :hover holds, whether it is disabled, each label (each visible, laid-out element
+// holding words of its text), its computed colour, and each paint of its glyph (every shape the svg paints, its fill and its
+// stroke with their opacities), each with the backgrounds and opacities out to the first opaque background.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -1472,9 +1473,20 @@ try {
             const tw = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
             for (let t = tw.nextNode(); t; t = tw.nextNode()) { const el = t.parentElement;
               if (/\S/.test(t.data) && el && !els.includes(el) && seen(el)) els.push(el); }
+            // ...and the glyph (romp-manager's ruling at the launch of round 3, item 2: Usage's glyph may wear the accent hovered,
+            // read against the fill it sits on): every shape its svg paints, each paint that is not none, its fill or stroke
+            // colour (currentColor read as the shape's colour) with that paint's opacity, and the shape's layers out to the
+            // first opaque background
+            const svg = b.querySelector("svg");
+            const glyph = !svg || !seen(svg) ? [] : Array.from(svg.querySelectorAll("rect, path, circle, ellipse, line, polyline, polygon"))
+              .filter((s) => { const cs = getComputedStyle(s); return cs.display !== "none" && cs.visibility === "visible"; })
+              .flatMap((s, j) => { const cs = getComputedStyle(s);
+                return [["fill", cs.fill, cs.fillOpacity], ["stroke", cs.stroke, cs.strokeOpacity]].filter(([, v]) => v && v !== "none")
+                  .map(([paint, v, o]) => ({ shape: s.tagName.toLowerCase() + " " + j + (s.getAttribute("class") ? " ." + s.getAttribute("class") : ""),
+                                             paint, colour: /^currentcolor$/i.test(v) ? cs.color : v, opacity: o, under: layers(s) })); });
             return { act: b.getAttribute("data-pact"), title: b.getAttribute("title"), hovered: b.matches(":hover"), disabled: b.disabled,
                      labels: els.map((el) => ({ text: Array.from(el.childNodes).filter((x) => x.nodeType === 3).map((x) => x.data).join("").trim(),
-                                                colour: getComputedStyle(el).color, under: layers(el) })) };
+                                                colour: getComputedStyle(el).color, under: layers(el) })), glyph };
           }, i));
           await page.mouse.move(1, 1);
           await frames(page);

@@ -112,7 +112,9 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    button wears, and in the dark theme the wash under the needs-you red read 2.95:1. The border still turns accent, so the
    hover reads as the others' do. Usage keeps its resting fill on hover too (romp-manager's first decision before PR 976's
    round 2): its line in the muted text, Couldn't load, read 4.38:1 on the dark theme's wash, under the 4.5:1 that text
-   needs (tests/test_mtabs_fit_served.py reads it hovered in both themes) */
+   needs (tests/test_mtabs_fit_served.py reads it hovered in both themes). Usage's glyph, which wears the button's colour,
+   still turns accent on hover, and reads 3.89:1 on that fill in the light theme, over the 3:1 a graphic needs
+   (romp-manager's ruling at the launch of PR 976's round 3, item 2; the served test reads it hovered in both themes) */
 #rsettings #rs-pact-net:hover:not(:disabled), #rsettings #rs-pact-usage:hover:not(:disabled) { background: var(--btn-bg, #2a2a2a); }
 /* ...and every label in the row, each span a button holds directly (Usage's words, the Remote kernels and the Restart kernel
    names), keeps its resting colour on hover, the card's text colour set on the label itself, as the unlit glyph's is above,

@@ -226,8 +226,11 @@ fill Usage wears hovered, :hover read as the premise, and the name wears its col
 on that fill. Then the card opened over the lab's reading again, and every button the row holds, listed from the page (so
 a button added to the row later is read too; the three in MOVED must be among them), hovered in turn from off the row with
 its transitions off, enabled and holding :hover as the premise: each label, every visible, laid-out element holding words of
-its text, reads TEXT_FLOOR or more on the fill its button wears hovered, each composited through the backgrounds and
-opacities out to the first opaque background (romp-manager's ruling at the launch of round 3, item 1). Then a desktop
+its text, reads TEXT_FLOOR or more on the fill its button wears hovered, and each paint of its glyph (every shape its svg
+paints, fill and stroke) reads GLYPH_FLOOR or more on that fill, Usage's glyph read among them, each composited through the
+backgrounds and opacities out to the first opaque background (romp-manager's ruling at the launch of round 3, items 1 and
+2: the whole row's labels, and Usage's glyph, which may wear the accent hovered, measured rather than computed from the
+tokens). Then a desktop
 window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the
 bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
@@ -323,7 +326,11 @@ mutant of gear.css's label rule that drops either label turns that label's reads
 rule does not skip a disabled Usage turns the no-reading leg's name red (rgb(204, 204, 204), the card's text colour,
 where the disabled button wears rgb(110, 118, 129)). At the head round 3 reviews, in Chromium, WebKit and Firefox,
 the read of every button in the row is red on Restart kernel's label alone, in the light theme alone, the one label the
-row's hover colour still reached: rgb(194, 65, 12), 4.15:1 on its hovered wash #f4e3d7, under TEXT_FLOOR.
+row's hover colour still reached: rgb(194, 65, 12), 4.15:1 on its hovered wash #f4e3d7, under TEXT_FLOOR. Every paint of the
+row's glyphs passes there. The glyph read is red in Chromium under a mutant of gear.css that fades every enabled glyph as a
+disabled one is (opacity .4 on each button's svg), Usage's glyph among those red; a mutant that drops Usage's resting fill on
+hover leaves it green, Usage's accent glyph reading over GLYPH_FLOOR on the wash in both themes (higher than on the fill in
+the light theme, lower in the dark one), and the hovered Couldn't load line's read is what that mutant turns red.
 Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
@@ -1474,7 +1481,9 @@ def _row_problems(engine, contrast):
     the fill its button wears hovered, in the dark and the light theme (romp-manager's ruling at the launch of PR 976's round 3,
     item 1: the whole row, not a list of labels). The list is the page's own, so a button added to the row later is read with no
     edit here; the three the row holds today (MOVED) must be among those read, so a read that lists fewer is a red, not a pass.
-    Each button must be enabled and hold :hover with the pointer on it (the read is of a hover), and show a label."""
+    Each button must be enabled and hold :hover with the pointer on it (the read is of a hover), and show a label. Every paint of
+    each button's glyph reads GLYPH_FLOOR or more on the same fill (item 2 of that ruling: Usage's glyph may wear the accent
+    hovered), and Usage's glyph must be read."""
     out = []
     for name, theme in THEMES:
         where = "%s row of moved actions hovered, %s theme (%s)" % (engine, name, theme)
@@ -1508,6 +1517,22 @@ def _row_problems(engine, contrast):
                             bw, lb.get("text"), ratio, lb.get("colour"), _hex(px), _hex(fill), TEXT_FLOOR))
                 except (AssertionError, TypeError, ValueError) as e:
                     out.append("%s: its label %r is unmeasured: %s" % (bw, lb.get("text"), e))
+            # ...and every paint of its glyph reads GLYPH_FLOOR or more on that fill (romp-manager's ruling at the launch of round
+            # 3, item 2: Usage's glyph may wear the accent hovered, and the floor is read, not computed from the tokens); Usage's
+            # glyph must be among the paints read
+            if b.get("act") == "usage" and not b.get("glyph"):
+                out.append("%s: no paint of its glyph seen" % bw)
+            for gp in b.get("glyph") or []:
+                try:
+                    col = _rgba(gp.get("colour"))
+                    fg = col[:3] + (col[3] * float(gp.get("opacity")),)
+                    px, fill = _through(fg, gp.get("under")), _through(None, gp.get("under"))
+                    ratio = _contrast(px, fill)
+                    if ratio < GLYPH_FLOOR:
+                        out.append("%s: its glyph's %s %s reads %.2f:1 (%s, %s) on the fill its button wears hovered (%s), under %g:1" % (
+                            bw, gp.get("shape"), gp.get("paint"), ratio, gp.get("colour"), _hex(px), _hex(fill), GLYPH_FLOOR))
+                except (AssertionError, TypeError, ValueError) as e:
+                    out.append("%s: its glyph's %s %s is unmeasured: %s" % (bw, gp.get("shape"), gp.get("paint"), e))
     return out
 
 
