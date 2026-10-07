@@ -121,18 +121,31 @@ every bash.
 
 On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
 each batch head, and GitHub's CI runs once per batch, on the push of the batch
-branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux; member PRs
-and merges to main run none of it (`docs/batching.md`). The macOS cells run on the
-weekly schedule and on demand from the Actions tab, not on a batch push. CI's
-secret scan alone runs on every push of a branch or a tag whose commit carries
-`.github/workflows/secret-scan.yml`, and on every push to an open pull
-request's branch. Among the pushes that start no run of it: a push to a branch
-cut from main before that file landed that has no open pull request, until the
-branch merges main; a tag on such a commit; and a push whose commit lacks the
-file because it or an earlier commit on its branch deleted it. A pull request
-that conflicts with its base gets no run of its own until the conflict is
-resolved, and a first-time contributor's run may wait for a maintainer to
-approve it. CLAUDE.md, "Credentials", lists these and GitHub's other limits.
+branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux under its
+full shape, as built, or across 3.12 and 3.14t alone under its smaller shape,
+where 3.10, 3.11 and 3.13 run on a weekly schedule (`ci.yml`'s header, THE SHAPE
+SWITCH: switching is a three-line change); member PRs and merges to main run none
+of it (`docs/batching.md`). Each Linux interpreter
+runs as four jobs, one for each shard of the test files, each with one pytest
+worker: one worker running the whole suite does not fit the private runner's
+8 GB. `tests/conftest.py` (its CI's shards section) states the rule that puts
+each test file under `tests/` in one shard, so a new test file there needs nothing to join one, and a run whose
+`ROMP_TESTS_SHARD` is unset, every local run, runs every file. The macOS cells
+never run on a batch push. A manual run of CI runs the Linux jobs alone unless you
+ask for macOS: tick the `macos` box in the Actions tab's "Run workflow" form, or
+run `gh workflow run CI --ref <branch> -f macos=true`. The box is off by default
+to control cost: the macOS cells bill at about ten times the Linux rate, about 8
+dollars per manual run. A weekly scheduled run also ran them until 2026-10-04;
+their weekly run stays paused until the first month's bill on the private runner
+is read, and the smaller shape's weekly run is Linux alone.
+CI's secret scan alone runs on every push of a branch or a tag whose commit
+carries `.github/workflows/secret-scan.yml`, once per push: it has no pull
+request trigger, since the private runner bills every run. Among the pushes
+that start no run of it: a push to a branch cut from main before that file
+landed, until the branch merges main; a tag on such a commit; and a push whose
+commit lacks the file because it or an earlier commit on its branch deleted it.
+That file's header lists these, what dropping the pull request trigger gave
+up, and GitHub's other limits.
 
 ## Measuring dashboard pane performance
 

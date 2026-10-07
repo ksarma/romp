@@ -76,7 +76,7 @@ checkouts hold origin/main for this case whenever the batcher's repository does 
 main_snapshot reads none). The two linknav files (fork PR 862) read the merge-base of HEAD with it for a gate that holds
 their delta checks off unless origin/main is known, the merge-base is not origin/main itself, and the diff since the
 merge-base adds the module. In every CI run of a ref but main (a batch branch's push, a dispatch of any other branch, as
-a PR's own CI evidence is) the gate holds them with "no origin/main", and in a run on main (the weekly schedule, a
+a PR's own CI evidence is) the gate holds them with "no origin/main", and in a run on main (the weekly schedule under ci.yml's smaller shape, a
 dispatch on main) with "the merge-base is origin/main"; in a sweep checkout it holds them too, naming another part, on
 every head whose diff since the merge-base does not add the module, which since the module landed on main is every head
 that has it from main. Run on 2026-10-04 in a checkout make_checkout made of this merge, with origin/main at fork main's

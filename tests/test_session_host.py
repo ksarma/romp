@@ -167,7 +167,12 @@ class SpawnSecrets(unittest.TestCase):
     defers annotations and is green alone), 8 of these 11 tests fail: _spawn's Popen patch is live when _ht()
     first imports the SDK through kernel/host_transport.py, and mcp's win32 utilities evaluate
     subprocess.Popen[bytes] at class definition, which the patched-in function does not support. Green whenever
-    a module that imports the SDK is collected first, as the suite and CI's one pytest invocation do; it predates
+    the pytest process that runs them also collects a module that imports the SDK, wherever it sorts, since pytest
+    collects every file before any test runs: a run of the whole suite does, as each macOS cell's one invocation
+    does, and on CI's Linux cells the shard that holds this file does (tests/conftest.py, its CI's shards section),
+    today shard 2, with tests/test_host_transport.py among others. That is where the rule puts the files today, and
+    nothing keeps an SDK importer in this file's shard: a change to the shards that leaves this file in a shard with
+    no module importing the SDK turns the 3.10 to 3.13 shard jobs that run it red with these 8 failures. It predates
     the install step (the same 8 fail at the base on such an interpreter) and is a follow-up, not fixed here."""
 
     def setUp(self):
