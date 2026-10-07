@@ -2676,13 +2676,13 @@ class RailBell(unittest.TestCase):
         page = body.decode()
         self.assertIn("id=rail-bell hidden", page, "the bells ship hidden; the wiring reveals them at boot")
         self.assertIn("id=mbell hidden", page, "the mobile bell is unchanged")
-        # ONE wiring drives the pair — reveal, paint and busy all iterate the same list — so the
+        # ONE wiring drives the pair (reveal, paint and the tap all iterate the same list), so the
         # two bells can never disagree about the master's state
         self.assertIn("querySelectorAll('#mbell,#rail-bell')", page)
         self.assertNotIn("getElementById('mbell')", page, "the single-bell wiring is gone")
-        # the rail bell paints its states exactly like the mobile one
+        # the rail bell paints its state exactly like the mobile one; every state class a rule names on
+        # either bell is one a served script sets there (BellStateClassCensus, tests/test_kernel_mobile.py)
         self.assertIn(".rail-acts #rail-bell.on{color:var(--accent)}", page)
-        self.assertIn(".rail-acts #rail-bell.busy{opacity:.45}", page)
         # the on-state must survive the light theme, whose .rail-act recolor outspecifies the bare
         # `.on` rule — with no light restatement on and off rendered pixel-identical there (the
         # user 2026-09-02)

@@ -80036,15 +80036,15 @@ def _landing():
             # horizontal-only so the bar's height and every tap height stay exactly as they were
             "#mtabs button.mact{flex:0 0 auto;padding:6px 7px;color:#7d848b;font-size:17px;line-height:1}"
             "#mtabs button.mact svg{display:block}"
-            # the push bell's states: on = the romp accent (a selected toggle, not a status); busy =
-            # dimmed, the immediate tap acknowledgement while the subscribe round-trip runs. The
+            # the push bell's state: on = the romp accent (a selected toggle, not a status), lit when the
+            # master switch is on and, where the Push API exists, this browser is subscribed. A tap only
+            # opens or closes the popover, whose rows show their own busy state while their requests run. The
             # [hidden] rule matters: the #mtabs button display:flex above outspecifies the UA's
-            # [hidden]{display:none}, so without it the capability-gated bell would always show.
+            # [hidden]{display:none}, so without it a pane tab the gear turned off, or the bell before the
+            # push script reveals it, would show.
             "#mtabs button[hidden]{display:none}"
             "#mtabs #mbell.on{color:var(--accent)}"
-            "#mtabs #mbell.busy{opacity:.45}"
             ".rail-acts #rail-bell.on{color:var(--accent)}"
-            ".rail-acts #rail-bell.busy{opacity:.45}"
             "}"
             # default Chat + Feed + Timeline shown, Fleet off (the user 2026-06-25); the rail toggles + ?panes=
             # reconcile in _LANDING_COLLAPSE_JS.
@@ -80408,8 +80408,9 @@ def _landing():
             "<rect class=rn-b x='11' y='11' width='4' height='4' rx='0.6' fill='currentColor'/></svg></div>"
             # the push bell, the desktop twin of #mbell (the user 2026-08-08: a laptop Chrome tab can
             # receive Web Push with no install, but the opt-in bell only rendered on the mobile layout).
-            # Ships hidden; _LANDING_PUSH_JS reveals it wherever the Push API exists and drives both
-            # bells as ONE control (same subscription, same flow). No data-act — it owns its own tap flow.
+            # Ships hidden; _LANDING_PUSH_JS reveals it on every page, Push API or not, and drives both
+            # bells as ONE control (same subscription, same flow): a tap opens or closes the popover.
+            # No data-act: it owns its own tap flow.
             "<div class=rail-act id=rail-bell hidden title=Notifications aria-label=Notifications>"
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
@@ -80450,9 +80451,11 @@ def _landing():
             "<button class=mact id=merr data-act=errs data-keycmd=log.open aria-label=Log title='Log — click to open'>"
             + _ERRS_SVG +
             "</button>"
-            # the push bell (plans/ios-app.md proposal 2): opt this DEVICE into needs-you notifications.
-            # Ships hidden; _LANDING_PUSH_JS reveals it only where the Push API exists (on iOS: the
-            # installed home-screen app). No data-act — it owns its own tap flow, not the A-map's.
+            # the push bell (plans/ios-app.md proposal 2), the phone twin of #rail-bell. Ships hidden;
+            # _LANDING_PUSH_JS reveals it on every page, Push API or not, and a tap opens or closes the
+            # popover, whose This-device row opts this DEVICE in to push notifications where the Push
+            # API exists (on iOS: the installed home-screen app). No data-act: it owns its own tap flow,
+            # not the A-map's.
             "<button class=mact id=mbell hidden aria-label=Notifications title=Notifications>"
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
