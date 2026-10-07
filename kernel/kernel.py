@@ -68559,6 +68559,9 @@ def _boards():
 # (_LANDING_PANE_RECORDS_JS; the inline scripts gained the joins). A URL source is a plain sandboxed iframe with no
 # token and no protocol; a state-root source (pane:<id>) is a static page under STATE/panes/<id>/ served at /pane/<id>/
 # with shim.js and theme.css beside it; a route source is a page the kernel already serves.
+# A pane id is checked whole, with fullmatch: $ alone also matches before a trailing newline, which fullmatch refuses.
+# The shell's check (_LANDING_PANE_RECORDS_JS) builds its JavaScript RegExp from this same pattern string, so the
+# pattern stays portable: ^ and $ only, no Python-only anchor such as \Z or \A (JavaScript reads \Z as a literal Z).
 _PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _PANE_ROUTE_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
 _PANE_RESERVED = ("chat", "timeline", "fleet", "feed", "waiting", "files", "artifacts", "settings")   # "waiting": the fork's shipped Waiting pane
@@ -68576,7 +68579,7 @@ def _pane_source_kind(src):
     if not isinstance(src, str) or not src:
         return None
     if src.startswith("pane:"):
-        return "state" if _PANE_ID_RE.match(src[5:] or "") else None
+        return "state" if _PANE_ID_RE.fullmatch(src[5:] or "") else None
     if re.match(r"^https?://[^\s]+$", src):
         return "url"
     if src.startswith("/") and not src.startswith("//") and _PANE_ROUTE_RE.match(src):
@@ -68593,7 +68596,7 @@ def _pane_check(defn, allow_reserved=False):
     if unknown:
         return None, "unknown member%s %s (the members are %s)" % ("s" if len(unknown) > 1 else "", ", ".join(unknown), ", ".join(_PANE_MEMBERS))
     pid = defn.get("id")
-    if not isinstance(pid, str) or not _PANE_ID_RE.match(pid):
+    if not isinstance(pid, str) or not _PANE_ID_RE.fullmatch(pid):
         return None, "id must be a lowercase word, [a-z][a-z0-9_-]{0,31}"
     if pid in _PANE_RESERVED and not allow_reserved:
         return None, "id %r is a shipped pane's and is reserved" % pid
@@ -76838,7 +76841,7 @@ function fail(why){RR.state='failed';RR.error=why;if(!RR.reauth)note("Couldn't r
 function go(){if(RR.state==='loading'||built)return;if(timer){clearTimeout(timer);timer=0;}
 if(RR.state!=='ok'){fail(RR.error||'the read failed');return;}
 var b=RR.body;if(!b||typeof b!=='object'||!Array.isArray(b.panes)||typeof b.rev!=='string'||!b.rev){fail('the answer was not a pane list');return;}
-built=true;var rows=[],seen={};
+built=true;var rows=[],seen=Object.create(null);   // no prototype: seen holds only the ids of the rows accepted so far
 b.panes.forEach(function(p){if(!p||p.builtin!==false)return;var c=check(p,seen);if(c.row){seen[c.row.id]=1;rows.push(c.row);}else note('Left out a pane defined at the kernel: '+c.why+'.');});
 var frames=build(rows);RR.rows=rows;RR.frames=frames;RR.rev=b.rev;
 join(rows,frames);

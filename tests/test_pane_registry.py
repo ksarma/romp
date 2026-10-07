@@ -781,6 +781,39 @@ class TheLanding(unittest.TestCase):
         self.assertEqual((r["once"], r["twice"], r["frames"]), (r["once"], r["once"], 1), "the duplicate-build guard: once per page")
 
 
+class ThePaneIdCheck(unittest.TestCase):
+    """The shell's check of a pane id (the builder, _LANDING_PANE_RECORDS_JS) accepts and refuses exactly the ids that
+    Python's check does (_pane_check, which POST /pane, the CLI door and the disk re-check all call). The builder builds
+    its RegExp from _PANE_ID_RE.pattern, so both read one pattern string. Where the two engines read that string
+    differently (a trailing newline, which a $ anchor under Python's match lets through), or where the rest of either
+    check differs, this pin names the id."""
+
+    IDS = ["a", "z", "notes", "a_b-c", "a" + "b" * 31,   # 32 characters
+           "notes\n", " notes", "Notes", "a" + "b" * 32,   # 33 characters
+           "", "1notes", "-notes", "no.tes", "no/tes", "not\u00e9s", "constructor", "__proto__", "toString"]
+
+    def test_the_shells_id_check_and_pythons_agree_on_every_id(self):
+        """One record per id with a valid title, flags and source, so only the id decides, once with a kernel route
+        as the source and once with the pane's own pane:<id> page (there _pane_source_kind checks the id a second
+        time). The builder runs in node over the rows as GET /panes answers them; _pane_check judges the same records.
+        No verdict is written here: the browser must decide whatever Python decides, so a later change to Python's id
+        rule (refusing "constructor", for example) reds this pin until the browser's check makes the same change. "a"
+        fits the pattern and both refuse it as a name the shell derives; "z" is a one-character id both accept."""
+        self.assertEqual((len(self.IDS[4]), len(self.IDS[8])), (32, 33))
+        for source in ("/feed", "pane:"):
+            rows = [{"id": i, "title": "Id check", "source": source + i if source == "pane:" else source, "on": False,
+                     "experimental": False, "protocol": "romp", "builtin": False} for i in self.IDS]
+            r = _run(_build_js(pane_records_stub.records_state(rows=rows)))
+            self.assertEqual(r["rr"]["state"], "ok", "the builder ran over the rows")
+            shell = {row["id"] for row in r["rr"]["rows"] or []}
+            python = {row["id"]: km._pane_check({k: v for k, v in row.items() if k != "builtin"})[1] is None
+                      for row in rows}
+            self.assertEqual(set(python.values()), {True, False}, "the list has ids Python accepts and ids it refuses")
+            differ = [(i, python[i], i in shell) for i in self.IDS if python[i] != (i in shell)]
+            self.assertEqual(differ, [], "source %r: (id, Python accepts, the shell accepts) for each id where they "
+                             "differ; the shell's notes: %r" % (source, [t for k, t in r["notes"] if k == "panes"]))
+
+
 class TheRevisionBaseline(unittest.TestCase):
     """The reload core takes the pane set's revision from the page's GET /panes read (adoptPanes): the landing and the pages bake an
     empty baseline, which leaves notePanes inert until the read lands; the read's revision is then the page's, a keepalive or a pane's
