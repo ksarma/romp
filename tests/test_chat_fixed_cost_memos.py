@@ -635,7 +635,7 @@ class PostalSigMemo(unittest.TestCase):
     The cards themselves are outside every key: the walk reads each card's kind, mid, direction and peer, on the rule
     that nothing writes those fields of a card in place once it is built. CardFieldWriters pins that rule over
     kernel/kernel.py's writers, a census of its AST against a list of the writes that build a new dict or write one
-    that is never a card."""
+    that is never a card, each with a witness that checks its reason."""
 
     def setUp(self):
         td = tempfile.TemporaryDirectory()
@@ -1526,7 +1526,15 @@ _METHOD_WRITES = {"update": "update", "setdefault": "setdefault", "pop": "pop", 
                   "__delitem__": "delitem", "__ior__": "ior"}
 _OPERATOR_WRITES = {"setitem": "setitem", "__setitem__": "setitem", "delitem": "delitem", "__delitem__": "delitem",
                     "ior": "ior", "__ior__": "ior"}
-_DEPTH = 8                                       # how many names deep a key is followed
+_DEPTH = 8                                       # how many steps deep a key is followed (a name to its binding is one)
+# The forms the census refuses whatever their key: a writer it does not read as a write, each one syntactic check that
+# kernel.py's tree meets nowhere (measured at 0 when the refusals were added, 2026-10-07).
+_AS_VALUE = "unrecognised: a writer not called directly"
+_BY_GETATTR = "unrecognised: a writer reached by getattr"
+_THROUGH_TYPE = "unrecognised: a writer reached through the type"
+_INIT = "unrecognised: __init__ other than through super()"
+_STARRED = "unrecognised: a * or ** argument to a writer"
+CARD_REFUSED_FORMS = frozenset((_AS_VALUE, _BY_GETATTR, _THROUGH_TYPE, _INIT, _STARRED))
 
 
 def _links(chain):
@@ -1539,6 +1547,16 @@ def _links(chain):
 
 def _store_names(node):
     return [n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
+
+
+def _is_super(expr):
+    return isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "super"
+
+
+def _through_type(expr):
+    """type(x) or x.__class__: a writer read off one is the class's, called with the dict as an argument."""
+    return ((isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "type")
+            or (isinstance(expr, ast.Attribute) and expr.attr == "__class__"))
 
 
 class _CardWriteReader:
@@ -1558,8 +1576,8 @@ class _CardWriteReader:
                     if a.name in _OPERATOR_WRITES:
                         self.operator_names[a.asname or a.name] = _OPERATOR_WRITES[a.name]
 
-    def sites(self):
-        """(function, target, field, form, line) for each write of a card field, sorted."""
+    def records(self):
+        """(function, target, field, form, the write's node) for each write of a card field, in the walk's order."""
         out, stack = [], [(self.tree, None)]
         while stack:
             node, chain = stack.pop()
@@ -1567,27 +1585,53 @@ class _CardWriteReader:
             stack.extend((child, here) for child in ast.iter_child_nodes(node))
             for target, keys, form in self.writes(node, chain):
                 fields = sorted(k for k in keys if k in CARD_FIELDS)
-                if form.startswith("unrecognised"):      # a store the reader does not model: reported whatever its key
+                if form.startswith("unrecognised"):      # a write the reader does not model: reported whatever its key
                     fields = fields or ["?"]
-                out += [(self.function(chain), ast.unparse(target), f, form, getattr(node, "lineno", 0)) for f in fields]
-        return sorted(out)
+                out += [(self.function(chain), ast.unparse(target), f, form, node) for f in fields]
+        return out
+
+    def sites(self):
+        """(function, target, field, form, line) for each write of a card field, sorted."""
+        return sorted(r[:4] + (getattr(r[4], "lineno", 0),) for r in self.records())
 
     def writes(self, node, chain):
         here = (node, chain)
+        called = chain is not None and isinstance(chain[0], ast.Call) and chain[0].func is node
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
             yield node.value, self.values(node.slice, here), self.store_form(node, chain)
         elif isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr):
             yield node.target, self.mapping_keys(node.value, here), "ior"
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            if node.attr == "__init__" and not _is_super(node.value):
+                dict_first = called and chain[0].args and isinstance(node.value, ast.Name) and node.value.id == "dict"
+                yield (chain[0].args[0] if dict_first else node.value), set(), _INIT
+            elif not called and node.attr in _METHOD_WRITES:
+                yield node.value, set(), _AS_VALUE
+            elif (not called and node.attr in _OPERATOR_WRITES and isinstance(node.value, ast.Name)
+                  and node.value.id in self.operator_modules):
+                yield node, set(), _AS_VALUE
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in self.operator_names:
+            if not called:
+                yield node, set(), _AS_VALUE
         elif isinstance(node, ast.Call):
+            f = node.func
+            if (isinstance(f, ast.Name) and f.id == "getattr" and len(node.args) > 1 and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value in tuple(_METHOD_WRITES) + ("__init__",)):
+                yield node.args[0], set(), _BY_GETATTR
+                return
+            if isinstance(f, ast.Attribute) and f.attr in _METHOD_WRITES and _through_type(f.value):
+                yield f.value, set(), _THROUGH_TYPE
+                return
             form, target, args = self.call_form(node)
             if form is None or target is None:
                 return
+            if any(isinstance(a, ast.Starred) for a in node.args) or any(kw.arg is None for kw in node.keywords):
+                yield target, set(), _STARRED
+                return
             if form == "update":
-                keys = set()
+                keys = {kw.arg for kw in node.keywords}
                 for a in args:
                     keys |= self.mapping_keys(a, here)
-                for kw in node.keywords:
-                    keys |= {kw.arg} if kw.arg is not None else self.mapping_keys(kw.value, here)
             elif form == "ior":
                 keys = self.mapping_keys(args[0], here) if args else set()
             else:
@@ -1595,7 +1639,7 @@ class _CardWriteReader:
             yield target, keys, form
 
     def call_form(self, node):
-        """(form, the dict written, the arguments after it) for a call that writes a mapping in place, else Nones."""
+        """(form, the dict written, the arguments after it) for a direct call of a writer, else Nones."""
         f, args = node.func, node.args
         if (isinstance(f, ast.Attribute) and f.attr in _OPERATOR_WRITES and isinstance(f.value, ast.Name)
                 and f.value.id in self.operator_modules):            # operator.__setitem__ too: before the method road
@@ -1738,59 +1782,64 @@ class _CardWriteReader:
     def scope_bindings(self, scope, scope_chain):
         """{name: [(how, expression, its chain)]} for every binding whose scope is `scope`, read once per scope."""
         table = self.scopes.get(id(scope))
-        if table is not None:
-            return table
-        table = {}
-
-        def add(n, how, value=None, where=None):
-            table.setdefault(n, []).append((how, value, where))
-        args = getattr(scope, "args", None)
-        if args is not None:
-            for a in args.posonlyargs + args.args + args.kwonlyargs + [args.vararg, args.kwarg]:
-                if a is not None:
-                    add(a.arg, "param")
-        here = (scope, scope_chain)
-        body = scope.body if isinstance(scope.body, list) else [scope.body]
-        stack = [(child, here) for child in body]
-        while stack:
-            node, chain = stack.pop()
-            at = (node, chain)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                add(node.name, "other")
-                continue                         # a scope of its own
-            if isinstance(node, ast.Lambda):
-                continue                         # a scope of its own; a comprehension is walked: := in one binds here
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.For, ast.AsyncFor)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                value = node.iter if isinstance(node, (ast.For, ast.AsyncFor)) else node.value
-                for t in targets:
-                    if isinstance(t, ast.Name) and value is not None:
-                        add(t.id, "iter" if isinstance(node, (ast.For, ast.AsyncFor)) else "value", value, at)
-                    elif not isinstance(t, ast.Name):
-                        for n in _store_names(t):
-                            add(n, "other")
-            elif isinstance(node, ast.NamedExpr):
-                add(node.target.id, "value", node.value, at)
-            elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-                add(node.target.id, "other")
-            elif isinstance(node, ast.withitem) and node.optional_vars is not None:
-                for n in _store_names(node.optional_vars):
-                    add(n, "other")
-            elif isinstance(node, ast.ExceptHandler) and node.name:
-                add(node.name, "other")
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                for a in node.names:
-                    add((a.asname or a.name).split(".")[0], "other")
-            elif isinstance(node, (ast.Global, ast.Nonlocal)):
-                for n in node.names:
-                    add(n, "outer")
-            elif getattr(node, "name", None) and type(node).__name__ in ("MatchAs", "MatchStar"):
-                add(node.name, "other")
-            elif getattr(node, "rest", None) and type(node).__name__ == "MatchMapping":
-                add(node.rest, "other")
-            stack.extend((child, at) for child in ast.iter_child_nodes(node))
-        self.scopes[id(scope)] = table
+        if table is None:
+            table = self.scopes[id(scope)] = _scope_table(scope, scope_chain)
         return table
+
+
+def _scope_table(scope, scope_chain):
+    """{name: [(how, expression, its chain)]} for every binding whose scope is `scope`: "param", "value" (an
+    assignment's value), "iter" (a for loop's iterable), "outer" (a global or nonlocal declaration) or "other"."""
+    table = {}
+
+    def add(n, how, value=None, where=None):
+        table.setdefault(n, []).append((how, value, where))
+    args = getattr(scope, "args", None)
+    if args is not None:
+        for a in args.posonlyargs + args.args + args.kwonlyargs + [args.vararg, args.kwarg]:
+            if a is not None:
+                add(a.arg, "param")
+    here = (scope, scope_chain)
+    body = scope.body if isinstance(scope.body, list) else [scope.body]
+    stack = [(child, here) for child in body]
+    while stack:
+        node, chain = stack.pop()
+        at = (node, chain)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            add(node.name, "other")
+            continue                         # a scope of its own
+        if isinstance(node, ast.Lambda):
+            continue                         # a scope of its own; a comprehension is walked: := in one binds here
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.For, ast.AsyncFor)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            value = node.iter if isinstance(node, (ast.For, ast.AsyncFor)) else node.value
+            for t in targets:
+                if isinstance(t, ast.Name) and value is not None:
+                    add(t.id, "iter" if isinstance(node, (ast.For, ast.AsyncFor)) else "value", value, at)
+                elif not isinstance(t, ast.Name):
+                    for n in _store_names(t):
+                        add(n, "other")
+        elif isinstance(node, ast.NamedExpr):
+            add(node.target.id, "value", node.value, at)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            add(node.target.id, "other")
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            for n in _store_names(node.optional_vars):
+                add(n, "other")
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            add(node.name, "other")
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for a in node.names:
+                add((a.asname or a.name).split(".")[0], "other")
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for n in node.names:
+                add(n, "outer")
+        elif getattr(node, "name", None) and type(node).__name__ in ("MatchAs", "MatchStar"):
+            add(node.name, "other")
+        elif getattr(node, "rest", None) and type(node).__name__ == "MatchMapping":
+            add(node.rest, "other")
+        stack.extend((child, at) for child in ast.iter_child_nodes(node))
+    return table
 
 
 def _card_field_writes(tree):
@@ -1838,20 +1887,15 @@ def _parents_of(func):
 
 
 def _nearest_binding(parent, node, name, stop):
-    """The nearest binding of `name` that reaches `node`: an enclosing for loop, with or except clause that binds it,
-    else the nearest statement before it that binds it, looking back through each enclosing block in turn up to `stop`
-    (a function), or None."""
+    """The nearest binding of `name` that reaches `node`: the nearest statement before it in its block that binds it,
+    else an enclosing for loop, with or except clause that binds it, else the same one block out, up to `stop` (a
+    function), or None. A statement that binds the name only inside it (in a nested block or a nested function) is
+    returned as the binding, and no witness accepts such a statement."""
     cur = node
     while cur is not stop:
         owner = parent.get(id(cur))
         if owner is None:
             return None
-        if ((isinstance(owner, (ast.For, ast.AsyncFor)) and name in _store_names(owner.target)
-             and any(cur is s for s in owner.body + owner.orelse))
-                or (isinstance(owner, (ast.With, ast.AsyncWith)) and any(cur is s for s in owner.body) and any(
-                    i.optional_vars is not None and name in _store_names(i.optional_vars) for i in owner.items))
-                or (isinstance(owner, ast.ExceptHandler) and owner.name == name)):
-            return owner
         for field in ("body", "orelse", "finalbody"):
             block = getattr(owner, field, None)
             at = next((i for i, s in enumerate(block) if s is cur), None) if isinstance(block, list) else None
@@ -1859,6 +1903,12 @@ def _nearest_binding(parent, node, name, stop):
                 for prev in reversed(block[:at]):
                     if name in _store_names(prev):
                         return prev
+        if ((isinstance(owner, (ast.For, ast.AsyncFor)) and name in _store_names(owner.target)
+             and any(cur is s for s in owner.body + owner.orelse))
+                or (isinstance(owner, (ast.With, ast.AsyncWith)) and any(cur is s for s in owner.body) and any(
+                    i.optional_vars is not None and name in _store_names(i.optional_vars) for i in owner.items))
+                or (isinstance(owner, ast.ExceptHandler) and owner.name == name)):
+            return owner
         cur = owner
     return None
 
@@ -1876,22 +1926,154 @@ def _fresh_dict(expr):
     return False
 
 
-def _copy_witness(tree, function, target, field):
-    """(writes read, problems) for a listed write that relies on a copy: each `target[field] = ...` in the function has,
-    as the nearest earlier binding of `target`, `target = <a new dict>`."""
-    func = _definition(tree, function)
-    if func is None:
-        return 0, ["%s is gone" % function]
-    parent, writes, problems = _parents_of(func), 0, []
-    for n in _own_nodes(func):
-        if (isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) and isinstance(n.value, ast.Name)
-                and n.value.id == target and isinstance(n.slice, ast.Constant) and n.slice.value == field):
-            writes += 1
-            prev = _nearest_binding(parent, n, target, func)
-            if not (isinstance(prev, ast.Assign) and len(prev.targets) == 1 and _fresh_dict(prev.value)):
-                problems.append("line %d: the nearest earlier binding of %s is %s, not a new dict" % (
-                    n.lineno, target, ("line %d, %s" % (prev.lineno, ast.unparse(prev)[:80])) if prev else "none"))
-    return writes, problems
+def _new_dict_binding(stmt, name):
+    """Whether a statement is `name = <a new dict>`."""
+    return (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)
+            and stmt.targets[0].id == name and _fresh_dict(stmt.value))
+
+
+def _binding_text(stmt):
+    return ("line %d, %s" % (stmt.lineno, ast.unparse(stmt).split("\n")[0][:80])) if stmt is not None else "none"
+
+
+def _uses_problems(func, name, ok):
+    """A problem for each use of `name` anywhere in the function, nested scopes included, that `ok(use, the node
+    holding it, the function's parent map)` does not accept."""
+    parent = _parents_of(func)
+    return ["line %d: %s used in %s" % (n.lineno, name, ast.unparse(parent[id(n)]).split("\n")[0][:80])
+            for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == name and not ok(n, parent[id(n)], parent)]
+
+
+def _rows_use_ok(n, up, parent):
+    """A use of a list of rows that cannot add a row to it: a binding `name = ...` (followed where it is the nearest),
+    len() or sorted() of it, a slice or an item read, the iterable of a loop, or a value returned."""
+    if isinstance(n.ctx, ast.Store):
+        return isinstance(up, ast.Assign) and len(up.targets) == 1 and up.targets[0] is n
+    if isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id in ("len", "sorted"):
+        return any(a is n for a in up.args)
+    if isinstance(up, ast.Subscript):
+        return up.value is n and isinstance(up.ctx, ast.Load)
+    if isinstance(up, (ast.For, ast.AsyncFor, ast.comprehension)):
+        return up.iter is n
+    if isinstance(up, ast.Tuple):
+        up = parent.get(id(up))
+    return isinstance(up, ast.Return)
+
+
+def _dict_use_ok(n, up, parent):
+    """A use of a dict of rows that cannot put into it anything but a new dict: its binding `name = {}`, a read (d[k],
+    d.get, d.values, d.keys, d.items called), or a store `d[k] = <a new dict>`."""
+    if isinstance(n.ctx, ast.Store):
+        return (isinstance(up, ast.Assign) and len(up.targets) == 1 and up.targets[0] is n
+                and isinstance(up.value, ast.Dict) and not up.value.keys)
+    if isinstance(up, ast.Subscript) and up.value is n:
+        stmt = parent.get(id(up))
+        return isinstance(up.ctx, ast.Load) or (isinstance(up.ctx, ast.Store) and isinstance(stmt, ast.Assign)
+                                                and len(stmt.targets) == 1 and stmt.targets[0] is up
+                                                and _fresh_dict(stmt.value))
+    if isinstance(up, ast.Attribute) and up.value is n and up.attr in ("get", "values", "keys", "items"):
+        call = parent.get(id(up))
+        return isinstance(call, ast.Call) and call.func is up
+    return False
+
+
+def _rows_problems(func, parent, expr, at, depth=0):
+    """Problems with a loop's iterable as a list of new dicts built in the function: a name whose nearest binding
+    before `at` is `name = ...`, a slice or a sorted() of one, down to d.values() of a dict bound once as {} and filled
+    with new dicts only; each list and the dict used only in ways that add nothing else."""
+    if depth > _DEPTH:
+        return ["the iterable is followed more than %d steps" % _DEPTH]
+    if isinstance(expr, ast.Name):
+        prev = _nearest_binding(parent, at, expr.id, func)
+        if not (isinstance(prev, ast.Assign) and len(prev.targets) == 1 and isinstance(prev.targets[0], ast.Name)):
+            return ["the nearest binding of %s is %s, not `%s = ...`" % (expr.id, _binding_text(prev), expr.id)]
+        return _uses_problems(func, expr.id, _rows_use_ok) + _rows_problems(func, parent, prev.value, prev, depth + 1)
+    if isinstance(expr, ast.Subscript) and isinstance(expr.slice, ast.Slice):
+        return _rows_problems(func, parent, expr.value, at, depth + 1)
+    if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "sorted"
+            and len(expr.args) == 1):
+        return _rows_problems(func, parent, expr.args[0], at, depth + 1)
+    if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and expr.func.attr == "values"
+            and isinstance(expr.func.value, ast.Name) and not expr.args and not expr.keywords):
+        d = expr.func.value.id
+        held = _scope_table(func, None).get(d, [])
+        once = len(held) == 1 and held[0][0] == "value" and isinstance(held[0][1], ast.Dict) and not held[0][1].keys
+        return ([] if once else ["%s is bound other than once, as {} (%s)" % (d, ", ".join(h[0] for h in held))]) + (
+            _uses_problems(func, d, _dict_use_ok))
+    return ["the loop runs over %s, which the witness does not follow to the values of a dict of new dicts"
+            % ast.unparse(expr)[:80]]
+
+
+def _copy_witness(func, target, writes):
+    """Problems with a row whose target is a new dict made in the function: each write's nearest earlier binding of
+    the target is `target = <a new dict>` (a literal, a dict() call or a copy)."""
+    parent, problems = _parents_of(func), []
+    for n in writes:
+        prev = _nearest_binding(parent, n, target, func)
+        if not _new_dict_binding(prev, target):
+            problems.append("line %d: the nearest earlier binding of %s is %s, not a new dict" % (
+                n.lineno, target, _binding_text(prev)))
+    return problems
+
+
+def _loop_witness(func, target, writes):
+    """Problems with a row whose target is a loop's row: each write's nearest binding of the target is a for loop
+    over a list the function built from the values of a dict it fills with new dicts only (_rows_problems)."""
+    parent, problems = _parents_of(func), []
+    for n in writes:
+        loop = _nearest_binding(parent, n, target, func)
+        if not (isinstance(loop, (ast.For, ast.AsyncFor)) and isinstance(loop.target, ast.Name)
+                and loop.target.id == target):
+            problems.append("line %d: the nearest binding of %s is %s, not a for loop whose target is %s" % (
+                n.lineno, target, _binding_text(loop), target))
+            continue
+        problems += ["line %d: %s" % (n.lineno, p) for p in _rows_problems(func, parent, loop.iter, loop)]
+    return problems
+
+
+def _producer_witness(tree, func, target, writes, producer):
+    """Problems with a row whose target a producer function returns: each write's nearest earlier binding of the
+    target is `target, ... = producer(...)`, and every return of the producer hands back first a name whose nearest
+    binding there is `name = <a new dict>`."""
+    parent, problems = _parents_of(func), []
+    for n in writes:
+        prev = _nearest_binding(parent, n, target, func)
+        unpack = (isinstance(prev, ast.Assign) and len(prev.targets) == 1 and isinstance(prev.targets[0], ast.Tuple)
+                  and prev.targets[0].elts and isinstance(prev.targets[0].elts[0], ast.Name)
+                  and prev.targets[0].elts[0].id == target and isinstance(prev.value, ast.Call)
+                  and isinstance(prev.value.func, ast.Name) and prev.value.func.id == producer)
+        if not unpack:
+            problems.append("line %d: the nearest earlier binding of %s is %s, not `%s, ... = %s(...)`" % (
+                n.lineno, target, _binding_text(prev), target, producer))
+    fn = _definition(tree, producer)
+    rets = [r for r in _own_nodes(fn) if isinstance(r, ast.Return)] if fn is not None else []
+    if not rets:
+        problems.append("%s is gone, or never returns" % producer)
+    fparent = _parents_of(fn) if fn is not None else {}
+    for r in rets:
+        first = r.value.elts[0] if isinstance(r.value, ast.Tuple) and r.value.elts else None
+        name = first.id if isinstance(first, ast.Name) else None
+        if not (name and _new_dict_binding(_nearest_binding(fparent, r, name, fn), name)):
+            problems.append("line %d: %s returns %s first, not a name bound to a new dict" % (
+                r.lineno, producer, ast.unparse(first) if first is not None else "something other than a tuple"))
+    return problems
+
+
+def _module_witness(tree, function, target):
+    """Problems with a row whose target is a module's dict: the name is bound once at module level, to a dict literal;
+    nothing declares it global; and neither the function nor a scope around it binds the name."""
+    held = _scope_table(tree, None).get(target, [])
+    problems = [] if (len(held) == 1 and held[0][0] == "value" and isinstance(held[0][1], ast.Dict)) else [
+        "%s is bound at module level other than once, to a dict literal (%s)" % (
+            target, ", ".join(h[0] for h in held) or "unbound")]
+    problems += ["line %d: a global declaration of %s" % (n.lineno, target) for n in ast.walk(tree)
+                 if isinstance(n, ast.Global) and target in n.names]
+    parts = function.split(".")
+    for i in range(1, len(parts) + 1):
+        scope = _definition(tree, ".".join(parts[:i]))
+        if scope is not None and target in _scope_table(scope, None):
+            problems.append("%s binds %s itself" % (".".join(parts[:i]), target))
+    return problems
 
 
 def _fresh_card_witness(tree, function, producers):
@@ -1931,11 +2113,48 @@ def _fresh_card_witness(tree, function, producers):
     return calls, problems
 
 
+_WITNESSES = ("copy", "loop", "producer", "module", "fresh")
+
+
+def _row_witness(tree, records, row):
+    """(writes read, problems) for one row of CARD_FIELD_WRITERS: its witness run over every write that `records`,
+    the census's records over `tree`, attributes to the row."""
+    function, target, field, form, _count, witness, _why = row
+    writes = [r[4] for r in records if r[:4] == (function, target, field, form)]
+    func, kind = _definition(tree, function), (witness or (None,))[0]
+    if kind not in _WITNESSES:
+        problems = ["no witness" if kind is None else "no witness named %r" % (kind,)]
+    elif func is None:
+        problems = ["%s is gone" % function]
+    elif kind == "copy":
+        problems = _copy_witness(func, target, writes)
+    elif kind == "loop":
+        problems = _loop_witness(func, target, writes)
+    elif kind == "producer":
+        problems = _producer_witness(tree, func, target, writes, witness[1])
+    elif kind == "module":
+        problems = _module_witness(tree, function, target)
+    else:
+        calls, problems = _fresh_card_witness(tree, function, witness[1])
+        if func.args.args and func.args.args[0].arg != target:
+            problems.append("%s's card is its parameter %s, not %s" % (function, func.args.args[0].arg, target))
+        if not calls:
+            problems.append("%s has no caller the witness reads" % function)
+    return len(writes), problems
+
+
 # The legal set: every in-place write of a card field in kernel/kernel.py, derived 2026-10-07 at the census's first
 # head (11 sites). Each row: (function, target, field, form, count, witness, why). A row is construction (a NEW dict is
-# being built, so no existing card is edited) or a dict that is never a postal card. The two rows whose reason rests on
-# code elsewhere carry a witness the census checks: "copy" (the nearest earlier binding of the target is a new dict) and
-# "fresh" (every caller hands the function a card its producer has just built).
+# being built, so no existing card is edited) or a dict that is never a postal card, and every row's witness checks
+# that reason by AST, over every write the census attributes to the row:
+# - "copy": each write's nearest earlier binding of the target is `target = <a new dict>`.
+# - "loop": the target is a for loop's row, over a list the function built from the values of a dict it binds once as
+#   {} and fills with new dicts only.
+# - "producer": the target is unpacked first from a call of the named function, whose every return hands back first
+#   a name bound there to a new dict.
+# - "module": the target is a module's dict, bound once at module level as a literal, never declared global, and not
+#   bound in the function.
+# - "fresh": every caller hands the function a card one of the named producers has just built.
 CARD_FIELD_WRITERS = (
     ("_hydrate_postal.enrich_out", "card", "mid", "assign", 1, ("fresh", ("_postal_out_card", "_cli_send_card")),
      "construction: the outgoing card _postal_out_card or _cli_send_card has just returned as a dict literal, joined"
@@ -1943,18 +2162,18 @@ CARD_FIELD_WRITERS = (
     ("_hydrate_postal", "ev", "mid", "assign", 1, ("copy",),
      "construction, and not a card: `ev = dict(ev)` makes a new dict first, and the event is one whose message ids did"
      " not all resolve (a user event, or a mail reader's tool event), never kind postal-service"),
-    ("_handoff_card_fields", "badge", "peer", "update", 1, None,
+    ("_handoff_card_fields", "badge", "peer", "update", 1, ("copy",),
      "not a card: the handoffTo badge, a dict literal built above it in the same function"),
-    ("_kind_read", "_KIND_CACHE", "kind", "assign", 3, None,
+    ("_kind_read", "_KIND_CACHE", "kind", "assign", 3, ("module",),
      "not a card: the module's mtime cache of the login's kind word"),
-    ("_slice_body", "body", "kind", "update", 2, None,
+    ("_slice_body", "body", "kind", "update", 2, ("copy",),
      "not a card: the file-slice response body, a dict literal built in the same function"),
-    ("_artifacts_items", "it", "kind", "assign", 1, None,
+    ("_artifacts_items", "it", "kind", "assign", 1, ("loop",),
      "not a card: an artifacts-pane row, a dict literal built in the same function"),
-    ("Handler.do_POST", "rec", "kind", "assign", 1, None,
+    ("Handler.do_POST", "rec", "kind", "assign", 1, ("copy",),
      "not a card: a stored-login record, a dict literal built a few lines above"),
-    ("Handler._ws", "client", "kind", "assign", 1, None,
-     "not a card: the websocket client's registry row (_new_ws_client)"),
+    ("Handler._ws", "client", "kind", "assign", 1, ("producer", "_new_ws_client"),
+     "not a card: the websocket client's registry row, the dict _new_ws_client builds and returns first"),
 )
 
 
@@ -1970,45 +2189,133 @@ def _handed(*lines, inner=("card['mid'] = 1",), producer=_PRODUCER):
         "".join("        %s\n" % line for line in inner), "".join("    %s\n" % line for line in lines))
 
 
-# The two witnesses over small sources: (what, source, witness, holds). "copy" reads f's writes of ev['mid'];
-# "fresh" reads o.inner's callers with p as the producer.
+def _rows(*middle, bind="d = {}", store="d[x] = {'path': x}", loop="for it in rows:",
+          body=("    it['kind'] = 'other'",)):
+    """f(xs) on the shape of _artifacts_items: a dict filled with new dicts, its values sorted and sliced into a list,
+    a loop writing each row's kind."""
+    return _in_f(bind, "for x in xs:", "    cur = d.get(x)", "    if cur is None:", "        " + store,
+                 "rows = sorted(d.values(), key=len)", "capped = len(rows) > 5", "rows = rows[:5]", *middle, loop,
+                 *body, "return rows, capped", params="xs")
+
+
+_MAKER = "def mk(a):\n    row = {'a': a}\n    row['q'] = 1\n    return row, 2\n"
+
+
+def _made(*lines, maker=_MAKER):
+    return maker + _in_f(*lines, params="a")
+
+
+# The witnesses over small sources: (what, source, the row read as (function, target, field, form, witness), holds).
+# A case whose `what` starts with "limit:" holds where the reason is false: a known miss (the class docstring).
+_W_COPY = ("f", "ev", "mid", "assign", ("copy",))
+_W_UPDATE = ("f", "b", "peer", "update", ("copy",))
+_W_LOOP = ("f", "it", "kind", "assign", ("loop",))
+_W_PRODUCER = ("f", "client", "kind", "assign", ("producer", "mk"))
+_W_MODULE = ("f", "CACHE", "kind", "assign", ("module",))
+_W_FRESH = ("o.inner", "card", "mid", "assign", ("fresh", ("p",)))
 CARD_WITNESS_CASES = (
-    ("a dict() copy", _in_f("ev = dict(ev)", "ev['mid'] = 1", params="ev"), "copy", True),
-    ("a .copy()", _in_f("ev = ev.copy()", "ev['mid'] = 1", params="ev"), "copy", True),
-    ("a copy.copy()", _in_f("ev = copy.copy(ev)", "ev['mid'] = 1", params="ev"), "copy", True),
-    ("a splat into a new literal", _in_f("ev = {**ev}", "ev['mid'] = 1", params="ev"), "copy", True),
-    ("the copy in an enclosing block", _in_f("ev = dict(ev)", "if ev:", "    ev['mid'] = 1", params="ev"), "copy", True),
-    ("an alias, not a copy", _in_f("ev = ev", "ev['mid'] = 1", params="ev"), "copy", False),
-    ("no copy: the parameter itself", _in_f("ev['mid'] = 1", params="ev"), "copy", False),
-    ("a copy rebound before the write", _in_f("ev = dict(ev)", "ev = g(ev)", "ev['mid'] = 1", params="ev"), "copy", False),
-    ("a copy shadowed by a loop", _in_f("ev = dict(ev)", "for ev in evs:", "    ev['mid'] = 1", params="ev"), "copy", False),
-    ("a copy shadowed by a with", _in_f("ev = dict(ev)", "with g() as ev:", "    ev['mid'] = 1", params="ev"), "copy", False),
+    ("a dict() copy", _in_f("ev = dict(ev)", "ev['mid'] = 1", params="ev"), _W_COPY, True),
+    ("a .copy()", _in_f("ev = ev.copy()", "ev['mid'] = 1", params="ev"), _W_COPY, True),
+    ("a copy.copy()", _in_f("ev = copy.copy(ev)", "ev['mid'] = 1", params="ev"), _W_COPY, True),
+    ("a splat into a new literal", _in_f("ev = {**ev}", "ev['mid'] = 1", params="ev"), _W_COPY, True),
+    ("the copy in an enclosing block", _in_f("ev = dict(ev)", "if ev:", "    ev['mid'] = 1", params="ev"), _W_COPY,
+     True),
+    ("a copy made inside a loop over the same name", _in_f("for ev in evs:", "    ev = dict(ev)", "    ev['mid'] = 1",
+                                                           params="evs"), _W_COPY, True),
+    ("an alias, not a copy", _in_f("ev = ev", "ev['mid'] = 1", params="ev"), _W_COPY, False),
+    ("no copy: the parameter itself", _in_f("ev['mid'] = 1", params="ev"), _W_COPY, False),
+    ("a copy rebound before the write", _in_f("ev = dict(ev)", "ev = g(ev)", "ev['mid'] = 1", params="ev"), _W_COPY,
+     False),
+    ("a copy shadowed by a loop", _in_f("ev = dict(ev)", "for ev in evs:", "    ev['mid'] = 1", params="ev"), _W_COPY,
+     False),
+    ("a copy shadowed by a with", _in_f("ev = dict(ev)", "with g() as ev:", "    ev['mid'] = 1", params="ev"), _W_COPY,
+     False),
     ("a copy shadowed by an except", _in_f("ev = dict(ev)", "try:", "    pass", "except E as ev:", "    ev['mid'] = 1",
-                                           params="ev"), "copy", False),
+                                           params="ev"), _W_COPY, False),
+    ("a copy rebound in a branch before the write", _in_f("ev = dict(ev)", "if ev:", "    ev = g(ev)", "ev['mid'] = 1",
+                                                          params="ev"), _W_COPY, False),
+    ("an update of a new literal", _in_f("b = {'x': 1}", "b.update({'peer': 'api'})"), _W_UPDATE, True),
+    ("update keywords on a dict() copy", _in_f("b = dict(c)", "b.update(peer='api')"), _W_UPDATE, True),
+    ("an update of a dict it holds", _in_f("b = c[0]", "b.update(peer='api')"), _W_UPDATE, False),
+    ("an update of the parameter", _in_f("b.update(peer='api')", params="b"), _W_UPDATE, False),
+    ("an update after a rebinding", _in_f("b = {}", "b = g(c)", "b.update(peer='api')"), _W_UPDATE, False),
+    ("limit: a new dict handed to a list, then written", _in_f("b = {'x': 1}", "c.append(b)", "b.update(peer='api')"),
+     _W_UPDATE, True),
+    ("a loop over the values of a dict of new dicts, through sorted() and a slice", _rows(), _W_LOOP, True),
+    ("a loop over a parameter", _in_f("for it in xs:", "    it['kind'] = 'other'", params="xs"), _W_LOOP, False),
+    ("a loop over the list and more", _rows(loop="for it in rows + xs:"), _W_LOOP, False),
+    ("the row rebound inside the loop", _rows(body=("    it = xs[0]", "    it['kind'] = 'other'")), _W_LOOP, False),
+    ("a row bound inside a loop over other rows", _rows(loop="for x in rows:", body=("    it = xs[0]",
+                                                                                     "it['kind'] = 'other'")),
+     _W_LOOP, False),
+    ("a dict that also holds a row it was handed", _rows(store="d[x] = x"), _W_LOOP, False),
+    ("a dict bound to one it was handed", _rows(bind="d = xs[0]"), _W_LOOP, False),
+    ("a dict bound twice", _rows("d = {}"), _W_LOOP, False),
+    ("a dict updated from elsewhere", _rows("d.update(xs[0])"), _W_LOOP, False),
+    ("a dict handed to a call", _rows("fill(d)"), _W_LOOP, False),
+    ("a list that gains a row before the loop", _rows("rows.append(xs[0])"), _W_LOOP, False),
+    ("a list rebound to one it was handed", _rows("rows = xs"), _W_LOOP, False),
+    ("a list extended in place", _rows("rows += xs"), _W_LOOP, False),
+    ("a row unpacked from a producer whose first return is a new dict",
+     _made("client, n = mk(a)", "client['kind'] = 'page'"), _W_PRODUCER, True),
+    ("a row rebound after the unpack", _made("client, n = mk(a)", "client = a", "client['kind'] = 'page'"),
+     _W_PRODUCER, False),
+    ("a row unpacked from another call", _made("client, n = other(a)", "client['kind'] = 'page'"), _W_PRODUCER, False),
+    ("the producer's second element", _made("n, client = mk(a)", "client['kind'] = 'page'"), _W_PRODUCER, False),
+    ("a producer that returns a dict it was handed", _made("client, n = mk(a)", "client['kind'] = 'page'",
+                                                           maker="def mk(a):\n    return a, 2\n"), _W_PRODUCER, False),
+    ("a producer whose new dict is rebound before the return", _made(
+        "client, n = mk(a)", "client['kind'] = 'page'",
+        maker="def mk(a):\n    row = {'a': a}\n    row = a\n    return row, 2\n"), _W_PRODUCER, False),
+    ("a producer with one return of a dict it holds", _made(
+        "client, n = mk(a)", "client['kind'] = 'page'",
+        maker="def mk(a):\n    if a:\n        return a['row'], 1\n    row = {}\n    return row, 2\n"), _W_PRODUCER, False),
+    ("a module's dict bound once as a literal", "CACHE = {'kind': ''}\n" + _in_f("CACHE['kind'] = 'x'", params=""),
+     _W_MODULE, True),
+    ("a function that rebinds it under a global declaration", "CACHE = {'kind': ''}\n" + _in_f(
+        "CACHE['kind'] = 'x'", params="") + "def g(c):\n    global CACHE\n    CACHE = c\n", _W_MODULE, False),
+    ("the function binds the name itself", "CACHE = {'kind': ''}\n" + _in_f(
+        "CACHE = held()", "CACHE['kind'] = 'x'", params=""), _W_MODULE, False),
+    ("bound twice at module level", "CACHE = {}\nCACHE = held()\n" + _in_f("CACHE['kind'] = 'x'", params=""),
+     _W_MODULE, False),
+    ("bound to something other than a dict literal", "CACHE = held()\n" + _in_f("CACHE['kind'] = 'x'", params=""),
+     _W_MODULE, False),
+    ("a scope around the function binds it", "CACHE = {}\ndef o(c):\n    CACHE = c\n    def f():\n"
+                                             "        CACHE['kind'] = 'x'\n",
+     ("o.f", "CACHE", "kind", "assign", ("module",)), False),
     ("a card its producer has just built", _handed("for ev in events:", "    card = p(ev)", "    if card:",
-                                                   "        inner(card, ev)"), "fresh", True),
-    ("a card the caller holds", _handed("for ev in events:", "    inner(ev, ev)"), "fresh", False),
+                                                   "        inner(card, ev)"), _W_FRESH, True),
+    ("a card the caller holds", _handed("for ev in events:", "    inner(ev, ev)"), _W_FRESH, False),
     ("a card rebound after its producer", _handed("for ev in events:", "    card = p(ev)", "    card = ev",
-                                                  "    inner(card, ev)"), "fresh", False),
+                                                  "    inner(card, ev)"), _W_FRESH, False),
     ("a use other than a call beside a good one", _handed("for ev in events:", "    card = p(ev)", "    inner(card, ev)",
-                                                          "keep = inner"), "fresh", False),
+                                                          "keep = inner"), _W_FRESH, False),
     ("the card rebound inside", _handed("for ev in events:", "    card = p(ev)", "    inner(card, ev)",
-                                        inner=("card = dict(card)", "card['mid'] = 1")), "fresh", False),
+                                        inner=("card = dict(card)", "card['mid'] = 1")), _W_FRESH, False),
     ("a producer that returns a dict it holds", _handed("for ev in events:", "    card = p(ev)", "    inner(card, ev)",
-                                                        producer="def p(e):\n    return e['card']\n"), "fresh", False),
+                                                        producer="def p(e):\n    return e['card']\n"), _W_FRESH, False),
+    ("a row with no witness", _in_f("ev = dict(ev)", "ev['mid'] = 1", params="ev"), ("f", "ev", "mid", "assign", None),
+     False),
 )
 
 
-def _witness_holds(source, witness):
+def _witness_holds(source, row):
     tree = ast.parse(source)
-    if witness == "copy":
-        return _copy_witness(tree, "f", "ev", "mid") == (1, [])
-    calls, problems = _fresh_card_witness(tree, "o.inner", ("p",))
-    return calls > 0 and not problems
+    function, target, field, form, witness = row
+    writes, problems = _row_witness(tree, _CardWriteReader(tree).records(),
+                                    (function, target, field, form, None, witness, ""))
+    return writes > 0 and not problems
+
+
+def _chain(names):
+    """f(c) writing c[k<names - 1>], where k0 = 'mid' and each next name is bound to the one before: a key that many
+    names deep."""
+    return _in_f("k0 = 'mid'", *["k%d = k%d" % (i, i - 1) for i in range(1, names)], "c[k%d] = None" % (names - 1))
 
 
 # The census's form space: (what, source, the sites it must report as (function, target, field, form)). A row whose
-# `what` starts with "limit:" is a known miss, a write the census does not read (the class docstring).
+# `what` starts with "refused:" is a form the census reports as an unrecognised site whatever its key; one that starts
+# with "limit:" is a known miss, a write the census does not read (the class docstring).
 CARD_WRITE_FORM_TABLE = (
     ("subscript assignment", _in_f("c['mid'] = None"), [("f", "c", "mid", "assign")]),
     ("an unpacking target", _in_f("c['kind'], n = 'tool', 1"), [("f", "c", "kind", "assign")]),
@@ -2026,7 +2333,6 @@ CARD_WRITE_FORM_TABLE = (
     ("update, keywords", _in_f("c.update(peer='api')"), [("f", "c", "peer", "update")]),
     ("update, dict()", _in_f("c.update(dict(kind='tool'))"), [("f", "c", "kind", "update")]),
     ("update, pairs", _in_f("c.update([('mid', 'm2')])"), [("f", "c", "mid", "update")]),
-    ("update, a splatted literal", _in_f("c.update(**{'mid': 'm2'})"), [("f", "c", "mid", "update")]),
     ("update, a literal splatted into a literal", _in_f("c.update({**{'mid': 'm2'}, 'x': 1})"), [("f", "c", "mid", "update")]),
     ("update, a generator of pairs", _in_f("c.update((k, None) for k in ('mid',))"), [("f", "c", "mid", "update")]),
     ("update, a dict comprehension", _in_f("c.update({k: None for k in ('mid', 'peer')})"),
@@ -2105,6 +2411,37 @@ CARD_WRITE_FORM_TABLE = (
     ("other fields", _in_f("c['summary'] = 'x'", "c.update(receipt={})", "del c['tlId']"), []),
     ("a loop over other names", _in_f("for k in ('email', 'org'):", "    c[k] = None"), []),
     ("a list slice", _in_f("c[1:] = []"), []),
+    ("a key followed through _DEPTH names", _chain(_DEPTH), [("f", "c", "mid", "assign")]),
+    ("refused: a writer bound to a name, then called", _in_f("upd = c.update", "upd(mid=None)"),
+     [("f", "c", "?", _AS_VALUE)]),
+    ("refused: a writer passed to map()", _in_f("list(map(c.pop, ('mid',)))"), [("f", "c", "?", _AS_VALUE)]),
+    ("refused: a writer wrapped in functools.partial", "import functools\n" + _in_f(
+        "functools.partial(c.__setitem__, 'mid')(None)"), [("f", "c", "?", _AS_VALUE)]),
+    ("refused: dict.<name> not called directly", _in_f("put = dict.__setitem__", "put(c, 'mid', None)"),
+     [("f", "dict", "?", _AS_VALUE)]),
+    ("refused: an operator writer not called directly", "import operator\n" + _in_f(
+        "put = operator.setitem", "put(c, 'mid', None)"), [("f", "operator.setitem", "?", _AS_VALUE)]),
+    ("refused: an operator writer imported by name, not called directly", "from operator import setitem as put\n"
+     + _in_f("return put"), [("f", "put", "?", _AS_VALUE)]),
+    ("refused: getattr of a writer by a constant name", _in_f("getattr(c, '__setitem__')('mid', None)"),
+     [("f", "c", "?", _BY_GETATTR)]),
+    ("refused: getattr of __init__", _in_f("getattr(c, '__init__')(mid=None)"), [("f", "c", "?", _BY_GETATTR)]),
+    ("refused: a writer reached through type()", _in_f("type(c).__setitem__(c, 'mid', None)"),
+     [("f", "type(c)", "?", _THROUGH_TYPE)]),
+    ("refused: a writer reached through __class__", _in_f("c.__class__.update(c, mid=None)"),
+     [("f", "c.__class__", "?", _THROUGH_TYPE)]),
+    ("refused: dict.__init__ over an existing dict", _in_f("dict.__init__(c, mid=None)"), [("f", "c", "?", _INIT)]),
+    ("refused: __init__ called again on a dict", _in_f("c.__init__(mid=None)"), [("f", "c", "?", _INIT)]),
+    ("refused: a base class's __init__ called by name",
+     "class K(dict):\n    def __init__(self):\n        dict.__init__(self, mid=None)\n",
+     [("K.__init__", "self", "?", _INIT)]),
+    ("an attribute named for a writer, assigned or deleted", _in_f("c.update = None", "del c.pop"), []),
+    ("super().__init__ is not refused", "class K(dict):\n    def __init__(self):\n        super().__init__(x=1)\n", []),
+    ("refused: a starred argument to a writer", _in_f("c.setdefault(*('mid', None))"), [("f", "c", "?", _STARRED)]),
+    ("refused: a starred argument to __setitem__", _in_f("c.__setitem__(*('mid', None))"), [("f", "c", "?", _STARRED)]),
+    ("refused: update with a splatted literal", _in_f("c.update(**{'mid': 'm2'})"), [("f", "c", "?", _STARRED)]),
+    ("refused: update with a splatted mapping it cannot read", _in_f("c.update(**row)", params="c, row"),
+     [("f", "c", "?", _STARRED)]),
     ("limit: a key from a parameter", _in_f("c[k] = None", params="c, k"), []),
     ("limit: a key from a call", _in_f("c[key_of(c)] = None"), []),
     ("limit: a key built by concatenation", _in_f("c['m' + 'id'] = None"), []),
@@ -2114,9 +2451,18 @@ CARD_WRITE_FORM_TABLE = (
     ("limit: update with a mapping from a parameter", _in_f("c.update(row)", params="c, row"), []),
     ("limit: clear", _in_f("c.clear()"), []),
     ("limit: popitem", _in_f("c.popitem()"), []),
-    ("limit: a method reached by its name", _in_f("getattr(c, '__setitem__')('mid', None)"), []),
-    ("limit: dict.__init__ over an existing dict", _in_f("dict.__init__(c, mid=None)"), []),
-    ("limit: an unbound method reached through type()", _in_f("type(c).__setitem__(c, 'mid', None)"), []),
+    ("limit: an assignment expression in the key", _in_f("c[(k := 'mid')] = None"), []),
+    ("limit: a boolean operator in the key", _in_f("c[None or 'mid'] = None"), []),
+    ("limit: a subscript of a literal as the key", _in_f("c[('mid', 'peer')[0]] = None"), []),
+    ("limit: a key from a loop over another call", _in_f("for k in reversed(('mid',)):", "    c[k] = None"), []),
+    ("limit: a key from a match capture", _in_f("match 'mid':", "    case k:", "        c[k] = None"), []),
+    ("limit: a key followed through more names than _DEPTH", _chain(_DEPTH + 1), []),
+    ("limit: update with zip()", _in_f("c.update(zip(('mid',), (None,)))"), []),
+    ("limit: a method reached by a computed name", _in_f("getattr(c, m)('mid', None)", params="c, m"), []),
+    ("limit: operator.methodcaller", "import operator\n" + _in_f("operator.methodcaller('update', mid=None)(c)"), []),
+    ("limit: a method read from a type's __dict__", _in_f("dict.__dict__['__setitem__'](c, 'mid', None)"), []),
+    ("limit: a method read through object.__getattribute__", _in_f("object.__getattribute__(c, 'update')(mid=None)"),
+     []),
 )
 
 
@@ -2127,26 +2473,37 @@ class CardFieldWriters(unittest.TestCase):
     in-place write of one of the four fields is matched, site by site and with its count, against CARD_FIELD_WRITERS,
     the legal set, where each row is construction (a NEW dict is being built) or a dict that is never a postal card,
     with the function and why. A write that is not on the list, a listed site that is gone, a count that moved, and a
-    census that finds no write at all are each red; the two rows whose reason rests on code elsewhere carry a witness
-    the census checks (the copy before the write; the producers that hand enrich_out its card), and each witness is
-    held and broken over small sources in CARD_WITNESS_CASES.
+    census that finds no write at all are each red. Every row's reason is checked by its witness (the comment above
+    CARD_FIELD_WRITERS names the five) over every write the census attributes to the row, and a row without one is
+    red; each witness is held and broken over small sources in CARD_WITNESS_CASES. A witness reads where the target's
+    binding comes from, not what happens to the dict between that binding and the write: a new dict handed to a list
+    and then written is green (a "limit:" case there).
 
     What it reads: every subscript in a store or del context, under whichever statement holds it (assignment and
-    unpacking, annotated, augmented, for and comprehension targets, with targets, del), and every call or operator that
-    writes a mapping in place (.update, .setdefault, .pop, .__setitem__, .__delitem__, .__ior__, the same reached as
-    dict.<name>(d, ...), operator.setitem, delitem and ior and their dunder spellings under any import name, |=), when
-    the key is a field it can name: a str constant; a name with a binding in its scope (or, unbound there, an enclosing
-    one, the module included) to such a constant, or by a for loop or comprehension over a literal of them or a name for
-    one; a conditional of them; the keys of a dict literal, a dict() call, a dict comprehension, a literal or a
-    comprehension of pairs, a union of these or a name for one. A store under a statement it does not model is reported
-    as an unrecognised form, whatever its key. The target is not read for what it is: a write through an alias of a card
-    names the alias, and is red like any other.
+    unpacking, annotated, augmented, for and comprehension targets, with targets, del); a direct call of a writer,
+    which is .update, .setdefault, .pop, .__setitem__, .__delitem__ or .__ior__ as the called attribute, the same
+    called as dict.<name> with the dict as the first argument, or operator.setitem, delitem or ior or a dunder spelling
+    of one, under any import name, called with the dict as the first argument; and |=. It reads these when the key is
+    a field it can name: a str constant; a name with a binding in its scope (or, unbound there, an enclosing one, the
+    module included) to such a constant, or by a for loop or comprehension over a literal of them or a name for one; a
+    conditional of them; the keys of a dict literal, a dict() call, a dict comprehension, a literal or a comprehension
+    of pairs, a union of these or a name for one. It follows a key at most _DEPTH steps deep (a name to its binding is
+    one step), so a key that needs more is missed. A store under a statement it does not model is reported as an
+    unrecognised form, whatever its key, and so is each of these, which kernel.py writes nowhere (each measured at 0
+    when the census began refusing it): a writer used other than as the called function of a direct call (bound to a
+    name, passed to map(), wrapped in functools.partial); getattr of a writer or of __init__ by a constant name; a
+    writer reached through type() or .__class__; __init__ reached on anything but super(); a * or ** argument to a
+    writer. The target is not read for what it is: a write through an alias of a card names the alias, and is red like
+    any other.
 
     What it misses, as known examples rather than a closed list (each a "limit:" row of CARD_WRITE_FORM_TABLE, green): a
-    key computed from data (a parameter, a call, an attribute, a concatenation, an f-string, an unpacking); .update or
-    |= of a mapping it cannot read; .clear() and .popitem(), which name no key; a method reached by its name; an unbound
-    method reached any way but dict.<name>; dict.__init__ over an existing dict; a write in another module (the cards
-    never leave kernel.py's functions: the population derived for this census, 2026-10-07)."""
+    key computed from data (a parameter, a call, an attribute, a concatenation, an f-string, an unpacking); a key it
+    does not fold (an assignment expression or a boolean operator written in the key itself, a subscript of a literal,
+    a loop over a call such as reversed(), a match capture); a key followed through more names than _DEPTH; .update or
+    |= of a mapping it cannot read (a parameter, zip()); .clear() and .popitem(), which name no key; a method reached
+    by a computed name, through operator.methodcaller, from a type's __dict__ or through object.__getattribute__; a
+    write in another module (the cards never leave kernel.py's functions: the population derived for this census,
+    2026-10-07)."""
 
     @classmethod
     def setUpClass(cls):
@@ -2170,33 +2527,36 @@ class CardFieldWriters(unittest.TestCase):
             " nothing edits a card once it is built, so a write that edits an existing card serves a stale chat"
             " signature: key the memo on the field, or build a new card. A write that builds a NEW dict (a literal, a"
             " dict() call, a copy made before the write) or writes a dict that is never a postal card goes on the list"
-            " with its function and why; a listed site that is gone, or whose count moved, is corrected there."))
+            " with its function, why and a witness; a listed site that is gone, or whose count moved, is corrected"
+            " there. A site whose field is '?' is a write the census does not read (an unrecognised form, the class"
+            " docstring): write it as a direct call or a subscript the census reads."))
 
-    def test_each_listed_construction_still_builds_a_new_dict(self):
-        checked = 0
-        for function, target, field, _form, count, witness, _why in CARD_FIELD_WRITERS:
-            if witness is None:
-                continue
-            checked += 1
-            if witness[0] == "copy":
-                writes, problems = _copy_witness(self.tree, function, target, field)
-                self.assertEqual((writes, problems), (count, []), (
-                    "%s writes %s[%r] on a copy (CARD_FIELD_WRITERS): each such write must follow `%s = <a new dict>`, so"
-                    " no event or card the caller holds is edited" % (function, target, field, target)))
-            elif witness[0] == "fresh":
-                calls, problems = _fresh_card_witness(self.tree, function, witness[1])
-                self.assertGreater(calls, 0, "%s has no caller the witness reads: it read nothing" % function)
-                self.assertEqual(problems, [], (
-                    "%s writes %s[%r] on the card it is handed (CARD_FIELD_WRITERS): every caller must hand it a card"
-                    " %s has just built, or the write edits an existing card" % (
-                        function, target, field, " or ".join(witness[1]))))
-            else:
-                self.fail("%s: no witness named %r" % (function, witness[0]))
-        self.assertEqual(checked, 2, "the two listed rows that write a card or an event each carry a witness")
+    def test_every_listed_rows_reason_holds_by_its_witness(self):
+        records = _CardWriteReader(self.tree).records()
+        wrong, checked = [], 0
+        for row in CARD_FIELD_WRITERS:
+            function, target, field, form, count, witness, _why = row
+            if witness and witness[0] in _WITNESSES:
+                checked += 1
+            got = _row_witness(self.tree, records, row)
+            if got != (count, []):
+                wrong.append("%s writes %s[%r] (%s), listed %d times with witness %r: it read %d, with %s" % (
+                    function, target, field, form, count, witness, got[0], got[1] or "no problem"))
+        self.assertEqual(wrong, [], (
+            "a row of CARD_FIELD_WRITERS whose reason its witness does not find true over every write the census"
+            " attributes to it. Each row is construction or a dict that is never a card; a change that hands the listed"
+            " name an existing card makes its write an in-place edit of that card: build a new dict, or key the memo on"
+            " the field"))
+        self.assertEqual(checked, len(CARD_FIELD_WRITERS), "every row of CARD_FIELD_WRITERS carries a witness")
 
     def test_the_witnesses_read_their_reasons(self):
-        for what, source, witness, holds in CARD_WITNESS_CASES:
-            self.assertEqual(_witness_holds(source, witness), holds, "%s (%s):\n%s" % (what, witness, source))
+        outcomes = collections.defaultdict(set)
+        for what, source, row, holds in CARD_WITNESS_CASES:
+            self.assertEqual(_witness_holds(source, row), holds, "%s (%s):\n%s" % (what, row[4], source))
+            outcomes[(row[4] or (None,))[0]].add(holds)
+        outcomes.pop(None, None)
+        self.assertEqual(dict(outcomes), {kind: {True, False} for kind in _WITNESSES},
+                         "each witness has a case that holds and a case that breaks")
 
     def test_the_census_reads_every_form_in_its_table(self):
         forms = set()
@@ -2204,7 +2564,8 @@ class CardFieldWriters(unittest.TestCase):
             got = [site[:4] for site in _card_field_writes(ast.parse(source))]
             self.assertEqual(got, sorted(want), "%s:\n%s" % (what, source))
             forms |= {w[3] for w in want}
-        self.assertEqual(forms, CARD_WRITE_FORMS, "every form the census reports has a row in the table")
+        self.assertEqual(forms, CARD_WRITE_FORMS | CARD_REFUSED_FORMS,
+                         "every form the census reports or refuses has a row in the table")
         for key, field in (("mid", "mid"), ("x", "?")):
             bare = ast.Module(body=[ast.Expr(value=ast.Subscript(value=ast.Name(id="c", ctx=ast.Load()),
                                                                  slice=ast.Constant(value=key), ctx=ast.Store()))],
