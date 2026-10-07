@@ -5236,8 +5236,12 @@ document stands on its own, each with the reasoning it was given.
     families: the DEFINE/CHANGE family, whose own option forms act on a function, alias, builtin or hash entry (autoload,
     functions, typeset, declare, readonly, enable, disable, alias, unalias, hash, rehash, unhash, unfunction, zmodload;
     NAME_RUN_DEFINE); and the RUN-TEXT family, which runs a text, a command or a function in this shell that may itself
-    define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle, zstyle; NAME_RUN_TEXT),
-    which includes every head that could define a function the walk did not see; the changer is caught plain, quoted
+    define or redefine a name (eval, source, `.`, trap, emulate, fc, r, sched, compgen, jobs, zle, zstyle, zregexparse;
+    NAME_RUN_TEXT), which includes every head that could define a function the walk did not see. zregexparse is a RUN-TEXT
+    word whose code is an ARGUMENT, not a text operand: zsh's zregexparse runs each `-guard` and `:action` component of its
+    argument list as shell code while it parses, so a guard can define a reader g that sets PATH and lets a copied cp through
+    (fork PR 975's round 2, the name-run axis takes words that run code arguments; before this it was classified a
+    not-a-changer, fork main refusing the write while zsh wrote). The changer is caught plain, quoted
     (`'typeset'`), escaped (`\typeset`) and behind an in-shell wrapper (`builtin typeset -fu g`, `\builtin typeset -fu g`,
     `'builtin' typeset -fu g`; NAME_RUN_AXIS, NAME_RUN_CHANGERS). And a head run by a word that runs a FOLLOWING command in
     this shell but is no peelable wrapper, zsh's `repeat <count> cmd`, whose count is peeled and whose inner command is
@@ -5249,9 +5253,13 @@ document stands on its own, each with the reasoning it was given.
     PREMISE: the heads rule S reads are the installed shells' builtins and reserved words and the command's own definitions;
     a function or an alias from the user's environment is outside the guard's reading at the base and at the head alike (a
     child session's environment is not the command). THE NAME-RUN AXIS's census asks the same population as THE ASSIGNING
-    HEAD's and reds on a word it does not classify, and its BEHAVIOURAL LEG runs every not-a-changer word live under the
-    autoload/alias/hash option shapes and reds one that in fact changes what a later name runs (alias and autoload are its
-    controls); THE COMMAND TABLES' census checks both ways that each committed table is a writable special parameter of an
+    HEAD's and reds on a word it does not classify, and its BEHAVIOURAL LEG runs every not-a-changer word live under two
+    shape families: the autoload/alias/hash OPTION shapes, reddening one that in fact changes what a later name runs (alias
+    and autoload are its controls); and the CODE-ARGUMENT shapes, a marker-defining code string placed where a word may read
+    code from (a bare argument, a `-guard` and a `:action` after the state and regex lead a parser needs, and each
+    single-letter option's argument in three spellings), reddening one that runs a code-string argument as shell code
+    (zregexparse is its control, which also proves the census reds if zregexparse were moved to the not-a-changer side);
+    THE COMMAND TABLES' census checks both ways that each committed table is a writable special parameter of an
     installed shell and that every writable command-table parameter the shells expose is committed, reddening on a planted
     extra and a planted missing name. The rows:
     clause (a) AS8-ruleS-bracevar-pwd and its `:`, echo, append, input and prefix twins, a twin for each other
@@ -5266,7 +5274,10 @@ document stands on its own, each with the reasoning it was given.
     -var-declare, -var-readonly), a head the shell BUILDS from an expansion (AS8-ruleS-nameRun-bracevar-typeset), a changer
     behind a variable after an in-shell wrapper (AS8-ruleS-nameRun-builtin-var), a literal changer behind a quoted or
     escaped wrapper (AS8-ruleS-nameRun-bslash-builtin, -quoted-builtin), and one run by zsh's `repeat`
-    (AS8-ruleS-nameRun-repeat, -repeat-builtin). Each is refused now where the pre-round-2 head and the branch head allowed
+    (AS8-ruleS-nameRun-repeat, -repeat-builtin); and, the name-run axis taking words that run code ARGUMENTS, a head that runs
+    its own argument as code, zsh's zregexparse running a `-guard` that defines the reader g (AS8-ruleS-nameRun-zregexparse,
+    refused now where the branch head allowed it while zsh wrote, caught by the behavioural leg's code-argument shapes). Each
+    is refused now where the pre-round-2 head and the branch head allowed
     it while zsh wrote the tracked file; each red at the branch head before C1, and each red under a single-site
     mutant of ruleHeadUnsafe: the unreadable-head check dropped (the var and bracevar rows), the non-external unknown
     wrapper made safe (the builtin-var row), the repeat recursion dropped (the repeat rows), and commandOf made to peel only
@@ -5353,14 +5364,17 @@ document stands on its own, each with the reasoning it was given.
     outside the table is no builtin of the three shells, so a program, which assigns nothing in this shell; a
     function or an alias the environment exports is outside the model, as it is for every writer. Pre-existing and
     disclosed (M3: fork main allows each while the shells write): PATH set inside a call of a function the command
-    defines or an eval's text, or through zsh's `path` array, which zsh ties to PATH (the array assigned, assigned
+    defines or an eval's text, or by a reader a command DEFINES inside an eval's text that later sets PATH (the eval and
+    source blind spot fork main shares, found by the shell lens on fork PR 975's round 2; distinct from the zregexparse road,
+    where the reader is defined by an argument the shell runs, which THE NAME-RUN AXIS now catches), or through zsh's `path`
+    array, which zsh ties to PATH (the array assigned, assigned
     keeping `$path`, appended to with `+=`, an element assigned, the scalar form `path=DIR` that sets the one-element
     array, read with `read -A path`, or reached by the `(P)` flag with `::=` through a name holding PATH: the sound
     lens's tg-r12-1), is read as the PATH the command gave, the guard's own, so a copied command run by its bare name
-    passes (AS8-residual-path-func-call, AS8-residual-path-eval, AS8-residual-path-zsh-array,
+    passes (AS8-residual-path-func-call, AS8-residual-path-eval, AS8-residual-eval-define-reader, AS8-residual-path-zsh-array,
     AS8-residual-path-zsh-array-keep, AS8-residual-path-zsh-array-append, AS8-residual-path-zsh-array-element,
     AS8-residual-path-zsh-read-A, AS8-residual-path-zsh-indirect, AS8-residual-path-zsh-scalar; the follow-up
-    reads PATH as unreadable once the command is poisoned or names `path`).
+    reads PATH as unreadable once the command is poisoned, names `path`, or defines a reader in an eval or source body).
     What the restored refusal leaves in place: a cp, mv, install, ln or ln -s of two operands binds the file it makes,
     DIR/<the source's name> under a directory, the destination as spelled under `-T` or onto a file, and both where the
     destination's kind is not known (fork PR 975's round 1, C), and a one-operand ln binds ./<the source's name> (the

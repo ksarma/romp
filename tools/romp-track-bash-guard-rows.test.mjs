@@ -43,7 +43,9 @@ import {
 // and, from fork PR 975's round 2, a builtin's name the command shadowed with a function or an alias through a table write the guard does not read
 // (AS8-builtin-shadow-*, fresh-2) or that dash looked up through PATH before `%builtin` (AS8-builtin-dash-pctbuiltin-*, correctness-3), both let
 // pass by the builtin exemption that round took out (R2), with the disclosed allows fork main makes too (AS8-residual-shadow-*,
-// AS8-residual-dash-pctbuiltin-echo-out, and dash's PATH-first `[`, which the bare-name lookup never searched: AS8-residual-dash-pctbuiltin-bracket*).
+// AS8-residual-dash-pctbuiltin-echo-out, and dash's PATH-first `[`, which the bare-name lookup never searched: AS8-residual-dash-pctbuiltin-bracket*);
+// and a head that runs its own ARGUMENT as code, zsh's zregexparse running its `-guard` and `:action` components (AS8-ruleS-nameRun-zregexparse, now a
+// may-change head on THE NAME-RUN AXIS, caught by the behavioural leg's code-argument shapes), where fork main refused and zsh wrote.
 // The false refusals: a `[` test (AS1-*), a case pattern read as a command name (AS2-*), the poison after a command named by a variable behind a
 // chain holding an external program wrapper (AS3-*-no-poison; the mechanism ruling's M1 keeps the poison behind a wrapper the shell runs itself,
 // AS3-kept-*, and the directory judged unknown after it behind any wrapper, AS3-road-*, AS3-chain-*-road and AS3-*-moves), and a bare command name
@@ -53,7 +55,8 @@ import {
 // again: AS8-root-test-v and AS8-root-test-v-path, AS8-root-jobs-x-*, AS8-root-zsh-*, AS8-root-old-arith-*, with the controls AS8-ctl-old-arith-*
 // and the costs AS8-cost-old-arith-dq-target and AS8-cost-old-arith-heredoc-placeholder-out, the `$[` read as text too, any refusal of that reading standing, AS8-root-old-arith-text-*; and the
 // assignments fork main does not read either, disclosed: AS8-residual-assign-*, AS8-residual-jobs-x-cp, AS8-residual-zsh-always-*, and PATH
-// through zsh's `path` array, AS8-residual-path-zsh-*; and a `$[` whose bracket holds a parenthesis or opens with a space, which neither reading
+// through zsh's `path` array, AS8-residual-path-zsh-*, and a reader a command DEFINES inside an eval's text that then sets PATH, the eval/source
+// blind spot fork main shares (AS8-residual-eval-define-reader); and a `$[` whose bracket holds a parenthesis or opens with a space, which neither reading
 // refuses, disclosed: AS8-residual-old-arith-*; a builtin's or a keyword's bare name, which the sixth verify round's tg-t6-3 had let pass, is
 // refused again under that PATH since R2, its rows the costs AS8-builtin-cd-after-backup and the like); after a command named by
 // a variable, a command is judged with that poison set aside too, that walk first (THE TWO WALKS and THE ORDER: AS5-read-through-*, AS5-dual-*, and the
@@ -152,7 +155,28 @@ const assignLeg = (sh, words, root) => {
 // function or an alias, which is what it is classified for); `alias` and `autoload` are the controls the leg must see change `g`. The leg is live only: a
 // shell absent on the runner is not asked. A sample of shapes, not a proof: a word that changes a name only under some other option is outside what it sees.
 const RUN_SHAPES = [['-fu', 'g'], ['g'], ['g=cp'], ['-f', 'g'], ['-F', 'g'], ['-n', 'g'], ['-p', 'g', '/bin/echo']];
+// THE NAME-RUN AXIS's behavioural leg, CODE-ARGUMENT shapes (fork PR 975's round 2, the name-run axis takes words that run code arguments): RUN_SHAPES above
+// catch a word whose OWN OPTION changes a name; these catch a word that RUNS AN ARGUMENT as shell code. zsh's zregexparse runs each `-guard` and `:action`
+// component of its argument list as code in this shell while it parses, so a guard or action can define a function, which the RUN_SHAPES never reach. For
+// every not-a-changer word, a marker-defining code string is placed where a word may read code from: a bare argument, a `-guard` (leading `-`) and a
+// `:action` (leading `:`) after a lead of 0..3 filler operands and a `/m/` lookahead (the state/regex lead zregexparse's parser needs to reach the guard or
+// the action), and each single-letter option's argument in its three spellings (separated `-L code`, glued `-Lcode`, valued `-L=code`), each in its own
+// subshell with the marker unset first and the standard input closed; the marker's resolution is read after, and a shape under which the marker became a
+// FUNCTION ran the string as code, so the word changes what a later name runs and reds (CODE_MARK, below, chosen so a `: none` reading never matches).
+// zregexparse is the control the leg must see define the marker. A sample of placements, not a proof: a word that runs code only in some other position is
+// outside what it sees.
+const CODE_MARK = 'zzmrk975';
+const CODE_DEF = `${CODE_MARK}(){ : ; }`;   // defines the marker function if this string runs as shell code
+const CODE_LEADS = [[], ['m'], ['m', 'm'], ['m', 'm', 'm'], ['m', 'm', 'm', '/m/'], ['m', 'm', '/m/', '/m/']];
+const CODE_LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('');
+const CODE_SHAPES = [
+  ...CODE_LEADS.flatMap((lead) => ['', '-', ':'].map((pre) => [...lead, pre + CODE_DEF])),
+  ...CODE_LETTERS.flatMap((L) => [[`-${L}`, CODE_DEF], [`-${L}${CODE_DEF}`], [`-${L}=${CODE_DEF}`]]),
+];
 const runProbeG = (sh) => (sh === 'zsh' ? 'whence -w g 2>/dev/null' : sh === 'bash' ? '{ type -t g; alias g 2>/dev/null; } 2>/dev/null' : '{ command -v g; alias g; } 2>/dev/null');
+const codeProbe = (sh) => (sh === 'zsh' ? `whence -w ${CODE_MARK} 2>/dev/null` : sh === 'bash' ? `type -t ${CODE_MARK} 2>/dev/null` : `type ${CODE_MARK} 2>/dev/null`);
+const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;   // single-quote an argument that carries code or a regex
+// each word's leg run: [word, the option shapes under which `g`'s resolution changed, the option shapes reported, the CODE-ARGUMENT shape indices that defined the marker]
 const runLeg = (sh, words, root) => {
   const argvOf = (text) => (sh === 'bash' ? ['--norc', '--noprofile', '-c', text] : sh === 'zsh' ? ['-f', '-c', text] : ['-c', text]);
   const pre = sh === 'zsh' ? ZSH_LOAD_MODULES + '; ' : '';
@@ -160,18 +184,22 @@ const runLeg = (sh, words, root) => {
   const kinds = spawnSync(sh, argvOf(`${pre}while IFS= read -r w; do printf '%s\\t%s\\n' "$w" "$(${kindAsk} 2>/dev/null)"; done`), { encoding: 'utf8', env: { PATH: process.env.PATH }, input: words.join('\n') + '\n', cwd: root });
   const builtins = String(kinds.stdout || '').split('\n').map((l) => l.split('\t')).filter(([w, k]) => w && /builtin/.test(k || '')).map(([w]) => w);
   const probe = runProbeG(sh);
+  const cprobe = codeProbe(sh);
   const base = String(spawnSync(sh, argvOf(`${pre}${probe}`), { encoding: 'utf8', env: { PATH: process.env.PATH }, cwd: root, input: '' }).stdout || '').trim();
   const out = [];
   for (const w of builtins) {
     const call = (shape) => (w === '[' ? `[ ${shape.join(' ')} ]` : `${w} ${shape.join(' ')}`);
+    const ccall = (shape) => (w === '[' ? `[ ${shape.map(shq).join(' ')} ]` : `${w} ${shape.map(shq).join(' ')}`);
     const body = RUN_SHAPES.map((shape, i) => `( { ${call(shape)}; } >/dev/null 2>&1 </dev/null; printf 'S${i}\\t%s\\n' "$(${probe})" >&9 ) </dev/null; `).join('');
+    const cbody = CODE_SHAPES.map((shape, i) => `( unset -f ${CODE_MARK} 2>/dev/null; { ${ccall(shape)}; } >/dev/null 2>&1 </dev/null; printf 'M${i}\\t%s\\n' "$(${cprobe})" >&9 ) </dev/null; `).join('');
     const cwd = fs.mkdtempSync(path.join(root, 'r-'));
-    const r = spawnSync(sh, argvOf(`${pre}exec 9>&1; ${body}`), { encoding: 'utf8', cwd, env: { PATH: process.env.PATH, HOME: cwd }, timeout: 60000, killSignal: 'SIGKILL', input: '' });
+    const r = spawnSync(sh, argvOf(`${pre}exec 9>&1; ${body}${cbody}`), { encoding: 'utf8', cwd, env: { PATH: process.env.PATH, HOME: cwd }, timeout: 120000, killSignal: 'SIGKILL', input: '' });
     assert.ok(!r.error, `the name-run leg ran ${sh}'s ${w} to its end: ${r.error && r.error.code}`);
     const lines = String(r.stdout || '').split('\n').filter((l) => /^S\d+\t/.test(l));
     const shapeOf = (l) => RUN_SHAPES[Number(l.match(/^S(\d+)/)[1])].join(' ');
     const changed = [...new Set(lines.filter((l) => { const v = l.split('\t').slice(1).join('\t').trim(); return v && v !== base; }).map(shapeOf))];
-    out.push([w, changed, new Set(lines.map(shapeOf)).size]);
+    const codeRan = [...new Set(String(r.stdout || '').split('\n').filter((l) => /^M\d+\t/.test(l) && /function/.test(l.split('\t').slice(1).join('\t'))).map((l) => Number(l.match(/^M(\d+)/)[1])))];
+    out.push([w, changed, new Set(lines.map(shapeOf)).size, codeRan]);
   }
   return out;
 };
@@ -254,25 +282,36 @@ test("fork PR 975's round 2, R1 (RULE S), the second axes: THE NAME-RUN AXIS cla
   // a function definition and the function-clause second walk this once needed is gone (fork PR 975's round 2, C3; verdict-neutral over every row and saved road)
   assert.ok(['eval', 'source', '.', 'trap', 'emulate', 'fc', 'r', 'sched', 'compgen', 'jobs', 'zle', 'zstyle'].every((n) => guard.NAME_RUN_CHANGERS.has(n)), 'the words that run a text, a command or a function in this shell stand on the may-change side (they may define or redefine a name)');
   assert.ok(['autoload', 'functions', 'eval', 'source', '.', 'trap'].every((n) => guard.NAME_RUN_CHANGERS.has(n)), 'every word that defines a function or runs a text in this shell is a may-change head, so a literal such head fails clause (c) directly (no function-clause second walk beside the axis)');
+  assert.ok(guard.NAME_RUN_CHANGERS.has('zregexparse'), 'zregexparse stands on the may-change side: it runs its `-guard` and `:action` arguments as code in this shell, which may define a function (fork PR 975\'s round 2, the name-run axis takes words that run code arguments)');
   assert.deepEqual(['echo', 'true', 'cd', 'read', 'export', 'local', 'pwd', 'printf', 'integer', 'float', 'private'].filter((n) => Object.hasOwn(R, n) && R[n][0]), [], 'a program-like builtin that assigns, reads, prints or declares a variable but changes no function, alias, builtin or hash entry and runs no text in this shell is not on the may-change side (export/local/integer/float/private: `-fu` marks no autoload at global scope, verified by the behavioural leg)');
   assert.deepEqual(assigningCensus({ ...pops, bash: [...pops.bash, 'zz_planted'] }, R).unclassified, ['bash zz_planted'], 'the NAME-RUN census reds on a planted unclassified word');
   assert.deepEqual(assigningCensus(pops, { ...R, read: [true, ''] }).unreasoned, ['read'], 'the NAME-RUN census reds on an entry with no reason');
-  // THE NAME-RUN AXIS's behavioural leg: each not-a-changer word a shell here runs as a builtin changes what no later name runs under the shapes; alias and autoload are the controls it must see change `g`
+  // THE NAME-RUN AXIS's behavioural leg: each not-a-changer word a shell here runs as a builtin changes what no later name runs under the option shapes AND
+  // runs no code-string argument as code; alias and autoload are the controls the option shapes must see change `g`, and zregexparse the control the
+  // code-argument shapes must see define the marker (which also proves the census reds if zregexparse were moved to the not-a-changer side)
   const noneRun = Object.keys(R).filter((n) => R[n][0] === false);
   const runRoot = outsideDir();
   try {
     const ran = [];
     const changing = [];
+    const codeRunning = [];
     for (const sh of live) {
       const ctrl = runLeg(sh, ['alias'], runRoot);
       assert.ok(ctrl.length && ctrl[0][1].includes('g=cp'), `the name-run leg sees ${sh}'s alias change g (the control): ${ctrl.map(([x, c]) => `${x} ${c.join('/')}`).join(' | ') || 'alias not a builtin here'}`);
-      if (sh === 'zsh') { const au = runLeg('zsh', ['autoload'], runRoot); assert.ok(au.length && au[0][1].length, `the name-run leg sees zsh autoload change g (the control): ${au.map(([x, c]) => `${x} ${c.join('/')}`).join(' | ')}`); }
+      if (sh === 'zsh') {
+        const au = runLeg('zsh', ['autoload'], runRoot); assert.ok(au.length && au[0][1].length, `the name-run leg sees zsh autoload change g (the control): ${au.map(([x, c]) => `${x} ${c.join('/')}`).join(' | ')}`);
+        // the code-argument shapes' control AND the planted misclassification: zregexparse runs its guard/action argument as code, so the leg catches it;
+        // it is a changer now, so the loop below never runs it, and this run stands in for moving it back to the not-a-changer side (the census would red)
+        const zrp = runLeg('zsh', ['zregexparse'], runRoot);
+        assert.ok(zrp.length && zrp[0][3].length, `the code-argument leg catches zregexparse, so moving it to the not-a-changer side reds the census (code-argument shapes that defined the marker: ${zrp.length ? zrp[0][3].join(',') : 'zregexparse not a builtin here'})`);
+      }
       const got = runLeg(sh, noneRun, runRoot);
       assert.ok(got.length > 10, `the name-run leg ran ${sh}'s not-a-changer builtins (${got.length})`);
-      for (const [x, ch] of got) { ran.push(`${sh} ${x}`); if (ch.length) changing.push(`${sh} ${x}: ${ch.join(' | ')}`); }
+      for (const [x, ch, , codeRan] of got) { ran.push(`${sh} ${x}`); if (ch.length) changing.push(`${sh} ${x}: ${ch.join(' | ')}`); if (codeRan.length) codeRunning.push(`${sh} ${x}: shapes ${codeRan.join(',')}`); }
     }
-    assert.deepEqual(changing, [], 'no word the axis calls a not-a-changer changes what a later name runs under the shapes, in any shell here (each one listed belongs on the may-change side)');
-    console.log(`# THE NAME-RUN AXIS's behavioural leg: ${ran.length} (shell, word) pairs run in ${live.join(', ') || 'no shell'} under ${RUN_SHAPES.length} shapes, none changing what a name runs`);
+    assert.deepEqual(changing, [], 'no word the axis calls a not-a-changer changes what a later name runs under the option shapes, in any shell here (each one listed belongs on the may-change side)');
+    assert.deepEqual(codeRunning, [], 'no word the axis calls a not-a-changer runs a code-string argument as shell code, in any shell here (each one listed runs an argument as code and belongs on the may-change side, as zregexparse does)');
+    console.log(`# THE NAME-RUN AXIS's behavioural leg: ${ran.length} (shell, word) pairs run in ${live.join(', ') || 'no shell'} under ${RUN_SHAPES.length} option shapes and ${CODE_SHAPES.length} code-argument shapes, none changing what a name runs`);
   } finally { spawnSync('chmod', ['-R', 'u+rwx', runRoot]); fs.rmSync(runRoot, { recursive: true, force: true }); }
   // clause (b): THE COMMAND TABLES, verified BOTH ways against the installed shells' derived command tables (fork PR 975's round 2, R1 as ruled)
   const T = guard.NAME_TABLE_PARAMS;
@@ -1030,6 +1069,13 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-ruleS-nameRun-quoted-builtin', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; 'builtin' typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-ruleS-nameRun-repeat', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; repeat 1 typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-ruleS-nameRun-repeat-builtin', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; repeat 1 builtin typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
+      // fork PR 975's round 2, the name-run axis takes words that run code arguments: zsh's zregexparse runs each `-guard` and `:action` component of its
+      // argument list as code in this shell while it parses, so a guard defines the reader g directly (no fpath, no autoload: the code is the argument). It
+      // was a not-a-changer, so the command was positively safe for ROOT and the mention of PATH under the later bare g passed (base refused, the pre-round-2
+      // head and the branch head allowed, zsh wrote the tracked file through the shadow reader); zregexparse on THE NAME-RUN AXIS gives it fork main's
+      // reading. The lead `m m m /m/` is the state and regex component the parser needs before it reaches the guard; the behavioural leg's code-argument
+      // shapes catch this class by construction
+      ['AS8-ruleS-nameRun-zregexparse', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; zregexparse m m m /m/ '-g() { read "$@"; }'; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-root-alias-head', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias g=read\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-global-alias', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias -g G='read PATH'\nG < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-alias-unread-operand', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; printf 'g=read\\n' > {OUT}/an; read n < {OUT}/an; alias $n\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
@@ -1143,6 +1189,13 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // command run by its bare name passes; the follow-up reads PATH as unreadable once the command is poisoned or names `path`
       ['AS8-residual-path-func-call', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; g() { read "$@"; }; g PATH <<< {OUT}/scratch; c2 base/report.md docs/report.md', BZ, 'allow'],
       ['AS8-residual-path-eval', 'na', "cp /usr/bin/cp {OUT}/scratch/c2; eval 'PATH={OUT}/scratch'; c2 base/report.md docs/report.md", A, 'allow'],
+      // M3, pre-existing (fork main allows it, as this change does, while bash, zsh and dash write; a witness row, named in decision 47; found by the shell
+      // lens on fork PR 975's round 2, tg-s43): an eval-DEFINED reader function consuming PATH, then a bound-name write. `eval 'g() { read "$@"; }'` defines
+      // g through a text the guard does not read, so the later `g PATH` is a bare name the guard does not know reads PATH, and PATH is read as the guard's own
+      // (none); the copied cp run by its bare name c2 then passes. This is NOT the zregexparse road (there g is defined by an argument the shell runs, which
+      // THE NAME-RUN AXIS now catches); here the reader is defined inside an eval's TEXT, the eval/source blind spot fork main shares, out of this change's
+      // scope. The follow-up models an eval or source body as one that may define a reader that assigns
+      ['AS8-residual-eval-define-reader', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; eval 'g() { read "$@"; }'; g PATH < {OUT}/p; c2 base/report.md docs/report.md`, A, 'allow'],
       ['AS8-residual-path-zsh-array', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; path=({OUT}/scratch); c2 base/report.md docs/report.md', ['zsh'], 'allow'],
       ['AS8-residual-path-zsh-array-keep', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; path=({OUT}/scratch $path); c2 base/report.md docs/report.md', ['zsh'], 'allow'],
       ['AS8-residual-path-zsh-array-append', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; path+=({OUT}/scratch); c2 base/report.md docs/report.md', ['zsh'], 'allow'],
@@ -1639,6 +1692,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-ruleS-bracevar-path': { c2: CP }, 'AS8-ruleS-nameRun-typeset-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-declare-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-readonly-fu': { c2: CP, g: 'bound' },
       'AS8-ruleS-nameRun-typeset-fu-quoted': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-declare-fu-dquoted': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-typeset-fu-bslash': { c2: CP, g: 'bound' },
       'AS8-ruleS-nameRun-builtin-typeset-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-if-typeset-fu': { c2: CP, g: 'bound' },
+      'AS8-ruleS-nameRun-zregexparse': { c2: CP, g: 'bound', zregexparse: 'bound' },   // g is defined by the `-g()` guard, which the reader does not read (the `-` before g is no definition boundary), so g is marked bound as the autoload rows are; zregexparse is a zsh module builtin, not a program on PATH and not in the gate's SHELL_OWN, so it is marked bound (present wherever its shell runs it) as g is
       ...Object.fromEntries(['AS8-ruleS-nameRun-var-typeset', 'AS8-ruleS-nameRun-var-declare', 'AS8-ruleS-nameRun-var-readonly', 'AS8-ruleS-nameRun-bracevar-typeset',
         'AS8-ruleS-nameRun-builtin-var', 'AS8-ruleS-nameRun-bslash-builtin', 'AS8-ruleS-nameRun-quoted-builtin', 'AS8-ruleS-nameRun-repeat', 'AS8-ruleS-nameRun-repeat-builtin'].map((id) => [id, { c2: CP, g: 'bound' }])),
       'AS8-root-alias-head': { c2: CP }, 'AS8-root-alias-unread-operand': { c2: CP, g: 'bound' },
@@ -1652,7 +1706,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // fork PR 975's round 2 (tests-3): the made names of THE BOUND NAME's rows, R3's rows and the residuals beside them
       ...Object.fromEntries(['AS8-into-dir-cp', 'AS8-into-dir-cp-made', 'AS8-into-dir-install', 'AS8-into-dir-ln', 'AS8-into-dir-ln-s', 'AS8-into-dir-mv',
         'AS8-made-nonlit-into-dir', 'AS8-made-one-op-ln', 'AS8-made-one-op-ln-s', 'AS8-made-one-op-ln-s-alone', 'AS8-made-one-op-ln-s-nonlit'].map((id) => [id, { w2: W2 }])),
-      ...Object.fromEntries(['AS8-into-dir-readable-path', 'AS8-made-one-op-ln-readable-path', 'AS8-residual-path-func-call', 'AS8-residual-path-eval',
+      ...Object.fromEntries(['AS8-into-dir-readable-path', 'AS8-made-one-op-ln-readable-path', 'AS8-residual-path-func-call', 'AS8-residual-path-eval', 'AS8-residual-eval-define-reader',
         'AS8-ruleB-tests1-lns-two', 'AS8-ruleB-tests1-lns-relsrc', 'AS8-ruleB-tests1-lns-t', 'AS8-ruleB-corr4-lns-existdir', 'AS8-ruleB-corr4-empty-path'].map((id) => [id, { c2: CP }])),
       ...Object.fromEntries(['AS8-ruleB-extra4-cp', 'AS8-ruleB-extra4-mv', 'AS8-ruleB-extra4-ln', 'AS8-ruleB-extra4-install', 'AS8-ruleB-extra4-catredir',
         'AS8-ruleB-extra4-filedst', 'AS8-ruleB-extra4-out', 'AS8-residual-ruleB-cp-r-dir'].map((id) => [id, { zc: CP }])),
@@ -1779,7 +1833,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 320 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 322 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
