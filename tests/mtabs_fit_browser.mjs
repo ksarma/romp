@@ -63,7 +63,9 @@
 // awaited for 1 s and closed, the held pull answered with a fresher synthetic reading, and the modal read once that answer
 // has run in the shell; then the card opened again over a pull held past cfg.hangMs, Usage clicked with the tap's own pull
 // held, the modal awaited for 1 s and left open, the held pull answered with cfg.errorStatus, and the modal, its backdrop, the
-// close hook and the element at the window's centre read once that answer has emptied the shell's readings.
+// close hook and the element at the window's centre read once that answer has emptied the shell's readings; then the card
+// opened over a pull answered with the window reading (an ok read), the bound raised to cfg.raceMs, Usage clicked with the
+// tap's own pull held, the panel read closed while that pull is held, and read open over its answer.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -1039,9 +1041,8 @@ try {
     // ...and a tap with no failed read pulls first (PR 976's round 3, tests-1): the panel opens at once only where the newest
     // read failed, and every other tap opens on its own pull's end. The card opened over a pull answered with the window
     // reading (barsReading: an ok read, so the shell's flag is false and it holds a reading; Usage enabled with neither line),
-    // the bound raised to cfg.raceMs, and Usage clicked with the tap's own pull held. Before the click, a stray request held
-    // since the opening (the shell's 60 s refresh) is answered ok, so the request held after it is the tap's own and the
-    // newest read to end is still an ok one. The shell's handler runs in the task the phoneAct message arrives in, and opens
+    // the bound raised to cfg.raceMs, and Usage clicked with the tap's own pull held. Before the opening, any request the last
+    // turn left held is answered ok, so the newest read to end is an ok one. The shell's handler runs in the task the phoneAct message arrives in, and opens
     // the panel at once, where it does, before it starts the pull; so once the phoneAct has been heard and the tap's pull is
     // held, the event, the modal is read: not up. The held pull is then answered with a reading of the same window reported
     // five minutes before, and the modal awaited: up over that reading, updated 5m ago (the opening's reading says 10m ago,
