@@ -119,9 +119,33 @@ symlink at the path leads nowhere, or `HOME` is unset with neither
 `ROMP_PRIVATE_STRINGS` nor `XDG_CONFIG_HOME` set, it refuses the push under
 every bash.
 
-The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
-Linux; the macOS cells run on demand from the Actions tab (they are billed even
-on a public repo, so they are not part of the per-push matrix).
+On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
+each batch head, and GitHub's CI runs once per batch, on the push of the batch
+branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux under its
+full shape, as built, or across 3.12 and 3.14t alone under its smaller shape,
+where 3.10, 3.11 and 3.13 run on a weekly schedule (`ci.yml`'s header, THE SHAPE
+SWITCH: switching is a three-line change); member PRs and merges to main run none
+of it (`docs/batching.md`). Each Linux interpreter
+runs as four jobs, one for each shard of the test files, each with one pytest
+worker: one worker running the whole suite does not fit the private runner's
+8 GB. `tests/conftest.py` (its CI's shards section) states the rule that puts
+each test file under `tests/` in one shard, so a new test file there needs nothing to join one, and a run whose
+`ROMP_TESTS_SHARD` is unset, every local run, runs every file. The macOS cells
+never run on a batch push. A manual run of CI runs the Linux jobs alone unless you
+ask for macOS: tick the `macos` box in the Actions tab's "Run workflow" form, or
+run `gh workflow run CI --ref <branch> -f macos=true`. The box is off by default
+to control cost: the macOS cells bill at about ten times the Linux rate, about 8
+dollars per manual run. A weekly scheduled run also ran them until 2026-10-04;
+their weekly run stays paused until the first month's bill on the private runner
+is read, and the smaller shape's weekly run is Linux alone.
+CI's secret scan alone runs on every push of a branch or a tag whose commit
+carries `.github/workflows/secret-scan.yml`, once per push: it has no pull
+request trigger, since the private runner bills every run. Among the pushes
+that start no run of it: a push to a branch cut from main before that file
+landed, until the branch merges main; a tag on such a commit; and a push whose
+commit lacks the file because it or an earlier commit on its branch deleted it.
+That file's header lists these, what dropping the pull request trigger gave
+up, and GitHub's other limits.
 
 ## Measuring dashboard pane performance
 
@@ -254,8 +278,12 @@ without it a relation that did not hold is a diagnostic line in the output.
 Three things about the test environment are worth knowing, because all have
 produced confusing failures:
 
-- The bats suite takes about a minute on Linux and about fifteen on macOS. That
-  is expected, not a hang.
+- The bats suite is slow. In CI, among the finished runs on main, the batch
+  branches and the branches of the open and merged PRs (read at 03:32 UTC on
+  2026-10-04), the slowest Run bats step on Linux took 39 min 25 s (run
+  37128151383) and the slowest macOS Shell job took 48 min 1 s (run
+  37045964763). Those are CI's slowest runs, not its typical ones. A run that
+  long is expected, not a hang.
 - On macOS, run the bats suite with a modern bash (`brew install bash`; bats
   picks it up via `env bash` when `/opt/homebrew/bin` precedes `/bin` on PATH).
   The stock `/bin/bash` 3.2 does not fail a test on a mid-test `[[ ]]`

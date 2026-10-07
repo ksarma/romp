@@ -245,7 +245,7 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // its `kill -l` prints, so the thirty-eighth commit, which took the list from the printed lists alone, missed it (the reviewer's verifier).
 // The names, the SIG prefix taken off: the signals (RTMIN and RTMAX with their offsets, `RTMIN+3`, `RTMAX-2`, which the pattern reads); EMT
 // and INFO, which the BSD list adds and no Linux shell takes, so the census checks them only on a runner whose shells take them (the CI
-// vendored-tooling job's weekly macOS cell); and the names a trap takes that are not signals, EXIT in every shell, ERR and DEBUG in bash and zsh, RETURN in
+// vendored-tooling job's macOS cell, on a dispatch with its macos input on); and the names a trap takes that are not signals, EXIT in every shell, ERR and DEBUG in bash and zsh, RETURN in
 // bash, ZERR in zsh, each named in its shell's manual under trap. The census test after the pin runs `trap : NAME` in each present shell over
 // every candidate it derives (the names each shell prints, the SIG names the system's <signal.h> defines as the C preprocessor reads it, CLD
 // among them, node's os.constants.signals, and this list), each bare and with SIG, as spelled, in lower case and in title case, and reds on a

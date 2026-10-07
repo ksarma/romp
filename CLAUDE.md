@@ -238,16 +238,63 @@ so there is no list to write. **gitleaks** covers them, in two places:
   clean report could be false; the remedy is `git replace -d <object>`, or a
   push from a clone that carries none. This is the same hook as the identifier
   scan and both report before it refuses, so one push tells you about both.
-- **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
-  tag the checkout brings, on every PR and every push to `main`, from a
-  pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
-  scans one commit and reports clean. Its history scan carries `--text` too,
-  so a committed `-diff` attribute cannot hide a path's credential from it: a
-  plain patch stream prints no hunk for such a path, and the job's tree scan
-  reads `HEAD` alone, where a removed file is gone (the road was verified
-  2026-09-21 on the pinned scanner and closed by the fork's PR 890; the tree's
-  one `.gitattributes` sets `-text`, not `-diff`, so no commit here was
-  hidden).
+- **CI's secret scan** runs on every push to the fork, of a branch or a tag,
+  whose commit carries `.github/workflows/secret-scan.yml`: that workflow's push
+  trigger has no branch filter, so every branch push is scanned, once, with no
+  run cancelled by a later one (2026-09-30), and it has no `pull_request`
+  trigger (dropped 2026-10-04, since the private runner bills every run).
+  `ci.yml`'s `Secret scan (gitleaks)` job runs the same job on a batch push, a
+  manual run, and, under `ci.yml`'s smaller shape alone, its weekly schedule
+  (THE SHAPE SWITCH in `ci.yml`'s header), and
+  `tests/test_ci_secret_scan.py` holds the two copies equal but for the job's
+  name. Each run scans all of history from a pinned, checksummed binary: the
+  commit its push put on its ref, and every branch and tag the checkout
+  brings. When a push's ref has moved on or
+  been deleted before the run, the checkout fetches that commit by its sha, so
+  a commit force-pushed over is still scanned. It needs `fetch-depth: 0`: a
+  default checkout scans one commit and reports clean. Its history scan
+  carries `--text` too, so a committed `-diff` attribute cannot hide a path's
+  credential from it: a plain patch stream prints no hunk for such a path, and
+  the job's tree scan reads `HEAD` alone, where a removed file is gone (the
+  road was verified 2026-09-21 on the pinned scanner and closed by the fork's
+  PR 890; the tree's one `.gitattributes` sets `-text`, not `-diff`, so no
+  commit here was hidden). GitHub reads a push's workflows from the commit the
+  push puts on its ref. So a push to an open pull request's branch is scanned
+  once when the branch carries the file, and not by this workflow when the
+  branch never had it (a branch cut from `main` before the file landed, or cut
+  from the project), until the branch merges `main`. A pull request from
+  another repository is not scanned by this workflow, since its pushes go to
+  that repository; its commits are scanned by the next run here whose checkout
+  reaches them, such as a batch push that merges them.
+  When a pull request's branch and its base both lack the file, its merge
+  commit carries an older `ci.yml`, whose `Secret scan (gitleaks)` job runs on
+  pull requests (`main`'s copy before the file landed runs it, and so does the
+  project's), though that copy cancels a pull request's run in progress when a
+  newer push to it arrives. Three kinds of push start no run: a push to a
+  branch cut before the file landed, until it merges `main`, whether or not it
+  has an open pull request; a tag on such a commit; and a push whose commit
+  lacks the file because it or an earlier commit on its branch deleted it. A
+  push that edits the file runs its edited copy. Nor does GitHub start a run
+  for a push whose head commit's message carries a skip instruction (`[skip
+  ci]` and the like), for the tags of a push of more than three tags at once,
+  or for a push of more than 5,000 branches at once. A commit only such a push carries is
+  scanned by the next run whose checkout reaches it, and by none if it leaves
+  every branch and tag first. The hook does not scan six kinds of push or
+  commit, and CI scans each in the run of the push when the push starts one: a
+  push where no gitleaks resolves (none installed, or `ROMP_GITLEAKS` naming a
+  non-executable), a push with `ROMP_NO_GITLEAKS=1` (the hook skips its
+  credential scan), a push with `git push --no-verify` (no hook runs), a push
+  from a clone where `install.sh` never linked the hook into git's hooks
+  directory (no hook runs at all), a commit any of the clone's remote-tracking
+  refs reaches, which the hook does not read (another remote's ref, or a stale
+  ref of the pushed-to remote whose commit that remote has since dropped), and a
+  commit GitHub makes itself (a web edit or suggestion, the Update branch
+  button). What the hook's scan passes inside a push it does scan, and CI's
+  git-mode history scan reports, is reported by the run of the same push when it
+  starts one: the residuals the hook's header states (a path allowlist with an
+  AND condition keyed on the hook's own copy names, a repository rule anchored
+  at the start of the text on a hunk led by a file signature, and a change that
+  only removes lines from a text `.p12` or `.pfx` file).
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
@@ -299,10 +346,11 @@ repos are in play and only ONE of them is ours to write to:
   `gh pr view N` or `gh pr merge N` reads the fork's PR N. Without that key gh
   consults `upstream` first: on a fresh clone with both remotes and no terminal
   to ask on, `gh pr view N` read the project's PR N (2026-09-09), and
-  `scripts/land.sh`, which merges by number without `-R`, would have aimed a
-  merge at the project. `scripts/fork-remotes.sh --check` verifies all of it
-  without changing anything, and is worth a run in any new clone or worktree,
-  since this lives in git config and a fresh clone starts without it.
+  `scripts/batch.py land` (which `scripts/land.sh` runs), merging by number
+  without `-R`, would have aimed a merge at the project.
+  `scripts/fork-remotes.sh --check` verifies all of it without changing
+  anything, and is worth a run in any new clone or worktree, since this lives
+  in git config and a fresh clone starts without it.
 - **Checking for upstream changes.** `scripts/upstream-check.sh` fetches and
   reports what the project has added since we diverged, and which of those files
   we have also changed — the ones a merge will actually cost attention on. It
@@ -336,8 +384,36 @@ broad `git add` will sweep up your work). Conventions:
      the fork section above, and `scripts/fork-remotes.sh` makes it fail if tried.
   2. Open a PR within the fork against `main`. PRs land through a batch
      (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
-     must land alone is merged on the user's word. Opening a PR against the upstream
+     must land alone lands as a one-member batch (`scripts/batch.py plan --only N`) on the
+     user's word; `scripts/land.sh` runs `scripts/batch.py land`. Opening a PR against the upstream
      project is a separate decision only the user makes.
+  A fork PR runs no `ci.yml` of its own (2026-09-27): its Checks tab shows the secret scan's
+  run of each push whose commit carries `secret-scan.yml` (that workflow's push trigger has no
+  branch filter, and it has had no pull request trigger since 2026-10-04; the credentials section
+  above says which pushes start none), the tier-label check (next bullet) after the PR opens or
+  reopens or its labels change, Tier policy's skipped rows, which evaluate nothing on the fork, and,
+  on a PR that touches the site's inputs (`docs/`, `mkdocs.yml`, `overrides/` or `docs.yml` itself),
+  `docs.yml`'s `build` check (a strict `mkdocs build`) and its `deploy` row, which always skips on a
+  pull request.
+  GitHub's CI (`ci.yml`) runs once
+  per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
+  gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
+  sha `scripts/batch.py verify` and `land` read. `land` also requires that batch push's CI
+  run green at the batch head, read from GitHub when it runs, and refuses a batch whose head
+  does not contain `main`. It reads `main` once more right before the merge call; `main` moving
+  between that read and GitHub's merge, or before an `--auto` merge fires later (`--auto` is
+  refused until auto-merge is allowed and a rule on `main` gates a merge; the fork had neither
+  on 2026-09-27), is not stopped, and `finish` then fails loudly: the merge commit's first
+  parent is not the `main` verify read, so the tree on `main` was never swept or tested. The
+  button and `gh pr merge` make no such check, so a batch merged by hand needs `main` unmoved
+  since verify, and `finish` makes the same first-parent check after it (docs/batching.md,
+  maintainer step 6).
+  A PR owes a passing `scripts/sweep.py` result at its own head before its review round and
+  again before its closing check: the round and the check read that result (`scripts/sweep.py
+  check --tree <worktree>`) where they read CI before, so a push after the sweep needs a new
+  one. `scripts/batch.py plan` leaves out a PR without one, naming the case, and `assemble
+  --repin` refuses a new head without one; both read the batcher's state dir, so a result
+  recorded on another machine is missing there (docs/batching.md, "If you open a PR").
   Anything in the code that reads the canonical repo (the release script's post-merge
   fast-forward and tag push, the kernel's update and drift probes) resolves the remote
   as `upstream` when the clone has one, else `origin` (`_release_remote` in
@@ -366,10 +442,13 @@ broad `git add` will sweep up your work). Conventions:
   copy of the second check (`.github/workflows/tier-policy.yml`) is gated to the
   upstream repository by its job-level `if:` (the header comment there says why), so on
   the fork it evaluates nothing and posts no Tier policy verdict; a fork PR is judged by
-  the label check alone. The author picks the tier at filing time; upstream's tier workflow
-  also reads a `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who
-  cannot label and applies the label (a label already present wins; maintainers re-tier by
-  relabeling):
+  the label check alone, and runs no `ci.yml` (the publish step above says what gates
+  it). The fork's label check also runs on fewer events than upstream's: when a PR opens
+  or reopens and when its labels change, not on a push or an edit, so a push leaves the
+  new head without it until the next label event (the second divergence in its header).
+  The author picks the tier at filing time; upstream's tier workflow also reads a
+  `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who cannot label
+  and applies the label (a label already present wins; maintainers re-tier by relabeling):
   - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
     still accept the old spelling): documentation. On the fork that is tests, docs and
     repo plumbing, landing through a batch like every PR. Upstream, to the check it is
@@ -429,11 +508,16 @@ its `.test.ts` files read the file and assert on its inline JavaScript AND on it
 switch's 409 literal appears at least twice, once per request route), so a pure-Python
 refactor that touches no `ui/` file and no JavaScript line can still turn it red. Precedent:
 our PR 994 to the project (2026-09-20) lifted the route bodies into functions and turned the
-project's `vscode-extension` CI job red on that one test of 5224. The leg may be skipped only
-when `kernel/kernel.py`, `ui/` and `vscode-extension/` are ALL untouched. Corollary for the
-pins themselves: a pin keyed on WHERE code lives says in its message what it guards (the
-route still reaches the function) and points to the executed test that proves the behaviour,
-so a reader never mistakes the weaker guarantee for the stronger one.
+project's `vscode-extension` CI job red on that one test of 5224. The leg runs for every change:
+the three webview legs (typecheck, `npm test`, build) also read files outside `kernel/kernel.py`,
+`ui/` and `vscode-extension/` (other kernel modules, tests, docs, the CI workflow), and no derived
+set of the files they read is kept, so no rule over the changed paths can say they may be skipped
+(PR 926's review measured the old rule, "skip when those three are untouched": of the 581 PRs
+merged since 2026-08-28 that it let skip, 191 touched a file those legs read or probe). `scripts/sweep.py` owes the three webview legs (typecheck, `npm test`, build) at
+every head it sweeps, a member PR's included. Corollary for the pins themselves: a pin keyed on
+WHERE code lives says in its message what it guards (the route still reaches the function) and
+points to the executed test that proves the behaviour, so a reader never mistakes the weaker
+guarantee for the stronger one.
 
 ### A test that mints its own state root pins `session-hosts` off (2026-09-11)
 Per-session hosts are ON by default (T348): a backend over a state directory with no

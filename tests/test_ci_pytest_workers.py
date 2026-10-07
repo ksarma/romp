@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""The Python job's Run pytest step runs two pytest-xdist workers on the ubuntu-latest cells and none on any other
-runner, the macOS cells among them (.github/workflows/ci.yml, 2026-09-25).
+"""The Python job's Run pytest step runs one pytest-xdist worker on the ubuntu-latest cells and none on any other runner, the
+macOS cells among them (.github/workflows/ci.yml, 2026-10-04).
 
-Serially the cells had reached the 25-minute cap they had then (this fork's main, run 35890814789: the 3.14t cell at
-24 min 35 s). Measured on 2026-09-22 with Python 3.10 on a four-CPU budget (a systemd CPUQuota of 400 percent; GitHub
-documents its Linux runner for a public repository at 4 CPUs and 16 GB), the suite took 1437 s serially at a cgroup
-memory peak of 6.0 GB and 739 s with two workers at 10.9 GB (decimal, page cache included), about 5 GB a worker, and
-three workers peaked at 15.8 GB. GitHub documents the macOS runner for a public repository at 3 CPUs and 7 GB, below
-the two-worker peak, and two workers have not been measured on it, so the macOS cells stay serial under their 60-minute
-cap. The step's command sets the count through an expression on matrix.os: 2 for ubuntu-latest, the label whose
-documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, and 0 (xdist's in-process run) for any other
-label, so a runner the matrix adds later runs serially too. The pins hold the ubuntu-latest command to one count, 2, and
-every other runner's to none or 0, and require a step before Run pytest that installs pytest-xdist, without which pytest
-refuses -n, 0 included. The job's cap and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as merged:
-their figures and run ids are romp-on/romp's Actions runs of its serial suite, and with two workers the measurement puts
-this fork's Linux cells at about half their serial time, well inside that cap. Source pins, as
-tests/test_ci_bats_bound.py: the workflow text read by line shape, with no YAML library in the test deps."""
+The fork moves to a private repository whose runner has 2 CPUs and 8 GB (the private-runner CI shape the user approved on
+2026-10-04). Measured on 2026-09-22 with Python 3.10 on a four-CPU budget (a systemd CPUQuota of 400 percent), the suite took
+1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two workers at 10.9 GB (decimal, page cache included), about
+5 GB a worker, and three workers peaked at 15.8 GB; the two-worker peak is past the private runner's 8 GB. The Linux cells
+ran two workers on the public runner (4 CPUs and 16 GB) from 2026-09-25 to 2026-10-04 (batch 917); serially the cells had
+reached the 25-minute cap they had then (this fork's main, run 35890814789: the 3.14t cell at 24 min 35 s). The count is one
+worker (-n 1) rather than an in-process run (-n 0): under the worker a test the per-test timeout ends fails by name and the
+other tests run on, as under two, where the timeout's thread method ends an in-process run at the hung test. GitHub
+documents the macOS runner for a public repository at 3 CPUs and 7 GB, below the two-worker peak, and two workers have not
+been measured on it, so the macOS cells stay serial under their 60-minute cap. The step's command sets the count through an
+expression on matrix.os: 1 for ubuntu-latest, the label the private runner's shape was sized for, and 0 (xdist's in-process
+run) for any other label, so a runner the matrix adds later runs serially too. The pins hold the ubuntu-latest command to one
+count, 1, and every other runner's to none or 0, and require a step before Run pytest that installs pytest-xdist, without
+which pytest refuses -n, 0 included. The job's cap and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130 as
+merged, but for the Linux figure: the runs before 2026-09-30 they cite are romp-on/romp's Actions runs of its serial suite.
+Each Linux shard's cap is T230b's rule for one worker on the private runner, then the margin rule (the job's comment in
+ci.yml; tests/test_ci_bats_bound.py holds the arithmetic). Source pins, as tests/test_ci_bats_bound.py: the workflow
+text read by line shape, with no YAML library in the test deps."""
 import os
 import re
 import shlex
@@ -142,15 +146,16 @@ class PythonJobWorkers(unittest.TestCase):
                         "the Run pytest step's run value is not one `python -m pytest ...` line: %r" % (self.cmd,))
         self.labels = matrix_os_labels()
 
-    def test_the_ubuntu_latest_cells_run_two_workers(self):
-        self.assertIn("ubuntu-latest", self.labels, "the python job's matrix no longer names ubuntu-latest, the runner the "
-                                                    "four-CPU measurement was sized to: re-anchor this pin")
+    def test_the_ubuntu_latest_cells_run_one_worker(self):
+        self.assertIn("ubuntu-latest", self.labels, "the python job's matrix no longer names ubuntu-latest, the label the "
+                                                    "private runner's shape was sized for: re-anchor this pin")
         cmd = command_on(self.cmd, "ubuntu-latest")
         counts = worker_counts(cmd)
-        self.assertEqual(counts, ["2"], "on ubuntu-latest the Run pytest step must set the xdist worker count once, to 2; it "
-                                        "runs %r, which sets %r. Serially the suite took 1437 s against 739 s with two workers "
-                                        "(2026-09-22, four CPUs), and three workers peaked at 15.8 GB, near the 16 GB GitHub "
-                                        "documents for the runner" % (cmd, counts))
+        self.assertEqual(counts, ["1"], "on ubuntu-latest the Run pytest step must set the xdist worker count once, to 1; it "
+                                        "runs %r, which sets %r. The private runner has 2 CPUs and 8 GB, and two workers "
+                                        "peaked at 10.9 GB (2026-09-22, four CPUs); one worker, not -n 0, keeps a test the "
+                                        "per-test timeout ends failing by name with the other tests running on"
+                                        % (cmd, counts))
 
     def test_every_other_runner_runs_serially(self):
         self.assertIn("macos-latest", self.labels, "the python job's matrix no longer names macos-latest: re-anchor this pin")
@@ -159,10 +164,11 @@ class PythonJobWorkers(unittest.TestCase):
                 cmd = command_on(self.cmd, label)
                 counts = worker_counts(cmd)
                 self.assertIn(counts, ([], ["0"]), "on %s the Run pytest step must run pytest serially, with no -n or -n 0; it "
-                                                   "runs %r, which sets %r. Two workers were measured only under a four-CPU "
-                                                   "budget sized to the ubuntu-latest runner, and GitHub documents the macOS "
-                                                   "runner for a public repository at 3 CPUs and 7 GB, below the 10.9 GB peak "
-                                                   "two workers reached under that budget" % (label, cmd, counts))
+                                                   "runs %r, which sets %r. Workers were measured only under a four-CPU budget, "
+                                                   "and the one worker is sized for the private runner the ubuntu-latest label "
+                                                   "names; GitHub documents the macOS runner for a public repository at 3 CPUs "
+                                                   "and 7 GB, below the 10.9 GB peak two workers reached under that budget"
+                                                   % (label, cmd, counts))
 
     def test_a_step_before_it_installs_pytest_xdist(self):
         before = self.steps[:self.at]

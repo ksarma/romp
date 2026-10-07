@@ -203,8 +203,8 @@ test whose verdicts differ, calls inert every one passing under both and undecid
 a failure blamed outside the candidate's test fires on no deterministic shape (bash blames a `( ! cmd )` subshell's failure on the
 line before it, a multi-line one's on the @test line, and a saved `$?` on the `[ ]` reading it, all inside the test; a register
 reading verdicts alone was blind to that clause, and to a bats that blamed differently). Without bats those two skip, as the corpus
-test does, naming where they run (WHERE_BATS_RUNS): CI's shell job's Linux cell. The job has two cells on a dispatch or the weekly
-schedule, ubuntu-latest and macos-latest, and both install a bats (the Linux one 1.11.1 from the release tarball, the macOS one
+test does, naming where they run (WHERE_BATS_RUNS): CI's shell job's Linux cell. The job has two cells on a dispatch with its macos
+input on, ubuntu-latest and macos-latest, and both install a bats (the Linux one 1.11.1 from the release tarball, the macOS one
 Homebrew's bats-core); tests/bats-bare-negation-shell-job.bats, a wrapper the job's `bats tests/*.bats` picks up, runs the
 register class, the road class (the corpus road's pieces against bats: the TAP reader, the bound on a run, the TERM to the process
 running one, a suite decided end to end) and the corpus test under python3 with every BATS_* variable unset (the job's
@@ -400,7 +400,8 @@ cell since that commit; since fork PR 940's narrow re-check, whose split of the 
 needs no bats, `43 passed, 18 skipped, 1 warning in 65.77s (0:01:05)` without, under nice 19 on a loaded box), on cells whose
 margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at the ninth commit (3.10 in 20m42s, 3.11 in
 20m13s, 3.12 in 17m07s, 3.13 in 18m20s, 3.14t in 20m45s, read off that run's job times), for a bats install of 4 s; the shell
-job carries the validation inside its 35 minutes (11m02s in that run). The polluted shape, pytest over the whole tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit
+job carries the validation inside the 35 minutes it had then (11m02s in that run). The polluted shape, pytest over the whole
+tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit
 the wrapper runs the routes pin too (seconds; bash and bats are all it needs), and not the child pytest pin, which needs pytest
 importable by the runner's python3, which the shell job does not install: it skips there saying so, and a skipping test in the
 wrapper would pin nothing (a pytest install in that job is a workflow change, not made here).
@@ -571,7 +572,7 @@ def _bash_parses(lines):
 # in every Python cell, and round 2's second commit the rest of the module, which the same bash red the same way). The matrix's bashes, from the
 # runner images' READMEs (actions/runner-images, images/ubuntu/Ubuntu2404-Readme.md and images/macos/macos-15-Readme.md):
 # ubuntu-latest 5.2.21; macos-latest 3.2.57, which refuses all three constructs and prints no such warning (`printf 'cat <<EOF\n' |
-# bash -n` is silent, exit 0, under 3.2.57), in the Python cells on a dispatch or the weekly schedule only
+# bash -n` is silent, exit 0, under 3.2.57), in the Python cells on a dispatch with its macos input on only
 BASH_4_SYNTAX = ("true |& cat", "coproc { true; }", "case a in a) true ;;& esac")
 _BASH_PROBE = {}   # "shortfall": (the bash's version, what it lacks) or False, once probed (bash_shortfall)
 
@@ -4159,7 +4160,7 @@ class BatsGroundTruth(unittest.TestCase):
                 len(differing), "\n".join(differing), output[-6000:]))
 
 
-# where the bats-backed tests run, for the skip messages: the shell job has two cells on a dispatch or the weekly schedule and one
+# where the bats-backed tests run, for the skip messages: the shell job has two cells on a dispatch with its macos input on and one
 # (ubuntu-latest) otherwise (.github/workflows/ci.yml), both install a bats, and the wrapper skips every test of the module on
 # macOS, so the Linux cell is the one that verifies the record and decides the tree (extra4-5 and extra7-2 of fork PR #871's
 # round 1: the messages called the job "the one cell that installs bats")
