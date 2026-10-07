@@ -931,13 +931,16 @@ _GC_HOOK_SAID = [False]   # whether a failure inside the gc.callbacks hook has b
 # every page and request stalled with it). The default below is the measured generation-1 rate (136,738 in 24,480 s,
 # 5.6 a second) times the shortest gap wanted between full collections (180 s), 1,006, rounded to 1,000: the collector's
 # own generation-1 count, not a clock, then keeps full collections at least 1,001 generation-1 collections apart, which
-# at that rate is at least 179 s, at most 20 an hour against 103, at most about 60 s of pause an hour against 306. Each
-# pause stays about the same length: a full collection walks the same long-lived population either way and in addition
-# frees the cyclic garbage accrued since the previous one, about five times today's per pass, which at the field's rate
-# (inferred from one collectedLast sample, 43,991 objects a pass) is a few percent more work per pass; a lab with a
-# kernel-shaped acyclic churn read the mean pause 344 ms under 10 and 363 ms under 1,000, and one where cyclic garbage
-# outgrew the live set read it nine times longer, so after a deploy the field reads gen.2's msLast and msMax and
-# collectedLast per pass. Thresholds 0
+# at that rate is at least 179 s, at most 20 an hour against 103. Measured on 2026-10-06 and 2026-10-07: a production
+# kernel ran 7.9 to 8.6 generation-1 collections a second, a bound of 28 to 31 full collections an hour against the 47 to
+# 81 it ran; two bench kernels side by side at matched load, 2 h per setting, ran 39.4 full collections an hour under 10
+# and 17.0 under 1,000, and 140.5 s against 60.7 s of generation-2 pause an hour (57% less). Each pause stays about the
+# same length (on that bench a median of 3.52 s under 10 and 3.57 s under 1,000): a full collection walks the same
+# long-lived population either way and in addition frees the cyclic garbage accrued since the previous one, which waits
+# 1.6 to 2.7 times as long at those live rates, a few percent more work per pass at the field's rate (inferred from one
+# collectedLast sample, 43,991 objects a pass); a lab with a kernel-shaped acyclic churn read the mean pause 344 ms
+# under 10 and 363 ms under 1,000, and one where cyclic garbage outgrew the live set read it nine times longer, so after
+# a deploy the field reads gen.2's msLast and msMax and collectedLast per pass. Thresholds 0
 # and 1 stay as CPython sets them (700, 10 through 3.12; 2000, 10 from 3.13). The knob: unset or empty applies the
 # default; 0 leaves CPython's own thresholds (the off switch, silent); an integer from 1 to 2**31 - 1 (the C int
 # gc.set_threshold takes) applies that value; anything else is said once on stderr and read as the default (the line
