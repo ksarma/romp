@@ -5485,10 +5485,17 @@ document stands on its own, each with the reasoning it was given.
     name, so every mention taints (AS8-root-gate-scan, AS8-root-gate-walk-var, AS8-root-gate-unheld-callback, one per
     setter, each red where its own setter is off and the other two on, costs on which no shell writes beside
     AS8-cp-sed-path-ls; the third, whose callback leaves the directory unknown, fork main allowed, since it skipped the
-    bound-name refusal there). The first two put the gate word where rule S does not read it as a head, a command name
-    built from a variable the command assigns literally: spelled as a head the word is on THE NAME-RUN AXIS, and clause
-    (c) refused those rows with every setter off (the reviewer's tg-t31-1 on the round-2 pass); a change that reads a
-    head resolved from a variable as one that may change what a name runs subsumes those two setters. Its
+    bound-name refusal there). THE FIRST TWO NO LONGER ISOLATE THEIR SETTER (C4, since C1): they put the gate word where
+    rule S once did not read it as a head, a command name built from a variable the command assigns literally (`$e`,
+    `$e'able'`), so at the round-2 pass (the reviewer's tg-t31-1) clause (c) read literal heads only and each gate row went
+    red with only its own setter off. Since C1 clause (c) (ruleHeadUnsafe) reads the RESOLVED head commandOf peels, so a
+    gate word reached through a variable is a head the guard cannot read and fails clause (c); AS8-root-gate-scan and
+    AS8-root-gate-walk-var are now refused by rule S regardless of the gate setter, so neither isolates its setter any
+    longer. Their claim that THE SHELL'S GATE still fires rests on the source pin (the scan, the walk's gate name and the
+    unheld text) and this note; AS8-root-gate-unheld-callback keeps isolating its setter, since mapfile's callback text is
+    run unread and clause (c) does not reach it (mapfile is no changer, the callback a quoted substitution), so with the
+    unheld text off it alone goes allowed. BUILTIN_GATES is KEPT (R2): that unheld path still reads it to fire the gate,
+    and taking it out would reopen a write (AS8-root-gate-unheld-callback). Its
     rows AS8-builtin-gate-* are refused as every bare name is, gate or no gate (a mention no shell runs among them,
     AS8-builtin-gate-mention-cost). Pre-existing, disclosed with a witness row each (allowed at fork main and here while
     the shell writes): the same table writes where no copy and no unread PATH put the bound-name refusal in play, or
