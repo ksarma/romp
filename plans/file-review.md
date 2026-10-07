@@ -5397,9 +5397,11 @@ document stands on its own, each with the reasoning it was given.
     RULE B on the bound map (fork PR 975's round 2, R3): one bind helper (bindWrite) serves every writer of the map,
     bindUnder's callers and the `cat SRC > DEST` site, and the map keys on the made path (the links this command made
     followed, and the path as spelled) and holds a SET of values, each the source resolved to an absolute path at the
-    moment of the write (a symbolic link's target against the link's own directory); a key keeps every value it was given
-    (monotonic, never overwritten), and the bare-name lookup refuses when any binding of a candidate is a writer the
-    command made, skipping a value that is the path itself (a self-binding) and a path already being spliced (a cycle).
+    moment of the write: a following copy's target, and for a cp, mv, ln or link of a command-made relative symlink the
+    link's own text re-resolved against its new directory too (both readings, since the spelling does not always say which
+    the shell runs); a key keeps every value it was given (monotonic, never overwritten), and the bare-name lookup refuses
+    when any binding of a candidate is a writer the command made, skipping a value that is the path itself (a self-binding)
+    and a path already being spliced (a cycle).
     Ruling C stored the source as SPELLED, so a relative or a bare source was read as a command name, not the file copied,
     and `ln -s SRC DIR` bound the link's target to itself, overwriting the copy's binding; rule B's resolve-at-write closes
     that class by construction, not by a list: a bare or relative bound source under a readable PATH (tests-2:
@@ -5421,20 +5423,24 @@ document stands on its own, each with the reasoning it was given.
     (AS8-residual-mapfile-zsh, zsh writes); and a copy of cp made after an unread program behind a wrapper and a relative
     cd leave the cwd unknown binds nothing (no directory to resolve the destination against), so a later bare name on a
     readable PATH is no writer the command made and passes (AS8-residual-copy-unknown-cwd, bash and zsh write). THE MOVED LINK RE-RESOLVES (fork PR 975's
-    round 2 gap pass, R3): a command-made RELATIVE symlink carried unchanged into a directory on a readable PATH by a
-    preserving op (mv, a hard `ln`, `link`, cp -a/--archive/-d/--no-dereference/-P/-r/-R) has text that re-resolves
-    against the NEW directory; rule B first bound
-    the link's OLD target (not a path the command made) and let the moved name pass, while a real bash, zsh and dash ran
-    the cp the link's relative name finds in its new home and wrote the tracked file. The earlier pass named this a
+    round 2, R3, built BY CONSTRUCTION in round 2, 2026-10-07): a command-made RELATIVE symlink carried unchanged into a
+    directory on a readable PATH by a cp, mv, ln or link has text that re-resolves against the NEW directory; rule B first
+    bound the link's OLD target (not a path the command made) and let the moved name pass, while a real bash, zsh and dash
+    ran the cp the link's relative name finds in its new home and wrote the tracked file. The earlier pass named this a
     residual the synthetic world could not stage; the command stages it itself (`cp /usr/bin/cp scratch/realcp` is the
     writer the moved link's relative name resolves to), so under M3 (fork main refuses) it is a false allow this PR
-    introduced, fixed here: bindWrite resolves a preserving op's link text against the destination's directory
-    (linkTexts holds each command-made link's raw text), so the made copy there refuses by name. Rows
-    AS8-ruleB-relsym-mv, -hardln, -cpa, -cpP, -cpr and the two out twins, red at the pre-round-2 head, with real writes
-    in all three shells; one row per remaining preserving spelling, each red where that spelling alone is not read as
-    preserving (AS8-ruleB-relsym-cp-archive, -cp-d, -cp-no-dereference, -cp-upper-R, -link), and the link made in this
-    shell and moved inside `bash -c`, red where the fresh shell's walk is not handed the link texts
-    (AS8-ruleB-relsym-cpa-fresh-shell). The same moved link RUN BY ITS FULL PATH (no PATH search) base and the pre-round-2 head both
+    introduced, fixed here. A later pass added each preserving spelling it had missed to a hand list (short -a/-P/-d/-r/-R
+    and the long --archive and --no-dereference), which left `cp --recursive` out and allowing; round 2 drops the list and
+    closes the class BY CONSTRUCTION: a cp, mv, ln or link is marked preserve whatever its options, and bindWrite binds BOTH
+    readings of the destination, the link followed and the link's own text against its new directory (linkTexts holds each
+    command-made link's raw text). Binding both is sound because bindings are monotonic, so whichever spelling the shell
+    runs, the destination carries the reading that finds the made copy and the bare name refuses, and no preserve spelling
+    need be enumerated. Rows AS8-ruleB-relsym-mv, -hardln, -cpa, -cpP, -cpr and the two out twins, red at the pre-round-2
+    head, with real writes in all three shells; one row per preserving spelling that had needed its own list entry
+    (AS8-ruleB-relsym-cp-archive, -cp-d, -cp-no-dereference, -cp-upper-R, -link), the long `--recursive` that the list left
+    out (AS8-ruleB-relsym-cp-recursive, red at the branch head before this change, fork main refusing, all three shells
+    writing), and the link made in this shell and moved inside `bash -c`, red where the fresh shell's walk is not handed the
+    link texts (AS8-ruleB-relsym-cpa-fresh-shell). The same moved link RUN BY ITS FULL PATH (no PATH search) base and the pre-round-2 head both
     allowed (a full-path invocation is no bare-name lookup for them); the destination's absolute path is bound too, so it
     refuses, a fork-main allow the by-name rows do not reach (AS8-ruleB-relsym-mv-fullpath, -cpa-fullpath). An
     absolute-source move into a directory on a readable PATH (`mv <abs> <dir>`), which fork main allows and ruling C and

@@ -1339,6 +1339,11 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-ruleB-relsym-cp-d', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -d stage_s scratch/d_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; d_s base/report.md docs/report.md', A, 'name'],
       ['AS8-ruleB-relsym-cp-no-dereference', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp --no-dereference stage_s scratch/n_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; n_s base/report.md docs/report.md', A, 'name'],
       ['AS8-ruleB-relsym-cp-upper-R', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -R stage_s scratch/R_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; R_s base/report.md docs/report.md', A, 'name'],
+      // fork PR 975's round 2, R3 built BY CONSTRUCTION (C2): the long cp spelling --recursive preserves a symlink the same as -r/-R, but was outside the
+      // short-and-two-long preserve list the earlier pass kept, so the copied link passed by name while bash, zsh and dash wrote. Rule B now marks every
+      // cp/mv/ln/link preserve, whatever its options, and binds BOTH readings of the destination (the link followed and its own text against the new
+      // directory), so no preserve spelling need be enumerated. Fork main refuses, the pre-round-2 head and the branch head allow, all three shells write.
+      ['AS8-ruleB-relsym-cp-recursive', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp --recursive stage_s scratch/rec_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; rec_s base/report.md docs/report.md', A, 'name'],
       ['AS8-ruleB-relsym-link', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; link stage_s scratch/l_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; l_s base/report.md docs/report.md', A, 'name'],
       ['AS8-ruleB-relsym-cpa-fresh-shell', 'na', "cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; bash -c 'cp -a stage_s scratch/a_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; a_s base/report.md docs/report.md'", A, 'name'],
       // fork PR 975's gap pass (R3, 2026-10-06): the two witnesses the ruling asked for and the earlier pass left out.
@@ -1654,7 +1659,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ...Object.fromEntries(['AS8-ruleB-tests2-cp', 'AS8-ruleB-tests2-mv', 'AS8-ruleB-tests2-install', 'AS8-ruleB-tests2-cpt'].map((id) => [id, { c2x: CP }])),
       'AS8-ruleB-relsym-mv': { stage_s: CP }, 'AS8-ruleB-relsym-mv-out': { stage_s: CP }, 'AS8-ruleB-relsym-hardln': { h_s: CP },
       'AS8-ruleB-relsym-cpa': { a_s: CP }, 'AS8-ruleB-relsym-cpa-out': { a_s: CP }, 'AS8-ruleB-relsym-cpP': { p_s: CP }, 'AS8-ruleB-relsym-cpr': { r_s: CP },
-      'AS8-ruleB-relsym-cp-archive': { v_s: CP }, 'AS8-ruleB-relsym-cp-d': { d_s: CP }, 'AS8-ruleB-relsym-cp-no-dereference': { n_s: CP }, 'AS8-ruleB-relsym-cp-upper-R': { R_s: CP },
+      'AS8-ruleB-relsym-cp-archive': { v_s: CP }, 'AS8-ruleB-relsym-cp-d': { d_s: CP }, 'AS8-ruleB-relsym-cp-no-dereference': { n_s: CP }, 'AS8-ruleB-relsym-cp-upper-R': { R_s: CP }, 'AS8-ruleB-relsym-cp-recursive': { rec_s: CP },
       'AS8-ruleB-relsym-link': { l_s: CP }, 'AS8-ruleB-relsym-cpa-fresh-shell': { a_s: CP },
       'AS8-ruleB-relsym-mv-fullpath': { '{OUT}/scratch/stage_s': CP }, 'AS8-ruleB-relsym-cpa-fullpath': { '{OUT}/scratch/a_s': CP }, 'AS8-ruleB-intodir-mv-abs': { c2: CP },
       'AS8-alias-unread-operand-cp': { g: CP },   // the alias the file names, of cp
@@ -1774,7 +1779,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 319 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 320 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived

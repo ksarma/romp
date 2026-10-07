@@ -5847,27 +5847,30 @@ function extractIn(command, ctx) {
   const hashes = ctx.hashes || new Map();
   const aliasState = ctx.aliasState || { unread: null };
   const bound = ctx.bound || new Map();
-  // RULE B: one bind helper. Key: the made path, resolved (links this command made followed) and spelled, absolute, against the cwd now. Value: the
-  // source resolved now (a symbolic link's text against the link's own directory), or null where it is not literal or cannot be resolved. Monotonic:
-  // a key keeps every value it was given.
+  // RULE B: one bind helper. Key: the made path, resolved (links this command made followed) and spelled, absolute, against the cwd now. Values: the
+  // source readings this op may land (a following copy's target, and for a cp/mv/ln/link of a made relative symlink the link's own text against its new
+  // directory too), or null where the source is not literal or cannot be resolved. Monotonic: a key keeps every value it was given.
   const bindWrite = (destText, srcW, symbolic, cwdAt, preserve = false) => {
     if (!cwdAt) return;
-    let value = null;
+    const values = new Set();
     if (srcW && srcW.literal && srcW.text && !srcW.text.includes('\0')) {
-      if (symbolic) { const parent = literalPath(path.dirname(destText), cwdAt); value = parent ? literalPath(srcW.text, parent) : null; }
+      if (symbolic) { const parent = literalPath(path.dirname(destText), cwdAt); values.add(parent ? literalPath(srcW.text, parent) : null); }
       else {
-        // RULE B (fork PR 975's round 2 gap pass, R3, 2026-10-06): a preserving op (mv, a hard `ln`, `link`, cp -a/-P/-d/-r) of a command-made RELATIVE
-        // symlink carries the link's OWN text, which re-resolves against the DESTINATION's directory, not the source's. Binding the followed source (the
-        // link's old target) let a made path the moved link now names pass the by-name lookup; resolve the link's text against the destination's directory
-        // so a made path it now names refuses. A regular-file source, or an absolute-target link, keeps the followed resolution (unchanged).
+        // RULE B (fork PR 975's round 2, R3, built BY CONSTRUCTION in round 2, 2026-10-07): a cp, mv, ln or link of a command-made RELATIVE symlink may
+        // PRESERVE the link or FOLLOW it, and the guard cannot always tell which from the spelling (cp follows by default and preserves under -a/-P/-d/-r,
+        // -R, --recursive, --archive, --no-dereference and more), so BOTH readings of the destination are bound. Bindings are MONOTONIC (a key keeps every
+        // value it is given and the bare-name lookup refuses if ANY is a writer this command made), so binding the extra reading never loses a refusal.
+        // THE LINK FOLLOWED, the source resolved now: the file a following copy lands (a regular-file source, or an absolute-target link, keeps only this).
+        // THE LINK'S OWN TEXT re-resolved against the DESTINATION's directory: the file a preserved relative symlink names from its new place, where a moved
+        // or copied link may find a path this command made. So a bare name the destination carries refuses under whichever reading the shell ran.
+        values.add(literalPath(srcW.text, cwdAt));   // the link followed
         const linkSelf = (() => { const a = activeLinks; activeLinks = null; try { return literalPath(srcW.text, cwdAt); } finally { activeLinks = a; } })();
-        const rawText = preserve && linkSelf && linkTexts.has(linkSelf) ? linkTexts.get(linkSelf) : null;
-        if (rawText != null && !path.isAbsolute(rawText)) { const destDir = literalPath(path.dirname(destText), cwdAt); value = destDir ? literalPath(rawText, destDir) : null; }
-        else value = literalPath(srcW.text, cwdAt);
+        const rawText = preserve && linkSelf && linkTexts.has(linkSelf) ? linkTexts.get(linkSelf) : null;   // `preserve`: a cp/mv/ln/link, which may keep the symlink
+        if (rawText != null && !path.isAbsolute(rawText)) { const destDir = literalPath(path.dirname(destText), cwdAt); values.add(destDir ? literalPath(rawText, destDir) : null); }   // the link's own text against its new directory
       }
-    }
+    } else values.add(null);
     const saved = activeLinks; let spelled = null; activeLinks = null; try { spelled = literalPath(destText, cwdAt); } finally { activeLinks = saved; }
-    for (const k of [literalPath(destText, cwdAt), spelled]) if (k) { let set = bound.get(k); if (!set) bound.set(k, (set = new Set())); set.add(value); }
+    for (const k of [literalPath(destText, cwdAt), spelled]) if (k) { let set = bound.get(k); if (!set) bound.set(k, (set = new Set())); for (const v of values) set.add(v); }
   };
   const builtinsOff = ctx.builtinsOff || { seen: false };   // THE SHELL'S GATE (gateBuiltins, below): `seen`, the command may run an `enable` (bash) or a `disable` or `zmodload` (zsh), which may turn a builtin on or off, so a builtin may stand under any name (THE ASSIGNING HEAD then taints every mention: mentionMayAssign)
   const ruleSafe = ctx.ruleSafe === undefined ? true : ctx.ruleSafe;   // RULE S (R1): the whole command is safe for ROOT's mention relaxation (ruleSafeOf, extractWriteTargets); inherited by every text this shell runs, recomputed for a fresh shell (recurse)
@@ -6926,11 +6929,12 @@ function extractIn(command, ctx) {
         const ops = parsed.operands || [];
         const srcText = (w) => w;   // RULE B: the source WORD, resolved by bindWrite at this moment
         const symbolicLn = name === 'ln' && args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));
-        // RULE B (R3): an op that carries a symlink unchanged (does not dereference it) re-resolves its text against the new directory: mv, a hard `ln`,
-        // `link`, and cp with -a/--archive, -P/--no-dereference, -d or -r/-R. A plain cp or install dereferences, so the copy is of the target's bytes and
-        // the followed resolution stands (preserve false). Favouring preserve where both -P and -L appear only adds refusals, never a false allow.
-        const cpPreserve = name === 'cp' && args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && /[aPdrR]/.test(a.text)) || a.text === '--archive' || a.text === '--no-dereference'));
-        const preserve = name === 'mv' || name === 'link' || (name === 'ln' && !symbolicLn) || cpPreserve;
+        // RULE B (R3, built BY CONSTRUCTION in round 2, 2026-10-07): a cp, mv, a hard `ln` or `link` MAY carry a symlink unchanged, so it re-resolves the
+        // link's text against the new directory; whether a given spelling preserves or follows (cp follows by default and preserves under -a/-P/-d/-r/-R,
+        // --recursive, --archive, --no-dereference and kin) is not always legible, so the op is marked preserve whatever its options and bindWrite binds
+        // BOTH readings (bindings are monotonic, so the extra reading never loses a refusal and the option list is not maintained). A ln -s makes the link
+        // (the symbolic branch); install dereferences, so it is not preserve.
+        const preserve = name === 'mv' || name === 'link' || name === 'cp' || (name === 'ln' && !symbolicLn);
         const bind = (text, src) => bindWrite(text, src, symbolicLn, cwd, preserve);
         // THE BOUND NAME binds the file the writer makes (fork PR 975's round 1, C, 2026-10-05; the round's fresh-1: `cp <tool> <dir>; PATH=<dir>:$PATH; <tool's
         // name>` bound `<dir>` alone, so the name met no bound path and passed while bash, zsh and dash ran the tool, where fork main refused every bare name
