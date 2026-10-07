@@ -200,8 +200,13 @@ CLASSIFIED = {
                          "(tests/test_batch_tool.py: Fixture.__init__ copies it into its dev clone, or ROMP_BATCH_REPO "
                          "names a built repository), and its runs of this checkout's copy print help or meet a planted "
                          "git first; the rest are docstrings and messages"),
-    "scripts/fork-remotes.sh": ((NOT_A_READ,), "comparisons of configuration values with origin; and a comment naming "
-                                               "a per-branch push beside the next line's `read -r` (split_hits)"),
+    "scripts/fork-remotes.sh": ((NOT_A_READ,),
+                                "read_urls's `git remote get-url --all` and `--push --all`, and the same read of "
+                                "upstream's push urls, which resolve a remote's urls from configuration and the "
+                                "legacy remote files and read HEAD and the branch it names, no remote-tracking ref, in "
+                                "the clone the script lives in (it "
+                                "cds there), which its tests build (tests/fork-remotes.bats copies it into $REPO); "
+                                "comments naming those options; and a message naming origin's url"),
     "scripts/pr-orphans.sh": ((SYNTHETIC, NOT_A_READ),
                               "reads refs/remotes/origin/$MAIN in the clone above its own scripts/ (it cds there); "
                               "tests/pr-orphans.bats copies it into a repository its setup builds, and batch.py's finish "
@@ -219,7 +224,14 @@ CLASSIFIED = {
                                                   "parses one (its [:/]); it runs no git (split_hits)"),
     "tests/bootstrap-sh.bats": ((NOT_A_READ,), "compares `git remote` of the clone made from the built origin "
                                                   "($ROMP_REPO, setup) with origin: configuration"),
-    "tests/fork-remotes.bats": ((NOT_A_READ,), "configuration values of the clone its setup builds, and a comment"),
+    "tests/fork-remotes.bats": ((NOT_A_READ,),
+                                "reads and writes of configuration in the clone its setup builds ($REPO) or in the "
+                                "test's own global config file (git_hermetic's GIT_CONFIG_GLOBAL): `config --get`, "
+                                "which reads no ref, `remote get-url --all`, which reads HEAD and the branch it names "
+                                "and no remote-tracking ref, and `config "
+                                "remote.<name>.fetch`, which writes a refspec; the legacy remote files it writes, "
+                                "chmods and removes under $REPO/.git/remotes/, which define a remote and are no "
+                                "remote-tracking ref; and expected texts naming those files"),
     "tests/gitleaks-config.bats": ((READS, SYNTHETIC, NOT_A_READ),
                                    "history_scan_range reads origin/main of the repository it is given, and the history "
                                    "case gives it ROMP_DIR, the checkout (READERS); the range's cases give it the "

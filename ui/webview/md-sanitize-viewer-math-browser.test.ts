@@ -7,7 +7,9 @@
 // openUrlView) showed bare TeX; the post-pass fixed the chat page. Before Slice 4 the files bundle had no grammar, no fill
 // and no KaTeX, and the same note kept its `$\frac{a}{b}$` as literal text in the Files pane (this leg pinned that as the
 // state of the day); Slice 4 imports the grammar module into the viewer, so files.js and feed.js carry all three and the
-// note renders the same KaTeX on every surface, which is what this leg reads now on both pages. Skips LOUDLY without a
+// note renders the same KaTeX on every surface, which is what this leg reads now on both pages. Since iOS item 6 (2026-10-02)
+// KaTeX itself is an on-demand chunk (math-chunk.ts), so the pages here serve it at /dist/math-chunk.js beside the bundle and
+// each viewer loads it the way a kernel page does, by a script tag derived from its bundle's own (chunk-url.ts). Skips LOUDLY without a
 // playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note, TESTHOST
 // paths, a placeholder sid.
 import { test } from "node:test";
@@ -16,6 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { chatBody, ATTACH_TITLE_WEB } from "../../vscode-extension/src/page-skeleton";
+import { chunkBundle } from "./math-chunk-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 // resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
@@ -86,9 +89,13 @@ async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise
 test("a note's math renders as KaTeX in the chat page's viewer (the render bundle) AND in the Files pane (the files bundle): one grammar, one fill, every surface (Slice 4, decision 1)", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const renderJs = bundle("render.ts"), filesJs = bundle("files.ts");
-    // both bundles carry the grammar's placeholder class and KaTeX's own text: the viewer's import of md-config.ts brings them
-    assert.ok(filesJs.includes("md-math-inline") && filesJs.includes("KaTeX parse error"), "files.js carries the math grammar and KaTeX (Slice 4, decision 1; before it neither)");
-    assert.ok(renderJs.includes("md-math-inline") && renderJs.includes("KaTeX parse error"), "render.js carries both");
+    const chunk = chunkBundle();
+    assert.ok(!("error" in chunk), "the KaTeX chunk builds: " + ("error" in chunk ? chunk.error : ""));
+    const chunkJs = (chunk as { js: string }).js;
+    // both bundles carry the grammar's placeholder class (the viewer's import of md-config.ts brings it); KaTeX's own text is the chunk's
+    assert.ok(filesJs.includes("md-math-inline") && !filesJs.includes("KaTeX parse error"), "files.js carries the math grammar and no KaTeX (Slice 4, decision 1; iOS item 6)");
+    assert.ok(renderJs.includes("md-math-inline") && !renderJs.includes("KaTeX parse error"), "render.js the same");
+    assert.ok(chunkJs.includes("KaTeX parse error"), "the chunk carries KaTeX");
 
     // 1. the chat page: a same-origin .md link in a message opens the note in the viewer (openUrlView), and its formulas are KaTeX
     {
@@ -100,6 +107,7 @@ test("a note's math renders as KaTeX in the chat page's viewer (the render bundl
         if (u.hostname !== "romp.test") return route.fulfill({ status: 404, body: "" });
         if (u.pathname === "/chat") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: CHAT_HTML(STYLES) });
         if (u.pathname === "/dist/render.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: renderJs });
+        if (u.pathname === "/dist/math-chunk.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: chunkJs });
         if (u.pathname === "/docs/note.md") return route.fulfill({ status: 200, contentType: "text/markdown; charset=utf-8", body: NOTE });
         return route.fulfill({ status: 404, body: "" });
       });
@@ -134,6 +142,7 @@ test("a note's math renders as KaTeX in the chat page's viewer (the render bundl
         const u = new URL(route.request().url());
         if (u.pathname === "/files") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: FILES_HTML });
         if (u.pathname === "/dist/files.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: filesJs });
+        if (u.pathname === "/dist/math-chunk.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: chunkJs });
         if (u.pathname === "/file" && u.searchParams.get("path") === FILE_PATH) {
           return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }, body: NOTE });
         }

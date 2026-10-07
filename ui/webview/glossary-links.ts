@@ -115,9 +115,11 @@ export function scanTerms(text: string, m: TermMatcher, seen: Set<GlossaryEntry>
   return out;
 }
 
-/** Where a term is never linked: code and pre, any link (a path link included), headings, math, SVG, an existing term
- *  link, and the popover cards (a previewed glossary file's own text would otherwise link itself). */
-export const TERM_SKIP_SELECTOR = "code, pre, a, .file-uri-link, h1, h2, h3, h4, h5, h6, .katex, svg, .term-link, .cmt-pop, .file-preview-pop";
+/** Where a term is never linked: code and pre, any link (a path link included), headings, math (laid out, or a formula still
+ *  waiting for the math renderer: math.ts's placeholder, whose text the renderer's layout replaces, so a link made inside it
+ *  would vanish at the arrival with the message's one first-mode link spent; the review of iOS item 6, round 1), SVG, an
+ *  existing term link, and the popover cards (a previewed glossary file's own text would otherwise link itself). */
+export const TERM_SKIP_SELECTOR = "code, pre, a, .file-uri-link, h1, h2, h3, h4, h5, h6, .katex, .md-math-inline, .md-math-display, svg, .term-link, .cmt-pop, .file-preview-pop";
 
 /** Link the terms in `root`'s text nodes: each span becomes the node `make` returns (the caller dresses it). One
  *  `seen` set per call = per message, the unit of the `first` mode. Returns the count linked. */

@@ -19,6 +19,7 @@ import hljs from "highlight.js/lib/core";
 import { marked, type Token, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
+import { onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR, asSettleFill } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody); both bodies are repainted by their own settle handlers (MATH_REPAINT_ATTR), a parked repaint as if inside the settle (asSettleFill)
 import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
@@ -104,8 +105,8 @@ function langFor(path: string): string | null {
 // plans/markdown-viewer.md): GFM without hard breaks, strikethrough on DOUBLE tildes only, the math placeholders
 // KaTeX fills after the sanitize, front matter, footnotes, callouts, ==mark==, wikilinks and embeds. render.ts and
 // anchor-map.ts make the same call; the first configures and the rest are no-ops, so this module is correct in
-// any bundle it lands in (files.js and feed.js carry the grammar, the fill and KaTeX through this import; the
-// chat page's viewer parsed with the chat's grammar before, the other two with none).
+// any bundle it lands in (files.js and feed.js carry the grammar and the fill through this import, with KaTeX in
+// the on-demand math-chunk.js; the chat page's viewer parsed with the chat's grammar before, the other two with none).
 applyMdConfig();
 
 // ── view-format preferences ────────────────────────────────────────────────────────────────────────
@@ -322,6 +323,23 @@ function loaderEl(): HTMLElement {
   load.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
     + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
   return load;
+}
+
+// A Rendered paint held for the math renderer (both viewers' renderBody: a block with a formula still waiting) over a body that
+// shows something else, the rows of a Raw pick or an earlier paint: the romp loader goes up over it, so the pressed Rendered button
+// and the body agree and the wait shows the loader (ui/CLAUDE.md's loading rule; the review of iOS item 6, round 1: the Raw rows
+// stood under a pressed Rendered button, no loader, until the chunk landed, up to the 60 s backstop). The rows stay in place,
+// hidden and inert (visibility, so they keep their boxes and take no click, selection or quote gesture), and the loader rides in a
+// zero-height sticky first child of the body, so nothing moves and keptPlace and the seat, which read the rendered root or the Raw
+// rows and never a .fileview-load, read the place under it as before. Whatever ends the hold paints through replaceChildren (the
+// arrival, a Raw pick, the failure's paint), which takes the loader and the hidden rows with it. A body that already shows the
+// loader (an open's) or this overlay is left as it is.
+function holdOverBody(body: HTMLElement): void {
+  if (body.querySelector(":scope > .fileview-load, :scope > .fileview-math-wait")) return;
+  for (const c of Array.from(body.children)) { (c as HTMLElement).style.visibility = "hidden"; c.setAttribute("inert", ""); }
+  const wait = el("div", "fileview-math-wait");
+  wait.appendChild(loaderEl());
+  body.prepend(wait);
 }
 
 // The 2 MB body cap for a URL document — a MIRROR of the kernel's _TEXT_MAX_BYTES (kernel.py), which
@@ -1894,6 +1912,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
+  body.setAttribute(MATH_REPAINT_ATTR, "");   // the renderer's arrival leaves a failed load's sources here to this viewer's own repaint (math.ts MATH_REPAINT_ATTR), which waits out a press (mathHold)
   // A Tab stop, so the scroll box can hold the keyboard (plans/markdown-viewer.md Slice 6, item 1): PageDown, Space, the
   // arrows, Home and End then scroll it natively, and takeKeyboard below gives it the keyboard after a paint the reader asked
   // for. Set once per open and never touched again: the Comments panel's press-time strip (file-comments.ts pressedMarks)
@@ -2635,6 +2654,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     offer.title = "Save this file to your device";
     offer.addEventListener("click", () => startDownload(dlUrl, offer));
     why.appendChild(offer);
+    endHold();                                  // the pane takes the body: a hold ends here (endHold)
     body.replaceChildren(why);
     viewError = words;                          // the pane's paint: the seam's error() answers its sentence until a content paint clears it (Slice 7, item 3)
     if (isSvgImage) armWayBack();               // the pane after a re-ask: the reconnect-class events and the kernel's messages bring the picture back
@@ -2652,6 +2672,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // and error() stays null through the wait, as over any loader. A press of the Source toggle during the wait drops the answer
   // (fetchFile's `view`): the Source view stands, and the picture loads afresh when the person returns to it.
   const reaskPicture = () => {
+    endHold();                                  // the loader takes the body: a hold ends here (endHold)
     body.replaceChildren(loaderEl());
     fireReplaced();
     fetchFile(true);
@@ -2675,6 +2696,64 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
   // in the click handler — the immediate acknowledgement ui/CLAUDE.md requires — and so does the content
   // swap, since the text is already in memory.
+  // A Rendered paint of a note with math made before the math renderer is in (math.ts: KaTeX is an on-demand chunk) is HELD,
+  // and the renderer's arrival paints again, so a note's first paint is its final one. On an open the body keeps the romp
+  // loader; over anything else (a reload's previous paint, a Raw pick's rows) the loader goes up as an overlay with what the
+  // body showed hidden under it (holdOverBody). One paint, the hooks once, and the anchor map, the reader's place and the
+  // comment paint never meet a formula still waiting for its layout. A failed load paints the same way, each formula as its
+  // source. math.ts's backstop counts 60 s from the chunk's request, and the request waits for the page's load event: before
+  // that event nothing bounds the hold, and Raw, or closing the viewer, is the way out. The open's target waits with the
+  // paint: landTarget stands down while a paint is held, its heading and offset kept pending, and the arrival lands them after
+  // its paint (renderBody spends the heading at a paint that can land it; the offset and the keyboard are landTarget's alone),
+  // as does a paint that ends the hold first (a Raw pick while the chunk loads: renderBody's `ends`).
+  // Before, the landing spent both over the loader: the heading's frame found no section and said the note had none, the
+  // offset found no rendered root and landed nothing, and the arrival's paint opened the note at its top.
+  // A failed load paints at once, each formula as its marked source (math.ts: nothing waits on a retry), and a later success
+  // repaints a paint that shows one (mathFailedIn), through renderBody like a held paint's arrival, so the reader's place is read
+  // off the source paint and seated in the new one and the hooks run over the laid-out formulas (round 1 of the PR's review: a
+  // failed load is retried).
+  // The hold ends wherever the body is taken outside renderBody (the PR's review, round 2, correctness-1: a reload that failed
+  // during the hold painted its pane, and the arrival then painted the last text over it, the seam's error() cleared with no
+  // gesture of the reader's). endHold runs at every such paint: the fetch chain's failure pane, the editor's entry (its loader,
+  // its host, the plain fallback), and the media paints a hold cannot meet, since a hold is a markdown note's Rendered paint and
+  // they need the same open to have landed a picture or a PDF (a picture's failure pane, the svg re-ask's loader, the PDF pages'
+  // loader and fallback, and renderBody's own media branch, the one paint inside it that sets no mathHeld). What the held landing
+  // kept (landTarget's heading, offset and keyboard) stays owed (landOwed) to the next text paint, as renderBody's `ends` lands it
+  // after a Raw pick, so the editor's Cancel lands an open's offset as it did before the arrival could spend it into the editor.
+  let mathHeld = false;
+  let landOwed = false;
+  const endHold = (): void => { if (mathHeld) { mathHeld = false; landOwed = true; } };
+  // The arrival's repaint waits out a press on the card, as a reload's landing does (the PR's review, round 2, ui-1: a press on an
+  // Outline row or a link when a retry's success landed lost its click, the repaint having removed the pressed node; ui/CLAUDE.md,
+  // click-safe). It has a hold of its own (mathHold, on the card like the landing's), since the card's hold parks one run at a time
+  // and the repaint must never displace a landing parked under the same press. What to repaint is decided at the settle, before
+  // math.ts lays out anything in the document: a held paint (mathHeld), or the paint whose root shows a failed load's sources. The
+  // run re-checks when it fires: the viewer still up (wrap.isConnected), and no paint since the settle (a Raw pick, a takeover, or a
+  // landing parked under the same press, which runs first, its release listener installed first, and paints with the renderer in).
+  // Its fill runs as one inside the settle (math.ts asSettleFill), so a failure's repaint parked under a press uses no retry at the
+  // release, as it uses none with no press (the check of round 2's pass: the release sent a second request and logged a second line).
+  // A run parked under a press on the Outline button runs after the release's click opened the popover, and its paint closes it
+  // (renderBody's closeOutline), so the click appeared to do nothing (the PR's review, round 3, ui-1). It opens the popover again
+  // after the paint exactly as the text landing does (fetchFile, reopenOutline): `parked` read when the settle defers the run, the
+  // popover read before the paint; a press on a row, or on the button with the popover up, leaves it closed, and a run with no
+  // press under way closes an open popover as every paint does.
+  const mathHold = pressHold(box);
+  closeHooks.push(onMathSettled(() => {
+    const held = mathHeld;
+    const shown = !held && shownText !== null && mathFailedIn(body) ? body.querySelector(":scope > .fileview-md") : null;
+    if (!held && !shown) return;
+    const parked = mathHold.held();   // the run parks under a press now under way (the landing's `parked`, land)
+    void mathHold.defer(() => {   // a throw from the run (renderBody catches its build and swap; one past them is a bug) rejects: a page error
+      if (!wrap.isConnected) return;
+      if (held ? !mathHeld : !shown || shown.parentNode !== body) return;   // a paint since the settle: what it painted stands
+      const reopen = parked && outline !== null;   // read before the paint closes it (fetchFile's reopenOutline)
+      asSettleFill(() => {
+        if (held) { mathHeld = false; renderBody(); landTarget(); }
+        else renderBody();
+      });
+      if (reopen) openOutline();                   // after the paint and the held branch's landing, on the repainted body
+    });
+  }));
   const renderBody = () => {
     const rendered = isMd && fmt.md === "rendered";
     for (const [mode, b] of segBtns) {
@@ -2710,7 +2789,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.setAttribute("aria-pressed", String(svgSource));
       syncViewGroup();                        // the Source button was decided after the group's read above: the group follows it
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
-      viewError = null;                       // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3)
+      viewError = null; endHold();            // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3), and no hold stands over it (endHold)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body
       // with a box, names it in the notice bar (the PR review's round 1; the review's round 3 had the heading judged here)
       if (svgSource && svgText !== null) {
@@ -2763,11 +2842,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // the line says why rows show), the Raw click paints rows without the line, the Rendered click tries again. The editor's
     // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
     // paint that stands does.
+    let held = false;                         // this paint waits for the math renderer (mathHeld above)
+    const ends = mathHeld || landOwed;        // a held paint before this one, or a hold a takeover ended (endHold): if this one stands, what that paint's landing kept lands after it
     perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
       try {
-        body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+        const block = rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true);   // long lines always soft-wrap (the user 2026-08-24)
+        mathHeld = held = rendered && mathPendingIn(block);   // a formula waiting for the renderer: nothing is swapped, the arrival paints
+        if (held) { holdOverBody(body); return; }             // over rows a Raw pick left (or an earlier paint): the loader, the rows hidden under it
+        body.replaceChildren(block);
         renderFell = null;
       } catch (err) {
         const fell = fellMessage(err);
@@ -2784,7 +2868,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
       landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
+    if (held) return;                         // the heading waits for the paint the renderer's arrival makes
     if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
+    if (ends && !mathHeld) { landOwed = false; landTarget(); }   // a paint that ends a hold before the renderer arrives (a Raw pick while the chunk loads), or the first text paint after a takeover ended one (the editor's exit): the offset and the keyboard the held landing kept land over it, since no arrival paints after it
   };
   // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
   // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Never spent over
@@ -2801,7 +2887,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (h === null) return;
     requestAnimationFrame(() => {
       if (wrap.isConnected && unmeasurable()) { pendingHeading = h; return; }   // no box yet: held for the show's repaint (landTarget)
-      if (!wrap.isConnected || scrollToFragment(body, h)) return;
+      if (!wrap.isConnected) return;
+      if (scrollToFragment(body, h)) { notePlace(); return; }   // landed: the place it shows is the one a width repaint seats (landTarget's comment)
       // the section is there but under a plain `hidden` wrapper (an author's stashed section; the landing lifts `until-found` alone, as
       // the browser's own does): no box to land on (scrollToFragment lands nothing), so the note stays at its top and the notice says so
       // (the PR review's round 1: the open landed at the top with no word; "No section named" would be false of it, and the Outline
@@ -4074,6 +4161,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // moves the kept frame: the notice and the loader come and go around it inside pdfBlock's column, and the chunk's
   // host is laid out after the column rather than inside it.
   const showPdfPages = () => {
+    endHold();                                 // the pages, or their fallback frame, take the body: a hold ends here (endHold)
     notePdfPage();                             // a reload with the panel open: the pages come back where they were
     dropPdf();
     const blob = mediaBlob; const url = objUrl;
@@ -4173,6 +4261,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     ta.addEventListener("keydown", (e) => {     // the editor's own save chord; Esc falls through to onKey
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); doSave(); }
     });
+    endHold();                                  // the editor takes the body: a hold ends here (endHold)
     body.replaceChildren(ta);
     ta.focus();
   };
@@ -4214,11 +4303,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const wait = el("div", "fileview-load");
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
       + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+    endHold();                                  // the editor's loader takes the body: a hold ends here, its landing owed to the exit's paint (endHold)
     body.replaceChildren(wait);
     const my = ++editSeq;
     editorChunk().then((ed) => {
       if (!editing || my !== editSeq) return;   // edit mode left (or re-entered) while the chunk loaded
       const host = el("div", "fileview-cm");
+      endHold();                                // the editor takes the body: a hold ends here (endHold)
       body.replaceChildren(host);
       cm = ed.mount(host, {
         text: norm(text!), ext: path.slice(path.lastIndexOf(".") + 1),
@@ -4723,10 +4814,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     spendOnMedia();
     keyboardOnLanding();
   };
+  // The offset's landing, a frame after the paint, notes the place it lands on (notePlace), as landRemembered's seat does, and so does
+  // the heading's (spendHeading): the width hook's repaint seats the place last noted, and a paint that changed the body's width (a
+  // classic scrollbar coming with the text's overflow, which headless Chromium hides and desktop browsers and Playwright's WebKit
+  // show) reaches that repaint in the frame after the landing's, its scroll event not yet read, so the repaint seated the place the
+  // paint had read at the note's top and put the note back there (the check of round 2's pass: a math note opened at a heading or an
+  // offset before the renderer was in, Cancel out of the editor, and a Raw pick that ended a hold all landed and were sent back to the
+  // top in WebKit, as was a note with no formula whose text came after the open's first frame, at fork main too; a held paint always
+  // meets it, the loader standing for frames before the text and its scrollbar arrive). The line's landing scrolls in the paint's own
+  // task, before the width's report, and its scroll is read in time (measured: it lands in both engines without a note).
   const landTarget = (): void => {
-    if (unmeasurable()) return;
+    if (unmeasurable() || mathHeld) return;   // no box, or a paint held for the math renderer (renderBody): the pendings wait for the paint that can land them
     if (pendingLine !== null) { const n = pendingLine; pendingLine = null; scrollToLine(n); }
-    if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) scrollToSourceOffset(n); }); }
+    if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) { scrollToSourceOffset(n); notePlace(); } }); }
     if (pendingHeading !== null && (!isMd || fmt.md === "rendered")) spendHeading();
     keyboardOnLanding();
   };
@@ -4912,6 +5012,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (!inView()) { rearmDiskBar(my); return; }              // …nor over the Source view a press put up while a fetch that asked again was out, the changed-on-disk bar armed again as at a failure…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
+      endHold();                                                // the pane below takes the body: a hold ends here, so the renderer's arrival paints no text over it (endHold; the PR's review, round 2)
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
       why.textContent = msg;
@@ -5098,6 +5199,7 @@ export function openUrlView(href: string): void {
 
   const body = el("div", "fileview-body");
   const stampBodyWidth = watchBodyWidth(body);        // the body's content width, for a top-level table's cap (the sheets read --fv-body-w)
+  body.setAttribute(MATH_REPAINT_ATTR, "");             // the renderer's arrival leaves a failed load's sources here to this viewer's own repaint (math.ts MATH_REPAINT_ATTR; mathHold below)
   textSize.bindWheel(body);                            // Ctrl/Cmd + wheel over the text steps the size
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
   // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
@@ -5151,6 +5253,20 @@ export function openUrlView(href: string): void {
     else heldPlace = null;
   };
   body.addEventListener("scroll", () => { if (heldPlace && body.scrollTop !== heldScrollTop) heldPlace = null; }, { passive: true });
+  let mathHeld = false;                                // a Rendered paint waiting for the math renderer: the local viewer's hold (renderBody there)
+  // and a paint a failed load left with sources, repainted by a later success: decided at the settle, run through this viewer's own
+  // press hold on the card and re-checked when it fires (the local viewer's mathHold says why)
+  const mathHold = pressHold(box);
+  closeHooks.push(onMathSettled(() => {
+    const held = mathHeld;
+    const shown = !held && shownText !== null && mathFailedIn(body) ? body.querySelector(":scope > .fileview-md") : null;
+    if (!held && !shown) return;
+    void mathHold.defer(() => {   // a throw from the run rejects: a page error (the local viewer's)
+      if (!wrap.isConnected) return;
+      if (held ? !mathHeld : !shown || shown.parentNode !== body) return;   // a paint since the settle: what it painted stands
+      asSettleFill(() => { mathHeld = false; renderBody(); });   // as inside the settle: no retry (the local viewer's)
+    });
+  }));
   const renderBody = () => {
     for (const [mode, b] of segBtns) {
       const on = fmt.md === mode;
@@ -5167,9 +5283,12 @@ export function openUrlView(href: string): void {
       // throws paints the RENDER_FELL line and the document's text as Raw rows under it, the message recorded once that fallback
       // stands (fellMessage; the local viewer's header), and a throw from that fallback propagates over the previous paint.
       try {
-        body.replaceChildren(fmt.md === "rendered"
+        const block = fmt.md === "rendered"
           ? mdBlock(text, { kind: "url", href: loc })  // relative refs resolve against where it LIVES
-          : codeBlock(text, parts.base, true));        // basename → langFor → markdown highlighting
+          : codeBlock(text, parts.base, true);         // basename → langFor → markdown highlighting
+        mathHeld = fmt.md === "rendered" && mathPendingIn(block);   // a formula waiting for the renderer: nothing is swapped, the arrival paints
+        if (mathHeld) { holdOverBody(body); return; }  // over rows a Raw pick left: the loader, the rows hidden under it (the local viewer's)
+        body.replaceChildren(block);
         renderFell = null;
       } catch (err) {
         const fell = fellMessage(err);
@@ -5205,6 +5324,7 @@ export function openUrlView(href: string): void {
     hint.textContent = href;
     why.appendChild(hint);
     why.appendChild(linkOut());
+    mathHeld = false;                                  // the pane takes the body: no hold stands over it (the local viewer's endHold; this viewer paints a pane only before its one text lands, so no hold meets it)
     body.replaceChildren(why);
   };
   const hostWord = (u: string) => urlTitleParts(u).dir.split("/")[0] || u;
@@ -5684,11 +5804,11 @@ function dropPressThrough(root: Element): void {
 const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
   "branch-chips", "chat-theme-yatharth", "cite-preview", "cmt-pop", "cmt-rail", "cmt-tick", "code-copy", "col-dragging",
   "ctx-menu", "ctx-sub", "ctx-text", "dot", "dot-nav", "drop-over", "emoji-sec-h", "fc-float", "fconfirm-back", "feed-col",
-  "feed-col-head", "feed-sessmenu", "feed-toast", "file-preview-pop", "fileview-btn", "fileview-gutter", "fileview-outline",
-  "fileview-zoom-menu", "fitem-absorbing", "fl-hover", "focus-gutter", "fv-figopen", "glow-ruler", "locate-toast", "mention-pop",
-  "meta-menu", "meta-sub", "on", "pickdlg-overlay", "picker-dir-menu", "picker-overlay", "rail-band", "rail-day", "rail-ring",
-  "rail-sticky", "romp-tip", "romp-tl-tip", "rs-sub", "scroll-marks", "slash-pop", "tab-tip", "time-marker", "tx-landing-notice",
-  "tx-loading-anchor", "unread"
+  "feed-col-head", "feed-sessmenu", "feed-toast", "file-preview-pop", "fileview-btn", "fileview-gutter", "fileview-math-wait",
+  "fileview-outline", "fileview-zoom-menu", "fitem-absorbing", "fl-hover", "focus-gutter", "fv-figopen", "glow-ruler",
+  "locate-toast", "mention-pop", "meta-menu", "meta-sub", "on", "pickdlg-overlay", "picker-dir-menu", "picker-overlay",
+  "rail-band", "rail-day", "rail-ring", "rail-sticky", "romp-tip", "romp-tl-tip", "rs-sub", "scroll-marks", "slash-pop",
+  "tab-tip", "time-marker", "tx-landing-notice", "tx-loading-anchor", "unread"
 ]);
 /** The classes the page's sheets would make a stacking context around a picture, beyond the classes the other lists take (the file
  *  review's round 17, extra9-1, and the coordinator's decision 4 on it): each class a rule of a sheet some page of either host loads

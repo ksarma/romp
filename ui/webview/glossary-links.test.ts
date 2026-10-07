@@ -59,7 +59,7 @@ test("a linked term is a path link to the glossary's section and nothing more: n
   assert.ok(!RENDER.includes("termContent("), "…and nothing fills a card from the index");
   assert.match(RENDER, /s\.dataset\.path = m\.index\.path; s\.dataset\.frag = e\.slug;\s*\n\s*s\.dataset\.preview = "markdown";/, "the span carries the glossary path, the slug as the section and the kind the kernel judged");
   assert.ok(!/s\.title = e\.plainWords/.test(RENDER), "no native title beside the hover card: one mechanism");
-  assert.match(TERM_SKIP_SELECTOR, /code, pre, a, \.file-uri-link, h1, h2, h3, h4, h5, h6, \.katex, svg, \.term-link, \.cmt-pop, \.file-preview-pop/);
+  assert.match(TERM_SKIP_SELECTOR, /code, pre, a, \.file-uri-link, h1, h2, h3, h4, h5, h6, \.katex, \.md-math-inline, \.md-math-display, svg, \.term-link, \.cmt-pop, \.file-preview-pop/);
   // the dress: a link like any link (the user 2026-09-12): the link colour token, a solid underline, the pointer
   assert.match(CSS, /\.term-link \{ color: var\(--link\); text-decoration: underline solid; text-underline-offset: 2px; cursor: pointer; \}/);
   assert.ok(!/\.term-link[^\n]*dotted/.test(CSS) && !/\.term-link[^\n]*cursor: help/.test(CSS), "no dotted underline, no help cursor");

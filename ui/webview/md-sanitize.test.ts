@@ -341,16 +341,25 @@ test("the math fill is registered as a sanitizeMd post-pass by the module that i
   assert.match(grammar, /import \{ mathBlock, mathInline, renderMathPlaceholders \} from "\.\/math";/);
   assert.match(grammar, /import \{ registerMdPostPass \} from "\.\/md-sanitize";/);
   assert.match(grammar, /^registerMdPostPass\(renderMathPlaceholders\);$/m);
-  assert.doesNotMatch(read("render.ts"), /renderMathPlaceholders\(|from "\.\/math"/, "render.ts renders no math of its own: the fill rides every sanitizeMd call");
-  assert.doesNotMatch(read("file-view.ts"), /renderMathPlaceholders|from "\.\/math"|from "\.\/chat-md"/, "the viewer imports no grammar of its own: md-config.ts, which it applies, carries the grammar and its fill into every bundle that hosts it (Slice 4 of plans/markdown-viewer.md)");
+  assert.doesNotMatch(read("render.ts"), /renderMathPlaceholders\(/, "render.ts renders no math of its own: the fill rides every sanitizeMd call");
+  assert.doesNotMatch(read("file-view.ts"), /renderMathPlaceholders|from "\.\/chat-md"/, "the viewer imports no grammar of its own: md-config.ts, which it applies, carries the grammar and its fill into every bundle that hosts it (Slice 4 of plans/markdown-viewer.md)");
+  // what each renderer does take from math.ts since KaTeX became an on-demand chunk (iOS item 6): the arrival's hook, the
+  // pending test and the failed-source test (a later success lays those out: round 1 of the PR's review), and the viewer the
+  // attribute its bodies wear for its own repaint at the arrival and the door its parked repaint fills through as if inside the
+  // settle (round 2), and nothing else (render-math.test.ts pins the one
+  // import line in each)
+  for (const [f, names] of [["render.ts", "onMathSettled, mathPendingIn, mathFailedIn"], ["file-view.ts", "onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR, asSettleFill"]]) {
+    assert.deepEqual(read(f).match(/^import [^\n]* from "\.\/math";/gm), ['import { ' + names + ' } from "./math";'], f + " takes the arrival's hook from math.ts, no grammar and no fill");
+  }
 });
 
-test("the feed bundle carries the sanitizer, the grammar, the fill and KaTeX: every bundle that hosts the viewer renders math (Slice 4 of plans/markdown-viewer.md, decision 1)", () => {
+test("the feed bundle carries the sanitizer, the grammar and the fill, with KaTeX left to its on-demand chunk: every bundle that hosts the viewer renders math (Slice 4 of plans/markdown-viewer.md, decision 1; iOS item 6)", () => {
   // What the import pins above promise, checked on the built graph: esbuild's metafile lists every module the feed
   // entry pulls in. file-view.ts brings md-sanitize.ts (the viewer renders notes in the feed page too) and md-config.ts,
-  // which brings math.ts and the katex package (before Slice 4 the feed bundle had none of the three and a note's
-  // formulas showed as bare TeX there); chat-md.ts, the chat's own user-bubble renderer, and render.ts stay the chat
-  // bundle's alone (math-bundles.test.ts holds the same for files.js and render.js).
+  // which brings math.ts (before Slice 4 the feed bundle had neither and a note's formulas showed as bare TeX there); the
+  // katex package it brought too until KaTeX became its own chunk, which math.ts loads at the first formula
+  // (math-lazy.test.ts); chat-md.ts, the chat's own user-bubble renderer, and render.ts stay the chat bundle's alone
+  // (math-bundles.test.ts holds the same for files.js, waiting.js, artifacts.js and render.js).
   const EXT = process.cwd();                                      // npm test runs in vscode-extension
   const esbuild = createRequire(path.join(EXT, "package.json"))("esbuild");   // the extension's esbuild, wherever this bundle was written
   const r = esbuild.buildSync({
@@ -362,7 +371,7 @@ test("the feed bundle carries the sanitizer, the grammar, the fill and KaTeX: ev
   assert.ok(inputs.some((f) => f.endsWith("ui/webview/file-view.ts")));
   assert.ok(inputs.some((f) => f.endsWith("ui/webview/md-config.ts")), "the one configuration, the grammar and its fill's registration");
   assert.ok(inputs.some((f) => f.endsWith("ui/webview/math.ts")), "the math grammar and the fill");
-  assert.ok(inputs.some((f) => /node_modules\/katex\//.test(f)), "KaTeX, the library behind the fill");
+  assert.ok(!inputs.some((f) => /node_modules\/katex\//.test(f)), "no KaTeX: the library behind the fill is the on-demand chunk's");
   const stray = inputs.filter((f) => /ui\/webview\/(chat-md|render)\.ts$/.test(f));
   assert.deepEqual(stray, [], "the chat's own renderers ride in no other bundle");
 });
