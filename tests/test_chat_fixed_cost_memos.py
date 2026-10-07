@@ -591,13 +591,38 @@ _RECORD_KEYS = ("task_outs", "pl_pending", "pl_at", "pl_check", "postal_any", "p
 
 class PostalSigMemo(unittest.TestCase):
     """The chat signature's postal component (_chat_sig_deps) over a cached build's record: the card values are
-    memoized on the record, keyed on the names digest, the postal index and the caption map, so a cycle whose
-    inputs held does not walk the cards again, while the caption map is still fetched every cycle. The record is
-    the real one (_chat_build_deps over a payload of cards), the index the real one over a messages log in a
+    memoized on the record, keyed on the names digest, the postal index and, for a record with a message-id card,
+    the caption map, so a cycle whose inputs held does not walk the cards again. Such a record still fetches the
+    caption map every cycle; a record with no message-id card never fetches it and is not keyed on it. The record
+    is the real one (_chat_build_deps over a payload of cards), the index the real one over a messages log in a
     rebound state root, the caption map a dict the test replaces when its content changes and keeps otherwise
     (the union's own rule), and each cycle opens the pusher's scopes: a new names snapshot and an empty caption
     slot. Every value is held against an evaluation with no memo: the same function over a copy of the record
-    made of its build-time fields, and the walk itself over the same cards."""
+    made of its build-time fields, and the walk itself over the same cards.
+
+    The memo keys and their dimensions, derived from the code (_names_scope_digest, _name_color_by_name,
+    _postal_card_deps_memo and their call sites). Each dimension has a test at the end of this class that changes
+    only that dimension and asserts the miss and a tail equal to the unmemoized one:
+    - The digest cache (_live_scope.names_digest, one entry per thread): the snapshot object, by identity. The
+      thread is not a dimension. The cache is per thread so that two threads' snapshots do not evict each other,
+      and a cache shared by every thread with the same identity match gives the same answers.
+    - The names digest, which the two keys below share: a digest of [sid, fields] for each entry, in the
+      snapshot's order. Its dimensions are each entry's sid, name (parts[0]), working directory (parts[1]), colour
+      (parts[2]) and the fields from parts[3] on (the foreground colour and anything after it), and the order of
+      the entries. An entry added or removed moves the sids and the values together, so it is not a separate
+      dimension.
+    - The colour index (_name_color_index, one entry shared by every thread): the names digest. The index reads the
+      names, the colours and the order. It never reads the sid, the working directory or the later fields, so a
+      key without one of those gives the same answers, and only the index's rebuild shows the difference.
+    - The record's entry (deps["postal_memo"]): the names digest, the postal index by identity, the caption map by
+      identity for a record with a message-id card, and the record itself, since the entry is stored on it.
+      Through the digest the walk reads an incoming card's sender by sid (its name and colour) and an outgoing
+      card's recipient by name (the first entry in order carrying it, and its colour); no card reads the working
+      directory or the later fields. Whether a record has a message-id card is learned on its first walk and is
+      fixed for the record's life.
+    A dimension that no reader reads cannot give a stale value, so its pin can go red only on the miss. Such a
+    pin says that the key covers the whole entry; a key narrowed to the fields the readers read would turn it red,
+    and the narrowing would have to remove it on purpose."""
 
     def setUp(self):
         td = tempfile.TemporaryDirectory()
@@ -610,6 +635,9 @@ class PostalSigMemo(unittest.TestCase):
         km.NAMES = self.root / "names"
         km.NAMES.mkdir()
         km._postal_index_memo[0] = None
+        idx = getattr(km, "_name_color_index", None)
+        if idx is not None:                      # a tree without the index has no slot (the base, for the red runs)
+            idx[0] = None
         self.fetches = [0]
         self.cmap = {}
 
@@ -899,6 +927,239 @@ class PostalSigMemo(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual((got[0], got[1]), (got[2], got[3]))
         self.assertNotEqual(got[0], got[1], "the two snapshots colour the cards differently")
+
+    # -- review round 1: a record with no message-id card, and one pin per dimension of every memo key ------------
+    def test_a_record_whose_cards_carry_no_message_id_walks_once_and_never_fetches_the_caption_map(self):
+        """A record none of whose postal cards carries a mid: the walk never fetches the caption map, so the
+        record's entry holds no map and its key is the names digest and the index alone (_postal_card_deps_memo,
+        `hit[3]`). Three scoped cycles over the same registry and the same log, the caption map replaced before
+        each, as in a cycle where a discovered session wrote: one walk in total, the first check's, and no caption
+        fetch, the build's included. The last state's tail is held against the unmemoized check. Red at the base
+        (a walk every cycle), and under a memo that fetches the map on every hit or whose entry always claims a
+        mid: either one puts the map in this record's key, so each replaced map makes it miss."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=OTHER_A, body="the schema?", t=1)   # a log: the index holds
+        cards = [self.card(direction="out", peer="tests"), self.card(direction="in", peer="api")]
+        rec = self.record(cards)
+        self.assertEqual([c for c in rec["postal_cards"] if c.get("mid")], [], "precondition: no card carries a mid")
+        names = [(PEER, ["api", "/tmp/notes-api", "#abcdef"]), (OTHER_A, ["tests", "/tmp/notes-api", "#123456"])]
+        for i in range(3):
+            self.cmap = {"m1": "api: caption %d" % i}
+            self.cycle(names)
+            km._chat_sig_deps(SID_A, rec)
+        self.assertEqual((self.reads[0], self.fetches[0]), (len(cards), 0),
+                         "(cards read, caption fetches) over three cycles: one walk and no fetch")
+        tail = self.held(rec, "the last state")
+        self.assertEqual(self.fetches[0], 0, "no check of this record fetches the caption map")
+        self.assertEqual(tail[2][1], ((None, None, _bg("#123456")), (None, None, None, None)),
+                         "the recipient's colour; an incoming card with no mid embeds nothing")
+
+    API = (PEER, ["api", "/tmp/notes-api", "#abcdef", "#ffffff"])
+    TESTS = (OTHER_A, ["tests", "/tmp/notes-api", "#123456", "#ffffff"])
+
+    def keyed(self):
+        """The dimension pins' record: an incoming m1 card from PEER and an outgoing card to "tests" with no mid, so
+        the walk reads a sender by sid (_name_of, _name_color) and a recipient by name (_name_color_by_name)."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        return self.record([self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", peer="tests")])
+
+    def probe(self, rec, names, why):
+        """One scoped cycle over `names` in a snapshot that counts its walks: the memoized check counted alone, then
+        held(). Returns the cards that check read, the snapshot's walks during it ("items" for a serialization by
+        _names_scope_digest, "values" for a colour index build) and the tail."""
+        walks = []
+        self.cycle(names)
+        km._live_scope.names = _WalkCountingSnap(km._live_scope.names, walks)
+        before = self.reads[0]
+        km._chat_sig_deps(SID_A, rec)
+        read, seen = self.reads[0] - before, list(walks)
+        return read, seen, self.held(rec, why)
+
+    @staticmethod
+    def values(got):
+        """A keyed() probe's card values: the incoming card's (sender name, colour) and the outgoing card's colour."""
+        deps = got[2][2][1]
+        return deps[0][2:], deps[1][2]
+
+    def missed(self, got, why, index=True):
+        """The probe's check missed: the record's two cards were walked once and the new snapshot was serialized
+        once, and the colour index was rebuilt once when the names digest moved (`index`), not at all when it held."""
+        read, walks, _tail = got
+        self.assertEqual(read, 2, why + ": the record's entry missed, so its two cards were walked once")
+        self.assertEqual(walks.count("items"), 1, why + ": the new snapshot was serialized once")
+        self.assertEqual(walks.count("values"), 1 if index else 0,
+                         why + (": the colour index was rebuilt once" if index else ": the colour index held"))
+
+    def test_the_digest_cache_answers_for_the_snapshot_it_holds_and_serializes_a_new_one_once(self):
+        """The digest cache's key (_names_scope_digest): the snapshot object, by identity. A further check on the
+        snapshot the cache holds serializes nothing and walks no card; a new snapshot on the same thread, the
+        sender recoloured, is serialized once and its own digest answers. Red under a cache that answers without
+        matching the snapshot: the old digest, so a stale colour."""
+        rec = self.keyed()
+        first = self.probe(rec, [self.API, self.TESTS], "the first check")
+        walks, before = km._live_scope.names.walks, self.reads[0]
+        n = len(walks)
+        km._chat_sig_deps(SID_A, rec)
+        self.assertEqual((walks[n:], self.reads[0] - before), ([], 0),
+                         "a further check on the same snapshot: no serialization and no card walked")
+        got = self.probe(rec, [(PEER, ["api", "/tmp/notes-api", "#000000", "#ffffff"]), self.TESTS], "a new snapshot")
+        self.missed(got, "a new snapshot, the sender recoloured")
+        self.assertEqual(self.values(got), (("api", _bg("#000000")), _bg("#123456")))
+        self.assertNotEqual(got[2], first[2], "the sender's colour moved the tail")
+
+    def test_an_entry_moved_to_another_session_id_misses_and_the_tail_is_fresh(self):
+        """The names digest's sids (round 1, tests-2 and extra5-1): the incoming card's sender entry moved to another
+        sid at the same place with the same fields, then two sids swapping their entries and places. Each time the
+        sequence of values is the one before and only the sids moved. Red under a digest of the values alone: in
+        the record's key, a stale sender name and colour; in the colour index's key, no rebuild (the index never
+        reads a sid, so only the miss shows it)."""
+        rec = self.keyed()
+        first = self.probe(rec, [self.API, self.TESTS], "the first check")
+        moved = self.probe(rec, [(OTHER_B, self.API[1]), self.TESTS], "the sender's entry moved to another sid")
+        self.missed(moved, "an entry moved to another sid")
+        self.assertEqual(self.values(moved), ((None, None), _bg("#123456")), "the row's sender, PEER, has no entry now")
+        self.assertNotEqual(moved[2], first[2])
+        before = self.probe(rec, [self.API, self.TESTS], "the first registry again")
+        swapped = self.probe(rec, [(OTHER_A, self.API[1]), (PEER, self.TESTS[1])], "two sids swap entries and places")
+        self.missed(swapped, "two sids swapped")
+        self.assertEqual(self.values(swapped), (("tests", _bg("#123456")), _bg("#123456")),
+                         "the row's sender, PEER, now holds the other entry")
+        self.assertNotEqual(swapped[2], before[2])
+
+    def test_a_renamed_entry_misses_and_the_tail_is_fresh(self):
+        """The entries' names (parts[0]): the recipient renamed, so the outgoing card's colour moves through the
+        colour index, then the sender renamed, so the incoming card's name moves. Red under a key without the
+        names: in the record's key, a stale name or colour; in the colour index's key, a stale colour."""
+        rec = self.keyed()
+        prev = self.probe(rec, [self.API, self.TESTS], "the first check")
+        renamed = (OTHER_A, ["tests-v2", "/tmp/notes-api", "#123456", "#ffffff"])
+        for names, why, want in (
+                ([self.API, renamed], "the recipient renamed", (("api", _bg("#abcdef")), None)),
+                ([(PEER, ["api-v2", "/tmp/notes-api", "#abcdef", "#ffffff"]), renamed], "the sender renamed",
+                 (("api-v2", _bg("#abcdef")), None))):
+            got = self.probe(rec, names, why)
+            self.missed(got, why)
+            self.assertEqual(self.values(got), want, why)
+            self.assertNotEqual(got[2], prev[2], why + ": the tail moved")
+            prev = got
+
+    def test_a_recoloured_entry_misses_and_the_tail_is_fresh(self):
+        """The entries' colours (parts[2]): the recipient recoloured, the sender recoloured, and the recipient's
+        colour losing its '#', which the colour index and _name_color read as no colour. Red under a key without
+        the colours: in the record's key or in the colour index's key, a stale colour."""
+        rec = self.keyed()
+        prev = self.probe(rec, [self.API, self.TESTS], "the first check")
+        api = (PEER, ["api", "/tmp/notes-api", "#000000", "#ffffff"])
+        tests = (OTHER_A, ["tests", "/tmp/notes-api", "#654321", "#ffffff"])
+        plain = (OTHER_A, ["tests", "/tmp/notes-api", "654321", "#ffffff"])
+        for names, why, want in (
+                ([self.API, tests], "the recipient recoloured", (("api", _bg("#abcdef")), _bg("#654321"))),
+                ([api, tests], "the sender recoloured", (("api", _bg("#000000")), _bg("#654321"))),
+                ([api, plain], "the recipient's colour lost its '#'", (("api", _bg("#000000")), None))):
+            got = self.probe(rec, names, why)
+            self.missed(got, why)
+            self.assertEqual(self.values(got), want, why)
+            self.assertNotEqual(got[2], prev[2], why + ": the tail moved")
+            prev = got
+
+    def test_the_same_entries_in_another_order_miss_and_the_tail_is_fresh(self):
+        """The entries' order: two entries carry the recipient's name, and the first in the snapshot's order answers
+        its colour. The same entries in the other order. Red under a key over the entries sorted: in the record's
+        key or in the colour index's key, the other entry's colour."""
+        rec = self.keyed()
+        twin = (OTHER_B, ["tests", "/tmp/notes-api", "#222222", "#ffffff"])
+        prev = self.probe(rec, [self.API, self.TESTS, twin], "two entries share the recipient's name")
+        self.assertEqual(self.values(prev)[1], _bg("#123456"), "the first entry carrying the name answers")
+        got = self.probe(rec, [self.API, twin, self.TESTS], "the same entries in the other order")
+        self.missed(got, "the order moved")
+        self.assertEqual(self.values(got)[1], _bg("#222222"), "the other entry is first now")
+
+    def test_a_moved_working_directory_misses_and_the_tail_holds(self):
+        """The entries' working directory (parts[1]), which neither memo's reader reads: the recipient's moved. The
+        value cannot go stale, so a key without the working directory is red here only on the miss, in the record's
+        key (no walk) or in the colour index's key (no rebuild). This pins that both keys cover the whole entry (the
+        class docstring's last paragraph)."""
+        rec = self.keyed()
+        prev = self.probe(rec, [self.API, self.TESTS], "the first check")
+        got = self.probe(rec, [self.API, (OTHER_A, ["tests", "/tmp/notes-web", "#123456", "#ffffff"])],
+                         "the recipient's working directory moved")
+        self.missed(got, "the working directory moved")
+        self.assertEqual(got[2], prev[2], "no reader reads the working directory: the tail is the one before")
+
+    def test_a_moved_later_field_misses_and_the_tail_holds(self):
+        """The fields from parts[3] on, which neither memo's reader reads: the recipient's foreground colour moved,
+        then a fifth field appended. The value cannot go stale, so a key without these fields is red here only on
+        the miss, as for the working directory."""
+        rec = self.keyed()
+        prev = self.probe(rec, [self.API, self.TESTS], "the first check")
+        for fields, why in ((["tests", "/tmp/notes-api", "#123456", "#000000"], "the foreground colour moved"),
+                            (["tests", "/tmp/notes-api", "#123456", "#000000", "star"], "a fifth field appended")):
+            got = self.probe(rec, [self.API, (OTHER_A, fields)], why)
+            self.missed(got, why)
+            self.assertEqual(got[2], prev[2], why + ": no reader reads it, so the tail is the one before")
+
+    def test_a_moved_log_misses_with_the_same_names_and_caption_map(self):
+        """The postal index, by identity: the log moves twice with the names and the caption map held (a new
+        snapshot of the same registry each cycle, the same map object). First m1's row is sent again under another
+        sender, so the incoming card's sender moves; then an outcome row lands, which moves no card value (the
+        revision beside the memo moves, _chat_postal_rev), and the entry must miss all the same. Red under a key
+        without the index: a stale sender."""
+        rec = self.keyed()
+        names = [self.API, self.TESTS]
+        self.probe(rec, names, "the first check")
+        held = self.probe(rec, names, "unchanged: a new snapshot of the same registry")
+        self.assertEqual(held[:2], (0, ["items"]), "unchanged inputs: no card walked, the snapshot serialized once")
+        self.row(ev="sent", id="m1", from_id=OTHER_A, to_id=SID_A, body="the schema?", t=2)
+        got = self.probe(rec, names, "m1's row now names another sender")
+        self.missed(got, "the log moved", index=False)
+        self.assertEqual(self.values(got), (("tests", _bg("#123456")), _bg("#123456")))
+        self.row(ev="exec", id="m1", t=3)
+        again = self.probe(rec, names, "an outcome row")
+        self.missed(again, "the log moved again", index=False)
+        self.assertEqual(again[2][2][1], got[2][2][1], "an outcome moves no card value")
+
+    def test_a_replaced_caption_map_misses_with_the_same_names_and_log(self):
+        """The caption map, by identity, for a record with a message-id card: the map replaced with the names and the
+        log held, first by one with another caption for m1, then by an equal copy, which must miss all the same (the
+        key is the object). Red under a key without the map: a stale caption."""
+        rec = self.keyed()
+        names = [self.API, self.TESTS]
+        self.probe(rec, names, "the first check")
+        self.cmap = {"m1": "api: sent the schema"}
+        got = self.probe(rec, names, "another caption for m1")
+        self.missed(got, "the caption map replaced", index=False)
+        self.assertEqual(got[2][2][1][0][1], "api: sent the schema")
+        self.cmap = dict(self.cmap)
+        again = self.probe(rec, names, "the caption map replaced by an equal one")
+        self.missed(again, "the caption map replaced by an equal one", index=False)
+        self.assertEqual(again[2], got[2])
+
+    def test_two_records_checked_in_one_cycle_each_get_their_own_entry(self):
+        """The record (the tab): the entry is stored on the record, and the cards are not in the key. Two tabs'
+        records with different cards are checked in one cycle against the same names, index and caption map. Each
+        record's first check walks its own cards and each tail equals its own walk, and the next cycle hits both.
+        Red under an entry kept in one place for every record: the second record gets the first one's values."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        recs = (self.record([self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", peer="tests")]),
+                self.record([self.card(direction="out", peer="api"), self.card(direction="in", mid="m1", peer="api")]))
+        tails = []
+        for n in (1, 2):
+            self.cycle([self.API, self.TESTS])
+            for i, rec in enumerate(recs):
+                why = "cycle %d, record %d" % (n, i + 1)
+                before = self.reads[0]
+                km._chat_sig_deps(SID_A, rec)
+                read = self.reads[0] - before
+                tails.append(self.held(rec, why))
+                self.assertEqual(read, 2 if n == 1 else 0, why + (": its own cards walked once" if n == 1 else ": a hit"))
+        self.assertNotEqual(tails[0], tails[1], "the two records' tails differ (the pin compares something)")
+        self.assertEqual(tails[:2], tails[2:])
+
+
+def _bg(colour):
+    """A by-name or by-sid colour as the readers answer it."""
+    return {"bg": colour, "fg": "#ffffff"}
 
 
 class _WalkCountingSnap(dict):
