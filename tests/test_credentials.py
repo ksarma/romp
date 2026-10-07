@@ -950,12 +950,28 @@ class HelperTimeoutEndsTheGroup(_Settings):
                     " ".join(shlex.quote(a) for a in (sys.executable, "-c", holder, pids)), q), 2, ["holder", "shell"]),
         }[shape]
 
-    def _check_exit_roads(self, roads):
-        """Run each row of _EXIT_ROADS whose road is in `roads` in a child process and compare what the call left with
-        the row: the outcome, the pipe closed (open on ki-in-enter alone, which never enters the block), the
-        returncode, the shell reaped, the os.killpg calls, the SIGINT sent where the road sends one, the fallback's
-        os.kill refused where the road refuses it, the recorded processes left running, and the elapsed time's
-        window."""
+    # The roads of _EXIT_ROADS each test runs, keyed by the test's name: _check_exit_roads runs the group of the test
+    # that calls it, and test_every_road_of_the_exit_road_table_is_run_by_a_test holds the groups to the table, so a row
+    # added under a road no group names, or a group naming a road the table lacks, is red there instead of never run.
+    _ROAD_GROUPS = {
+        "test_every_finished_run_leaves_its_pipe_closed_and_its_shell_reaped": ("finished",),
+        "test_every_cut_run_leaves_its_pipe_closed_and_its_shell_reaped": (
+            "bound", "cut-wait", "oserror-wait", "fnf-wait", "cut-drain"),
+        "test_a_first_keyboard_interrupt_in_the_block_leaves_the_pipe_closed_and_the_reap_attempted": (
+            "sigint-wait-running", "sigint-wait-exited", "sigint-drain", "ki-after-kill", "ki-fallback", "ki-at-kill"),
+        "test_a_kill_that_never_signals_the_running_shell_leaves_an_unbounded_wait_on_it": (
+            "cut-at-kill", "refused-kill"),
+        "test_a_keyboard_interrupt_before_the_block_or_a_second_one_leaves_the_shell_not_waited_for": (
+            "ki-in-enter", "ki-in-exit", "sigint-then-ki-after-kill", "sigint-then-ki-at-kill"),
+    }
+
+    def _check_exit_roads(self):
+        """Run each row of _EXIT_ROADS whose road is in the calling test's group (_ROAD_GROUPS) in a child process and
+        compare what the call left with the row: the outcome, the pipe closed (open on ki-in-enter alone, which never
+        enters the block), the returncode, the shell reaped, the os.killpg calls, the SIGINT sent where the road sends
+        one, the fallback's os.kill refused where the road refuses it, the recorded processes left running, and the
+        elapsed time's window."""
+        roads = self._ROAD_GROUPS[self._testMethodName]
         rows = [row for row in _EXIT_ROADS if row[0] in roads]
         self.assertEqual(sorted({row[0] for row in rows}), sorted(roads), "every road named has its rows")
         for road, shape, bound, outcome, kills, rc, left, window in rows:
@@ -1004,14 +1020,13 @@ class HelperTimeoutEndsTheGroup(_Settings):
     # finally, the interrupt went on out of the kill and left the pipe open); and an interrupt that lands before
     # os.killpg, which leaves the shell running and shows the wait for it bounded.
     def test_every_finished_run_leaves_its_pipe_closed_and_its_shell_reaped(self):
-        self._check_exit_roads(("finished",))
+        self._check_exit_roads()
 
     def test_every_cut_run_leaves_its_pipe_closed_and_its_shell_reaped(self):
-        self._check_exit_roads(("bound", "cut-wait", "oserror-wait", "fnf-wait", "cut-drain"))
+        self._check_exit_roads()
 
     def test_a_first_keyboard_interrupt_in_the_block_leaves_the_pipe_closed_and_the_reap_attempted(self):
-        self._check_exit_roads(("sigint-wait-running", "sigint-wait-exited", "sigint-drain", "ki-after-kill",
-                                "ki-fallback", "ki-at-kill"))
+        self._check_exit_roads()
 
     # The roads run_helper's docstring states as limits of that property, the rows of _EXIT_ROADS from cut-at-kill on,
     # in two tests. Where the kill never signals the running shell (an exception other than KeyboardInterrupt from
@@ -1020,10 +1035,27 @@ class HelperTimeoutEndsTheGroup(_Settings):
     # before the block is entered (the pipe stays open too), inside Popen.__exit__'s quarter-second wait, or after a
     # first one in communicate has spent that quarter second.
     def test_a_kill_that_never_signals_the_running_shell_leaves_an_unbounded_wait_on_it(self):
-        self._check_exit_roads(("cut-at-kill", "refused-kill"))
+        self._check_exit_roads()
 
     def test_a_keyboard_interrupt_before_the_block_or_a_second_one_leaves_the_shell_not_waited_for(self):
-        self._check_exit_roads(("ki-in-enter", "ki-in-exit", "sigint-then-ki-after-kill", "sigint-then-ki-at-kill"))
+        self._check_exit_roads()
+
+    def test_every_road_of_the_exit_road_table_is_run_by_a_test(self):
+        # The reverse of the check _check_exit_roads makes (every road a test names has rows): every road of _EXIT_ROADS
+        # is in the group of a test, by set equality, no road is in two groups, and each test a group is keyed by calls
+        # _check_exit_roads, run here with _check_exit_roads replaced by a recorder.
+        named = [road for roads in self._ROAD_GROUPS.values() for road in roads]
+        self.assertEqual(sorted(set(named)), sorted(named), "no road is in two groups")
+        self.assertEqual(sorted({row[0] for row in _EXIT_ROADS}), sorted(named),
+                         "the roads of _EXIT_ROADS are the roads the groups name")
+        called = []
+
+        def record(case):
+            called.append(case._testMethodName)
+        with patch.object(HelperTimeoutEndsTheGroup, "_check_exit_roads", record):
+            for name in self._ROAD_GROUPS:
+                getattr(HelperTimeoutEndsTheGroup(name), name)()
+        self.assertEqual(called, list(self._ROAD_GROUPS), "each test a group is keyed by runs its group")
 
     def test_a_daemonizing_helper_is_not_reached_and_costs_nothing(self):
         # The stated limit's other face, planted: a helper that daemonizes (forks twice, takes a session of its own and
